@@ -26,5 +26,15 @@ jobs:
       - name: Test
         run: npm run test
 
+      - name: Verify no real .env files are tracked
+        run: |
+          if git ls-files | grep -E '^\.env(\..+)?$' | grep -vx '\.env\.example'; then
+            echo "A real .env file is tracked in git! Remove it before merging." >&2
+            exit 1
+          fi
+
+      - name: Check fixture-data import boundary
+        run: node scripts/check-fixture-boundaries.mjs
+
       - name: Build
         run: npm run build
