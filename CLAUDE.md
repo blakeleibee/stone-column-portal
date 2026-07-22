@@ -66,7 +66,7 @@ before Package 7 (Change Orders) or Package 8 (Selections) is built.)
 npm ci             # install exact locked versions (preferred — do not use npm install unless the lockfile must change)
 npm run typecheck  # tsc --noEmit in every workspace
 npm run test       # every workspace's test suite (123 checks total)
-npm run build      # production build of apps/web -> apps/web/dist/
+npm run build      # production build of apps/web -> apps/web/.next/
 npm run dev        # dev server for apps/web -> http://127.0.0.1:5173
 ```
 
