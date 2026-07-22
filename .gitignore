@@ -27,3 +27,6 @@ Thumbs.db
 
 # Claude Code local settings (personal, not shared with the repo)
 .claude/settings.local.json
+
+# Superpowers subagent-driven-development scratch state (progress ledger)
+.superpowers/
