@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useState } from "react";
 import { colors, spacing, radius, typography, touchTarget } from "../../../../packages/02-app-shell/src/design/tokens";
 import { projectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
@@ -149,7 +151,7 @@ export function SelectionsTab({ isClient }: { isClient: boolean }) {
               {s.approvedOn ? (
                 <div className="sc-selection-approved">Approved by {s.approvedBy} on {s.approvedOn}</div>
               ) : isClient && needsClient ? (
-                <button className="sc-btn-primary sc-selection-approve-btn">Review &amp; Approve (preview)</button>
+                <button className="sc-btn-primary sc-selection-approve-btn" disabled>Review &amp; Approve (preview)</button>
               ) : !isClient ? null : (
                 <div className="sc-selection-approved">Awaiting Stone Column</div>
               )}
@@ -175,7 +177,7 @@ export function DocumentsTab({ isClient }: { isClient: boolean }) {
               <div className="sc-doc-meta">{d.category} · {d.date}</div>
             </div>
             {isClient ? (
-              <button className="sc-link-btn">Download</button>
+              <button className="sc-link-btn" disabled>Download</button>
             ) : (
               <div className="sc-doc-actions">
                 <Badge tone={d.visible ? "sage" : "neutral"}>{d.visible ? "Published" : "Draft"}</Badge>

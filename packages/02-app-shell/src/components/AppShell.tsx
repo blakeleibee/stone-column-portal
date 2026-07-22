@@ -1,3 +1,5 @@
+"use client";
+
 import React, { useState, useRef, useEffect } from "react";
 import { colors, spacing, radius, typography, touchTarget } from "../design/tokens";
 import { AppRole, NavItem, navForRole, clientMoreNav } from "../nav/navigation";

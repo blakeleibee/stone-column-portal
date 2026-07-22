@@ -1,4 +1,7 @@
+"use client";
+
 import React from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { colors, spacing, radius, typography } from "../../../../packages/02-app-shell/src/design/tokens";
 import { projectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { formatCents } from "../../../../packages/01-financial-engine/src/money";
@@ -12,7 +15,10 @@ import { SCHEDULE, UPDATES, CONTACT, SELECTIONS } from "../data/sampleContent";
  * rail, latest update, Stone Column contact card, financial summary
  * (real client-safe figures), and a "needs your attention" list.
  */
-export function ClientHomeScreen({ onGoToBudget, clientVM }: { onGoToBudget: () => void; clientVM: ClientBudgetViewModel }) {
+export function ClientHomeScreen({ clientVM }: { clientVM: ClientBudgetViewModel }) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const isPreviewingAsClient = searchParams.get("preview") === "1";
   const latestUpdate = UPDATES.filter((u) => u.published)[0];
   const needsAttention = SELECTIONS.filter((s) => s.status === "Client decision required");
   const remaining = clientVM.totals.revisedEstimateCents - clientVM.totals.publishedActualCostCents;
@@ -52,7 +58,10 @@ export function ClientHomeScreen({ onGoToBudget, clientVM }: { onGoToBudget: () 
       </div>
 
       <div className="sc-grid-2">
-        <button className="sc-card sc-card--clickable" onClick={onGoToBudget}>
+        <button
+          className="sc-card sc-card--clickable"
+          onClick={() => router.push(isPreviewingAsClient ? "/client/budget?preview=1" : "/client/budget")}
+        >
           <div className="sc-section-label">Current Financial Summary</div>
           <StatRow label="Revised estimate" value={formatCents(clientVM.totals.revisedEstimateCents)} hint="Includes approved changes" />
           <StatRow label="Remaining estimated cost" value={formatCents(remaining)} />

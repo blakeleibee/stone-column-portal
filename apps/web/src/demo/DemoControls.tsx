@@ -1,3 +1,5 @@
+"use client";
+
 import React from "react";
 import { colors, spacing, radius, typography, touchTarget } from "../../../../packages/02-app-shell/src/design/tokens";
 import type { AppRole } from "../../../../packages/02-app-shell/src/nav/navigation";

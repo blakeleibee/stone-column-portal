@@ -1,4 +1,7 @@
+"use client";
+
 import React from "react";
+import { useRouter } from "next/navigation";
 import { colors, spacing, radius, typography } from "../../../../packages/02-app-shell/src/design/tokens";
 import { projectMeta, expenses } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { formatCents } from "../../../../packages/01-financial-engine/src/money";
@@ -16,7 +19,8 @@ import { SCHEDULE, SELECTIONS } from "../data/sampleContent";
  * selections are static sample content (no backend yet — see
  * data/sampleContent.ts's header comment).
  */
-export function AdminOverviewScreen({ onOpenProject, adminVM }: { onOpenProject: () => void; adminVM: AdminFinancialsViewModel }) {
+export function AdminOverviewScreen({ adminVM }: { adminVM: AdminFinancialsViewModel }) {
+  const router = useRouter();
   const pendingDecisions = SELECTIONS.filter((s) => s.status === "Client decision required" || s.status === "Submitted for approval");
   const draftExpenseCount = expenses.filter((e) => e.financialStatus === "pending").length;
 
@@ -27,7 +31,7 @@ export function AdminOverviewScreen({ onOpenProject, adminVM }: { onOpenProject:
       </div>
 
       <div className="sc-overview-grid-2">
-        <button className="sc-project-card" onClick={onOpenProject}>
+        <button className="sc-project-card" onClick={() => router.push("/admin/projects")}>
           <div className="sc-project-card-head">
             <div>
               <div className="sc-project-address">{projectMeta.address}</div>
