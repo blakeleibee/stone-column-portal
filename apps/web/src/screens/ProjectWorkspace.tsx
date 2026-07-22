@@ -267,11 +267,13 @@ const tabSharedStyles = `
 .sc-selection-approved { font-size: 11.5px; color: ${colors.stoneDark}; margin-top: 10px; }
 .sc-selection-approve-btn { margin-top: 12px; width: 100%; }
 .sc-btn-primary { background: ${colors.sage}; color: ${colors.white}; border: none; border-radius: 7px; padding: 9px 14px; font-size: 12.5px; font-weight: 600; min-height: ${touchTarget.minSize}; }
+.sc-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .sc-doc-row { display: flex; justify-content: space-between; align-items: center; padding: 11px 0; border-bottom: 1px solid ${colors.paperDim}; }
 .sc-doc-name { font-size: 13.5px; color: ${colors.ink}; }
 .sc-doc-meta { font-size: 11.5px; color: ${colors.stoneDark}; margin-top: 2px; }
 .sc-link-btn { background: none; border: none; color: ${colors.sageDeep}; font-size: 12.5px; font-weight: 600; min-height: ${touchTarget.minSize}; }
+.sc-link-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .sc-update-card { margin-bottom: 14px; }
 .sc-update-head { display: flex; justify-content: space-between; align-items: flex-start; }
