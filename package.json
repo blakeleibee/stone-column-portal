@@ -1,0 +1,23 @@
+{
+  "name": "stone-column-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stone Column Portal — monorepo root. Real npm workspace containing the Package 1 financial engine, Package 2 app shell, and the runnable preview app. See README.md for setup.",
+  "workspaces": [
+    "packages/01-financial-engine",
+    "packages/02-app-shell",
+    "apps/web"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspace=apps/web",
+    "dev": "npm run dev --workspace=apps/web"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@stone-column/financial-engine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stone Column Portal — Package 1 financial engine (pure TypeScript, no runtime dependencies).",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "ts-node test/run.ts && ts-node test/edge_cases.ts"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "ts-node": "10.9.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
