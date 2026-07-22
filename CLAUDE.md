@@ -10,14 +10,21 @@ staff, client, vendor, investor, and lender roles.
 
 ## Current checkpoint
 
-**Packages 1–2 are approved.** The next required step is the **Phase 2
-Expanded Interactive Prototype checkpoint**, which must be explicitly
-reviewed and approved before **Package 3** begins. See
-`docs/product-definition/05-implementation-roadmap.md` for the full
-package plan and `docs/product-definition/COVERAGE_MATRIX.md` for a
-one-page view of every review item and its destination package.
+**Packages 1–2 are approved and remain the UX/product reference.** The
+project has moved from prototype-expansion to a real production build,
+per `docs/production-build/PRODUCTION-ROADMAP.md` (packages **P0–P15**),
+which **supersedes** the old "Phase 2 Expanded Interactive Prototype →
+Package 3" plan in `docs/product-definition/05-implementation-roadmap.md`
+— no further prototype-only expansion is planned. See
+`docs/production-build/TARGET-ARCHITECTURE.md` for the target stack
+(Next.js on Vercel, Supabase Postgres/Auth/RLS) and
+`docs/production-build/PRODUCTION-READINESS-AUDIT.md` for an honest,
+module-by-module accounting of what's real vs. placeholder today.
 
-**Do not start Phase 2 or Package 3 work without explicit approval.**
+**Do not start P1 or any later production package without explicit
+approval.** P0 (Next.js migration, environment/secrets scaffolding —
+no product scope change, no new backend) is the current active
+package.
 
 ## What's real vs. what's a placeholder — read this before touching any screen
 
@@ -27,7 +34,7 @@ one-page view of every review item and its destination package.
 | **Fixture-driven functional demonstrations** | `apps/web/` Overview and Financials/Budget screens, via `FixtureFinancialRepository` + `fixtures/hawksRidge.ts` | The real engine/components running against one hardcoded sample project ("Hawks Ridge Residence"). The math and view-model logic are genuine; only the data source is fake. |
 | **Preview-only screens** | Everything else in `apps/web/src/screens/` — Action Center, Conversations, Contacts, Settings, Schedule, Selections, Documents/Updates | Static sample content, explicitly labeled "Preview only — not yet functional" in the UI. No backend, no persistence. |
 | **Schema that exists but has never run** | `schema/*.sql` (migrations 001–005 + rollbacks), `tests/sql/*.sql` | Full Postgres/Supabase RLS design (roles: admin/staff/client/vendor; org scoping; append-only ledgers). Written and reasoned through carefully, but **never executed against a real database**. This is the standing, load-bearing caveat on the entire data layer — treat every SQL file as unverified until it's actually run. |
-| **Planned only** | Vendor/Investor/Lender UI, auth (Supabase Auth), Leads, Estimating UI, QuickBooks import, Commitments/Bids, Billing/Draws, Payment Processing, Change Orders, Selections backend, Scheduling/Field Ops, Documents/RFIs, Conversations backend, Permits/Inspections, Warranty, Company Ops/Reporting, AI Assistance | Scoped in `docs/product-definition/01-feature-register.md` and scheduled in `05-implementation-roadmap.md` (Packages 3–15). No code exists yet. |
+| **Planned only** | Vendor/Investor/Lender UI, auth (Supabase Auth), Leads, Estimating UI, QuickBooks import, Commitments/Bids, Billing/Draws, Payment Processing, Change Orders, Selections backend, Scheduling/Field Ops, Documents/RFIs, Conversations backend, Permits/Inspections, Warranty, Company Ops/Reporting, AI Assistance | Scoped in `docs/product-definition/01-feature-register.md`; sequencing now lives in `docs/production-build/PRODUCTION-ROADMAP.md` (P0–P15), which supersedes the old Packages 3–15 schedule. No code exists yet. |
 
 ## Non-negotiables (carried through every package)
 
@@ -65,14 +72,15 @@ npm run dev        # dev server for apps/web -> http://127.0.0.1:5173
 
 ## Where decisions live
 
-- `docs/product-definition/` — feature register, workflow map, exception & risk register, information architecture, implementation roadmap, change log, coverage matrix
-- `docs/CHECKLIST.md` — most precise "what's actually done vs. deferred" record
-- `docs/PACKAGE_01_CORRECTIONS*.md`, `docs/PACKAGE_02_CORRECTIONS*.md` — round-by-round correction history for Packages 1–2
-- `docs/INTERACTIVE_PREVIEW_HANDOFF.md`, `docs/PREVIEW_CHECKPOINT_NOTES.md` — what's genuinely real vs. a visual proxy in `apps/web`
+- `docs/production-build/` — **current, authoritative plan for all work from here forward**: readiness audit, target architecture, prototype-to-production screen mapping, roadmap (P0–P15), data migration/fixture strategy, security & permissions matrix.
+- `docs/product-definition/` — original prototype-era feature register, workflow map, exception & risk register, information architecture, change log, coverage matrix. Still the source for feature scope and terminology; no longer the source for package sequencing (see above).
+- `docs/CHECKLIST.md` — most precise "what's actually done vs. deferred" record as of the prototype checkpoint.
+- `docs/PACKAGE_01_CORRECTIONS*.md`, `docs/PACKAGE_02_CORRECTIONS*.md` — round-by-round correction history for Packages 1–2.
+- `docs/INTERACTIVE_PREVIEW_HANDOFF.md`, `docs/PREVIEW_CHECKPOINT_NOTES.md` — what's genuinely real vs. a visual proxy in `apps/web`.
 
 ## Standing disclosures to preserve
 
-- SQL/RLS has never been executed against a real Postgres/Supabase instance — do not describe it as verified.
-- No lint/CI configuration exists yet.
+- SQL/RLS has never been executed against a real Postgres/Supabase instance — do not describe it as verified. This is the first gate `docs/production-build/PRODUCTION-ROADMAP.md`'s P1 closes.
+- CI (`.github/workflows/ci.yml`) runs typecheck/test/build on push/PR to `main`; no linter is configured yet.
 - No authentication exists yet — the current preview app has no auth, no Supabase, no real credentials, by design.
 - Git history begins at the imported baseline commit (`cd1c264` — "Import: original delivered Stone Column Portal ..."); nothing before that commit is reconstructable from this repo alone — see the correction-round docs in `docs/` for that history.
