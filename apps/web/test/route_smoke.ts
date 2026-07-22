@@ -139,6 +139,7 @@ async function main() {
     const home = await getHtml("/client/home");
     check("/client/home responds 200", home.status === 200);
     check("/client/home shows a welcome heading", home.html.includes("Welcome"));
+    check("/client/home shows the sample-data disclosure tag", home.html.includes("Sample data"));
 
     const budget = await getHtml("/client/budget");
     check("/client/budget responds 200", budget.status === 200);

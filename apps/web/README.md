@@ -30,10 +30,11 @@ npm run dev
 
 ## Exact local URL
 
-**http://localhost:5173**
+**http://127.0.0.1:5173**
 
-The dev server (esbuild, no Vite needed) bundles `src/main.tsx` and
-serves it with live rebuild on each request. Stop it with `Ctrl+C`.
+The dev server is Next.js (`next dev -p 5173 -H 127.0.0.1`), serving
+the App Router entry points under `app/` (`app/layout.tsx` and the
+per-route `app/**/page.tsx` files). Stop it with `Ctrl+C`.
 
 ## What you'll see
 
@@ -61,7 +62,7 @@ serves it with live rebuild on each request. Stop it with `Ctrl+C`.
 
 ## Testing it yourself at both required widths
 
-- **Desktop**: just open http://localhost:5173 in a normal browser window.
+- **Desktop**: just open http://127.0.0.1:5173 in a normal browser window.
 - **~390px mobile**: open your browser's device toolbar (Chrome/Edge:
   `Cmd+Opt+I` / `F12` then the device-toolbar icon; Firefox: `Cmd+Opt+M`)
   and set a custom width of 390px, or pick an iPhone 12/13/14 preset
@@ -71,13 +72,16 @@ serves it with live rebuild on each request. Stop it with `Ctrl+C`.
 ## Running the test suite
 
 ```
-npx tsx test/render_smoke.tsx
+npx tsx test/route_smoke.ts
 ```
 
-Actually renders every admin/client screen, every placeholder, the
-demo controls, and the full `AppShell` composition (including the
-client preview banner and the mobile "More" sheet) via
-`react-dom/server` — 45 checks as of this delivery.
+(or `npm run test` from this directory). Starts a real `next dev`
+server and fetches every route reachable today, asserting the same
+content the pre-migration `render_smoke.tsx` asserted on via direct
+component rendering — admin/client screens, preview-only labeling, the
+financial-engine-backed figures, disabled dead-click controls, the
+sample-data disclosure, and the client preview banner/"Exit preview"
+control.
 
 ## TypeScript verification
 
@@ -104,20 +108,20 @@ every dependency is now pinned to an exact version rather than a range.
 npm run build
 ```
 
-Outputs a static site to `dist/` (`index.html` + `bundle.js` +
-sourcemap) — no server-side code, deployable anywhere that serves
-static files.
+Runs `next build`, outputting to `apps/web/.next/` — a standard
+Next.js production build.
 
 ## Deploying a temporary Vercel preview
 
-This directory includes `vercel.json`, pre-configured for a static build:
+The repository root includes `vercel.json`, pre-configured for the
+Next.js build:
 
 ```json
 {
-  "buildCommand": "node build.mjs --build",
-  "outputDirectory": "dist",
-  "framework": null,
-  "installCommand": "npm install"
+  "framework": "nextjs",
+  "installCommand": "npm ci",
+  "buildCommand": "npm run build --workspace=apps/web",
+  "outputDirectory": "apps/web/.next"
 }
 ```
 
@@ -145,9 +149,11 @@ normal internet access.
   the Package 1 engine are all **imported directly** from
   `packages/02-app-shell` and `packages/01-financial-engine` — nothing
   in those approved packages was modified to build this preview.
-- The only genuinely new code here is this app's entry point
-  (`src/main.tsx`/`src/App.tsx`), the demo-only role switcher
-  (`src/demo/DemoControls.tsx`), and the placeholder/overview screens
+- The only genuinely new code here is this app's Next.js entry points
+  (`app/layout.tsx` and the per-route `app/**/page.tsx` files, plus the
+  `src/shell/AdminChrome.tsx`/`ClientChrome.tsx` composition they
+  render), the demo-only role switcher (`src/demo/DemoControls.tsx`),
+  and the placeholder/overview screens
   needed to give every requested nav item somewhere to land
   (`src/screens/*.tsx`) — all of which render pre-built view models or
   static sample metadata, never re-deriving a financial figure.
@@ -161,12 +167,10 @@ normal internet access.
   — not a second navigation shell, and not a change to `AppShell`'s
   own approved sidebar behavior.
 
-## No real package-lock.json
+## Lockfile
 
-Same reasoning as `packages/01-financial-engine/NOTE_ON_LOCKFILE.md`:
-generating one requires resolving against the real npm registry to
-compute genuine integrity hashes, and there is no network access in
-this sandbox to do that (confirmed: `npm install --package-lock-only
---offline` fails with `ENOTCACHED` on `@types/react`, which was never
-locally vendored here). Run `npm install` yourself with real network
-access to generate and commit a real lockfile.
+A real root `package-lock.json` is committed and tracked (this is an
+npm workspaces monorepo — see the root `package.json`'s `workspaces`
+field). Use `npm ci` from the repository root to install exact locked
+versions; only use `npm install` if the lockfile itself needs to
+change.

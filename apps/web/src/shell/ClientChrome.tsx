@@ -6,6 +6,7 @@ import { AppShell } from "../../../../packages/02-app-shell/src/components/AppSh
 import type { AppRole } from "../../../../packages/02-app-shell/src/nav/navigation";
 import { projectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { DemoControls } from "../demo/DemoControls";
+import { SampleDataTag } from "../components/SampleDataTag";
 
 const CLIENT_PATH: Record<string, string> = {
   home: "/client/home",
@@ -67,6 +68,7 @@ export function ClientChrome({ activeKey, children }: { activeKey: string; child
         isPreviewingAsClient={isPreviewingAsClient}
         onExitPreview={handleExitPreview}
       >
+        <SampleDataTag />
         {children}
       </AppShell>
     </div>
