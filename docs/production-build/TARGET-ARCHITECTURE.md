@@ -2,9 +2,15 @@
 
 Defines the production architecture for the Stone Column Portal. This
 is a destination description, not a work order — implementation is
-sequenced in `PRODUCTION-ROADMAP.md`. Two items below are flagged as
-**owner decisions** because they are real architectural commitments,
-not defaults I'm entitled to assume.
+sequenced in `PRODUCTION-ROADMAP.md`. Following review of the first
+version of this document, the application-server-framework question
+(§5) and the staff-permission-enforcement question
+(`SECURITY-AND-PERMISSIONS-MATRIX.md`'s role-model gap) are now
+**settled direction, not open decisions** — corrected below. What
+remains genuinely open (Supabase plan/backup tier, monitoring
+provider, e-signature provider, payment provider, invitation/
+onboarding policy) is flagged inline where it comes up, and
+consolidated in the PR description's executive summary.
 
 ## 1. Environments
 
@@ -14,7 +20,7 @@ with a "dev flag":
 
 | Environment | Supabase project | Hosting | Purpose |
 |---|---|---|---|
-| **Local** | Supabase CLI local stack (`supabase start`, Dockerized Postgres) | `npm run dev` (or Next.js dev server post-migration) | Schema iteration, migration authoring, day-to-day development. Disposable — reset freely. |
+| **Local** | Supabase CLI local stack (`supabase start`, Dockerized Postgres) | Next.js dev server (adopted in P0 — see §5.1) | Schema iteration, migration authoring, day-to-day development. Disposable — reset freely. |
 | **Preview/staging** | One shared Supabase project, OR one ephemeral project per PR if Supabase branching is available on the plan in use (owner decision — cost-dependent) | Vercel preview deployments (automatic per-PR, already how `vercel.json` is set up) | Reviewer verification before merge; the only place synthetic-but-realistic data should ever be seeded by hand. |
 | **Production** | Dedicated Supabase project, never touched by CI except through reviewed migrations | Vercel production deployment | Real company/project/financial data. No sample/fixture data ever seeded here — see `DATA-MIGRATION-AND-FIXTURES.md`. |
 
@@ -51,11 +57,24 @@ Existing schema pattern (org-scoped staff/admin via
 `is_project_client()`) is sound and carries forward unchanged. Two
 additions required, neither of which exists in the schema today:
 
-- **`is_project_vendor(project_id)`** helper + vendor RLS policies —
-  the "vendor identity/RLS foundation" the old roadmap described as
-  already built in Package 3 is **not actually in the schema** (see
-  `PRODUCTION-READINESS-AUDIT.md`, Modules 12–13). This needs to be
-  written as new migrations, not assumed present.
+- **`is_project_vendor(project_id)`** helper — the "vendor identity/
+  RLS foundation" the old roadmap described as already built in
+  Package 3 is **not actually in the schema** (see
+  `PRODUCTION-READINESS-AUDIT.md`, Modules 12–13). P3 writes this
+  helper and exactly one policy consuming it: a vendor can read their
+  own `project_members` row, nothing else. **P3 does not add vendor
+  policies to `expenses`, `budget_ledger`, `committed_costs`, or any
+  other existing financial table** — those stay staff/client-only
+  exactly as designed today. Each later package that genuinely needs
+  vendor visibility into a specific table (P5's `bid_packages`/
+  `bid_submissions`, P8's vendor-assigned selections, P9's
+  vendor-relevant schedule dates, P11's full vendor portal surface)
+  adds its own narrowly scoped vendor policy to that table, in that
+  table's own migration — extending the P3 identity boundary, never
+  introducing a new one, but also never granted more broadly than the
+  specific table that package owns. Full detail and per-package
+  attribution: `PRODUCTION-ROADMAP.md`, "Recommended change to the
+  given package order" and the P3/P5 entries.
 - **Authorized client decision-maker** concept — a new table (working
   name `project_decision_makers`: `project_id`, `contact_id`/`user_id`,
   `is_authorized`, `authority_scope` or similar) implementing the
@@ -98,46 +117,88 @@ already established:
 - Append-only / supersede patterns for anything financial; no
   destructive `UPDATE`/`DELETE` of posted financial fact.
 
-## 5. Server-side mutation boundary — the central open question
+## 5. Server-side mutation boundary and Supabase access patterns
 
 **This repository currently has no server runtime.** `apps/web` is a
 static SPA (esbuild bundle, no API routes, no edge functions). Every
 mutation path envisioned for production needs *some* trusted execution
-context that isn't the browser. There are two ways to get one, and the
-choice affects every package from P2 onward:
+context that isn't the browser.
 
-- **Option A — Postgres RPCs as the trust boundary.** Continue the
-  pattern already established (`bootstrap_organization()`,
-  `supersede_committed_cost()`, `supersede_forecast()`): every mutation
-  that needs validation beyond RLS row-visibility goes through a
-  `SECURITY DEFINER` (or plain, RLS-respecting) Postgres function
-  called via Supabase RPC. No separate Node/Next.js backend required
-  for P0–P3. This is the lower-migration-cost option and reuses 100%
-  of the existing schema's own idiom.
-- **Option B — Adopt Next.js now** (already the documented eventual
-  target — see `docs/PACKAGE_02_NOTES.md`: "real component source...
-  intended to drop into a Next.js app later") and move mutations behind
-  Next.js API routes / Route Handlers, with the Supabase service-role
-  key used server-side only. Necessary regardless, eventually, for
-  anything that isn't a pure database operation: QuickBooks file
-  parsing, e-signature webhooks, ACH/card webhooks, Microsoft Graph
-  calls — none of these can be a Postgres function.
+### 5.1 Application server framework — Next.js, adopted in P0
 
-**Recommendation:** start P0–P3 on Option A (Postgres RPCs), since
-every P0–P3 mutation (project CRUD, membership, decision-maker
-designation) is a pure database operation with no external API
-involved. Adopt Option B (Next.js) no later than whichever package
-first needs a webhook or an external HTTP call server-side — on the
-current sequencing that's **P4** (QuickBooks import needs a file-parsing
-server context) at the latest, possibly earlier if P2's invitation
-emails need sending server-side.
+**Settled direction, corrected from the previous version of this
+document:** adopt Next.js **during P0**, before P2's authentication
+and any production workflow is built on top of the current esbuild
+SPA. The previous draft framed this as an open "Option A vs. Option
+B" owner decision deferrable to P4 — that framing is withdrawn. The
+project should not deliberately defer the application server framework
+and then incur a mid-production-build migration once real screens,
+real auth, and real RLS-dependent UI already depend on the current
+static-bundle setup. Next.js is also already the documented eventual
+target (`docs/PACKAGE_02_NOTES.md`: "real component source... intended
+to drop into a Next.js app later") — P0 is executing existing intent,
+not introducing a new one.
 
-**⚠️ Owner decision required:** whether to adopt Next.js starting in
-P0 (front-loading the migration once, before real screens depend on
-the current esbuild setup) versus deferring it to P4 (less upfront
-disruption, but a mid-roadmap framework migration). Both are
-defensible; this document does not pick one. See the executive summary
-for this decision restated.
+This does **not** remove Postgres RPCs from the architecture. RPCs
+(`SECURITY DEFINER` functions, the `bootstrap_organization()`/
+`supersede_committed_cost()`/`supersede_forecast()` pattern already
+established) remain the right mechanism for atomic, RLS-adjacent
+database operations — a Next.js Route Handler calling an RPC is
+normal and expected. What Next.js adds is the trusted execution
+context Postgres functions cannot provide at all: QuickBooks file
+parsing, e-signature webhooks, ACH/card webhooks, Microsoft Graph
+calls, and — starting immediately — a real client/server component
+boundary so the Supabase **service-role** key has a legitimate place
+to live outside the browser bundle from day one, rather than being
+deferred alongside the framework migration.
+
+P0's revised scope (see `PRODUCTION-ROADMAP.md`) includes: migrating
+the existing UI into Next.js **without a broad redesign** — the
+approved visual language, navigation, financial logic, and
+construction terminology carry forward unchanged, this is a hosting/
+framework migration, not a product redesign; establishing the server/
+client component boundary; updating `vercel.json`/deployment
+configuration for a Next.js build; and route/rendering regression
+tests proving every existing screen renders identically post-migration
+(reusing the existing `render_smoke.tsx` assertions as the baseline
+those regression tests must still satisfy).
+
+### 5.2 Supabase access patterns — JWT vs. service-role, explicit rules
+
+- **Ordinary user-originated server operations** (a logged-in user
+  viewing their project's budget, submitting a selection preference,
+  inviting a teammate) use that **user's own JWT**, forwarded to
+  Supabase, and remain fully subject to RLS — a Route Handler acting
+  on a user's behalf authenticates *as that user*, it does not
+  silently escalate to a privileged client. This is the default and
+  the common case for every package from P2 onward.
+- **The Supabase service-role key is never the default database
+  client for application routes.** It bypasses RLS entirely (per
+  `schema/001_core_financial.sql`'s own comment: "these triggers fire
+  for ANY role, including a service_role key that bypasses RLS
+  entirely — RLS controls row visibility, not mutation rights") —
+  using it as a general-purpose backend client would silently discard
+  every RLS guarantee this schema was built around.
+- **Service-role access is restricted to a narrow, enumerated set of
+  cases:** verified external webhooks (e-signature, payment provider)
+  where there is no end-user session to act as; background/scheduled
+  jobs (compliance-expiration sweeps, calendar sync); environment
+  provisioning (`bootstrap_organization()`'s own gated first-admin
+  path); and privileged administrative operations that are explicitly
+  designed to cross RLS boundaries (e.g., an Owner/Admin-only
+  cross-project export). Nothing else.
+- **Every service-role operation requires, without exception:**
+  explicit authorization checked in code before the privileged action
+  runs (never assumed from the caller's mere ability to reach the
+  route), input validation as strict as any RLS-protected path would
+  apply, least privilege (a service-role operation touches only the
+  rows/tables its specific job requires, not a broad query), and audit
+  logging — a service-role mutation is exactly the kind of action
+  `log_audit()`'s trigger-based, un-bypassable logging exists to
+  catch, and no service-role code path should be written in a way that
+  could evade it (e.g., raw `COPY`/bulk operations that skip
+  row-level triggers must be treated as a reviewed exception, not a
+  convenience default).
 
 ## 6. Financial calculation ownership — explicit statement
 
@@ -258,12 +319,13 @@ roadmap — unchanged by this transition.
 
 ## 13. Deployment and rollback strategy
 
-- **App deploys:** Vercel, per the existing `vercel.json`
+- **App deploys:** Vercel. The existing `vercel.json`
   (`installCommand: npm install`, `buildCommand: npm run build`,
-  `outputDirectory: apps/web/dist`) — this will need updating once/if
-  Next.js is adopted (§5), otherwise unchanged. Rollback = redeploy the
-  previous Vercel deployment (instant, already Vercel's default
-  behavior).
+  `outputDirectory: apps/web/dist`) is updated in P0 for the Next.js
+  build output as part of the §5.1 migration, not carried forward
+  unchanged. Rollback = redeploy the previous Vercel deployment
+  (instant, already Vercel's default behavior, unaffected by the
+  framework migration).
 - **Database migrations:** forward-only in production, matching the
   standing instruction already present in this repo's own SQL file
   headers ("Supabase/most teams treat migrations as forward-only in

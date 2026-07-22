@@ -16,15 +16,46 @@ migration**:
 
 - **Project Manager**, **Superintendent/Field Staff**, and
   **Accounting** are all, today, the single `staff` role — the schema
-  has no sub-role distinction between them at all. Enforcing the
-  narrower permissions below (e.g., Superintendent cannot view payment
-  data; Accounting cannot edit daily logs) requires either (a) a new
-  `staff_function` column on `profiles` consulted by RLS policies and
-  helper functions, or (b) accepting that these three rows are enforced
-  at the UI layer only, with the database continuing to treat them as
-  one undifferentiated `staff` role. **This is a real decision, not a
-  detail** — it changes how many RLS policies P2 onward has to write.
-  See the executive summary.
+  has no sub-role distinction between them at all. **UI-only
+  enforcement of the narrower permissions below is not an acceptable
+  production option** — UI visibility is never authorization, and a
+  row like Payments (Superintendent: ❌ everywhere) means nothing if
+  the database itself would still serve a Superintendent-role request
+  because RLS only ever checked `role in ('admin','staff')`. This must
+  be enforced server-side: by RLS policies and by the trusted-server
+  operations described in `TARGET-ARCHITECTURE.md` §5, not by which
+  buttons a screen happens to render.
+
+  The forward-compatible model (does **not** require promoting every
+  job title to its own `app_role` enum value):
+  1. **Organization-level staff function** — a new column (working
+     name `profiles.staff_function`, e.g.
+     `'project_manager' | 'superintendent' | 'accounting' | 'general'`),
+     consulted the same way `profiles.role` already is today, by a new
+     helper function (e.g. `has_staff_function(p_org_id, p_function)`)
+     following the exact `SECURITY DEFINER`/`search_path`/`revoke-then-
+     grant-to-authenticated` pattern `is_org_staff_for_org()` already
+     establishes. This is additive to `role`, not a replacement for
+     it — `role = 'staff'` still gates "is this an internal user at
+     all"; `staff_function` narrows *which* internal capabilities they
+     have.
+  2. **Project-specific assignment/role** — `project_members` (today
+     scoped to `client`/`vendor` only via
+     `project_members_client_or_vendor_only`) is extended so staff can
+     also carry a project-specific assignment (e.g., "PM on Project A,
+     no assignment on Project B") where finer project-level scoping is
+     genuinely needed, rather than every staff permission being
+     org-wide by default.
+  3. **Narrowly scoped permission overrides** — only where 1–2
+     genuinely don't cover a real case (e.g., a one-off "let this
+     Superintendent view Payments on this single project for a
+     transition period") — a small, explicitly audited override table,
+     not a general-purpose permission-bag that reintroduces the same
+     "is this actually enforced or just displayed" ambiguity this
+     correction exists to close.
+  This model is settled direction, not an open decision — see the
+  executive summary in the PR description for what's still genuinely
+  undecided (there isn't a staff-role question left in that list).
 - **Authorized Client Decision-Maker** is not a role at all in the
   schema sense — it's the `project_decision_makers` flag on a `client`
   described in `TARGET-ARCHITECTURE.md` §3. The matrix below treats it
@@ -37,10 +68,10 @@ migration**:
   flag that schema work to represent them doesn't exist yet in any
   roadmap package.
 
-Recommendation: resolve the `staff` sub-role question (flag column vs.
-UI-only) no later than **P3**, since P3 is where team/permissions UI
-is first built — building that screen without deciding this first
-means building it twice.
+This lands no later than **P3**, since P3 is where team/permissions UI
+is first built — building that screen against an undifferentiated
+`staff` role and retrofitting `staff_function` afterward means
+building the RLS layer twice.
 
 ## Legend
 
@@ -392,12 +423,28 @@ never an edit to the failed one.*
 
 ### Audit History
 
+**⚠️ Known contradiction, flagged as a P1/P2 security defect —
+read before using this table.** The columns below describe the
+*target* differentiated access this matrix requires. The schema as it
+actually exists today does **not** implement this differentiation:
+`audit_log_staff_select` reads `using (project_id is not null and
+is_org_staff(project_id))`, and `is_org_staff()` /
+`is_org_staff_for_org()` both resolve true for **any** `role in
+('admin', 'staff')` — meaning, as written, a Superintendent (today
+indistinguishable from a PM or Accounting at the database level — see
+the role-model gap above) can read **every audited row for every
+project in the org**, including full `before_data`/`after_data`
+financial snapshots. This must be corrected before any sensitive
+production audit data is generated — audit rows created under the
+current policy, before the fix ships, would already have been
+over-exposed by the time anyone noticed.
+
 | Role | View | Create | Edit | Approve | Reverse | Export | Administer |
 |---|---|---|---|---|---|---|---|
 | Company Owner/Admin | ✅ org-wide | System-only (trigger-generated) | ❌ (immutable) | N/A | ❌ | ✅ | ✅ |
-| Project Manager | Assigned (read) | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
-| Superintendent/Field Staff | ❌ | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
-| Accounting | ✅ | System-only | ❌ | N/A | ❌ | ✅ | ❌ |
+| Project Manager | Assigned (project-scoped only — their own assigned projects, not org-wide) | System-only | ❌ | N/A | ❌ | Assigned | ❌ |
+| Superintendent/Field Staff | ❌ (no default access — schedules/daily-logs/field-record audit trail only, if genuinely needed, via a narrow override per the role-model gap above, never the general financial audit log) | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
+| Accounting | ✅ (financial tables only — `expenses`, `budget_ledger`, `fee_ledger`, `committed_costs`, `forecast_entries`, `budget_suggestions`; not HR/personnel-adjacent audit rows if any such table is ever added) | System-only | ❌ | N/A | ❌ | ✅ | ❌ |
 | Client | ❌ | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
 | Authorized Client Decision-Maker | ❌ | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
 | Architect/Designer | ❌ | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
@@ -406,12 +453,38 @@ never an edit to the failed one.*
 | Lender | ❌ | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
 | Read-Only Guest | ❌ | System-only | ❌ | N/A | ❌ | ❌ | ❌ |
 
-*Matches the schema exactly as designed: `audit_log` has no `insert`/
-`update`/`delete` policy for any role — only `log_audit()` (SECURITY
-DEFINER) writes to it, and only `audit_log_staff_select` grants read,
-scoped to org staff. "Create" is `System-only` for every role including
-admin because there is deliberately no human-writable path to this
-table at all.*
+**Required correction (P1 discovery, P2 fix — tracked in
+`PRODUCTION-ROADMAP.md`):**
+1. `audit_log_staff_select` is replaced with `staff_function`-aware
+   policies once P2's `staff_function` column exists: Owner/Admin get
+   org-wide read; Project Manager gets read scoped to their assigned
+   projects only (via the P3 project-assignment model); Accounting
+   gets read scoped to financial-table audit rows; Superintendent gets
+   **no default access** to `audit_log` at all.
+2. **Sensitive field redaction/exclusion:** `log_audit()` currently
+   stores the complete `to_jsonb(OLD)`/`to_jsonb(NEW)` row for every
+   audited table. Before this data is queryable by anyone other than
+   Owner/Admin, define which columns (if any) are excluded or redacted
+   per table/role — e.g., a PM reading their own project's audit trail
+   is an intended use case, but should not incidentally see a field
+   never meant to be part of that record's own visible surface. This
+   needs a concrete column-level decision per table during P2, not a
+   blanket "audit is admin-only" dodge that defeats the point of
+   giving PM/Accounting real audit access at all.
+3. **Tests required, not optional:** an automated test proving a
+   Superintendent-function staff account, given a valid session,
+   cannot retrieve any `audit_log` row via any query path (direct
+   table read, view, or RPC); a second test proving a PM-function
+   account can read only rows for projects they're assigned to, not
+   another PM's project. Both tests are part of P1/P2's acceptance
+   criteria, not a follow-up item.
+
+*The append-only mechanics remain accurate as designed: `audit_log`
+has no `insert`/`update`/`delete` policy for any role — only
+`log_audit()` (SECURITY DEFINER) writes to it. "Create" is
+`System-only` for every role including admin because there is
+deliberately no human-writable path to this table at all. Only the
+**read** policy's granularity is the defect.*
 
 ---
 

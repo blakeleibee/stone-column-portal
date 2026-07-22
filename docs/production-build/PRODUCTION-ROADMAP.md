@@ -21,17 +21,44 @@ deliberate scope.
 
 The brief's suggested P0–P3 order is followed exactly as given, with
 **one addition to P3's stated scope**: the vendor identity/RLS
-foundation (`'vendor'` `project_members` rows, an `is_project_vendor()`
-helper, and a baseline "vendor sees nothing except their own
-membership" RLS policy). The old roadmap explicitly placed this in
-Package 3 specifically so that Commitments/Bids (this roadmap's P5)
-never has to introduce a new security boundary under time pressure —
-but the actual schema audit (`PRODUCTION-READINESS-AUDIT.md`, Modules
-12–13) found that foundation was **never actually written**, only the
+foundation. The old roadmap explicitly placed this in Package 3
+specifically so that Commitments/Bids (this roadmap's P5) never has to
+introduce a new security boundary under time pressure — but the actual
+schema audit (`PRODUCTION-READINESS-AUDIT.md`, Modules 12–13) found
+that foundation was **never actually written**, only the `'vendor'`
 enum value and a check constraint exist. Since P5 in this roadmap
 still references vendor-assigned bids (same as the old roadmap's
 Package 5), the same reasoning still applies, and P3 below includes it
 as new scope, not an inherited-and-already-done item.
+
+**Vendor RLS sequencing, stated precisely (corrected for clarity):**
+1. **P3 establishes vendor identity, project membership, and
+   visibility of the vendor's own membership record** — the
+   `is_project_vendor(project_id)` helper, and exactly one policy
+   consuming it: a vendor can read their own `project_members` row.
+   Nothing more.
+2. **P3 does not add vendor access policies broadly to unrelated
+   existing financial tables** — `expenses`, `budget_ledger`,
+   `committed_costs`, `forecast_entries`, `fee_ledger` and the rest
+   stay staff/client-only exactly as they are today. There is no
+   vendor policy on any of these tables until a package that actually
+   needs one adds it.
+3. **Each later package adds narrowly scoped vendor policies only to
+   the tables vendors genuinely need** — in that table's own migration,
+   at the time that table is created, not as a batch of speculative
+   vendor policies added early "to save a step later."
+4. **P5 extends the already-established vendor identity boundary for
+   its new bid/procurement tables** (`bid_packages`, `bid_submissions`,
+   `bid_questions`, `bid_addenda`) — it calls the P3
+   `is_project_vendor()` helper in its own new policies; it does not
+   define vendor identity itself, and it does not touch any table
+   outside its own new ones.
+5. **Every vendor policy, at every package, receives an explicit
+   cross-project and cross-vendor isolation test** — "Vendor A on
+   Project 1 sees nothing on Project 2" and "Vendor A sees nothing
+   belonging to Vendor B on the same project" are both required, not
+   just the single-axis version of the test. This applies from P3
+   onward, not only at P11 when the vendor-facing UI ships.
 
 No other reordering is recommended: `budget_ledger.source_type`/
 `source_id` and `committed_costs.source_type`/`source_id` are
@@ -48,16 +75,26 @@ sequence, and matches the old roadmap's own dependency graph
 
 ## Package P0 — Production foundation and environment verification
 
-- **Exact scope:** No product feature work. Establishes the scaffolding
-  every later package depends on.
+- **Exact scope:** No product feature work and no broad visual
+  redesign. Establishes the scaffolding every later package depends
+  on, **including migrating the existing UI into Next.js** (per
+  `TARGET-ARCHITECTURE.md` §5.1, corrected from the previous version
+  of that document, which had left this as an open, deferrable
+  decision — it is now P0 scope).
 - **User workflows made genuinely functional:** None yet — this
-  package is infrastructure only.
+  package is infrastructure only. The Next.js migration is a hosting/
+  framework change, not a new workflow.
 - **Schema/migration changes:** None.
 - **Permissions/RLS policies:** None new.
-- **Server-side operations:** None new.
-- **UI screens connected to live data:** None.
-- **Fixture behavior removed/retained:** Retained as-is; this package
-  does not touch `apps/web` product screens.
+- **Server-side operations:** None new (the Next.js server/client
+  component boundary is established structurally in this package, but
+  no route performs a privileged mutation yet — that starts in P2).
+- **UI screens connected to live data:** None. Every screen keeps its
+  current fixture/sample-data source through this package — only the
+  framework/build system underneath changes.
+- **Fixture behavior removed/retained:** Retained as-is; the migration
+  moves `apps/web`'s existing components into a Next.js app structure
+  without changing what data source any of them use yet.
 - **Audit events:** None new.
 - **Tests:**
   - Re-confirm `npm ci`/`typecheck`/`test`/`build` pass on the actual
@@ -66,15 +103,28 @@ sequence, and matches the old roadmap's own dependency graph
     version rather than "whatever's latest," since ">=18" is wide).
   - Add a smoke test (or CI step) that fails the build if any
     `.env*` file other than `.env.example` is ever committed.
+  - **Route and rendering regression tests**, added as part of the
+    Next.js migration: every existing `activeKey`/screen combination
+    that `render_smoke.tsx` already asserts on today must render
+    equivalently under its new Next.js route, using the migration as
+    the trigger to convert `AppShell`'s `activeKey`/`onNavigate` props
+    into real Next.js routes for the first time (closing the "no
+    client-side router exists" gap flagged in the audit) — this is
+    the acceptance bar for "no broad redesign," not a subjective
+    visual review.
 - **CI requirements:** Extend `.github/workflows/ci.yml` (already
-  passing) with: environment-variable-template validation, and a
-  step that fails if fixture data (`sampleContent.ts`,
-  `fixtures/hawksRidge.ts`) is imported from anywhere outside
-  `apps/web`'s own demo path or a test file (extending the existing
-  grep-based check in `packages/02-app-shell/test/render_smoke.tsx` to
-  cover the whole repo, not just that one package).
-- **Deployment requirements:** No deploy target changes yet (Vercel
-  config as-is).
+  passing) with: environment-variable-template validation; a step that
+  fails if fixture data (`sampleContent.ts`, `fixtures/hawksRidge.ts`)
+  is imported from anywhere outside `apps/web`'s own demo path or a
+  test file (extending the existing grep-based check in
+  `packages/02-app-shell/test/render_smoke.tsx` to cover the whole
+  repo); and the Next.js build/typecheck/test commands replacing (not
+  running alongside) the current esbuild-based ones once the migration
+  lands.
+- **Deployment requirements:** `vercel.json` updated for a Next.js
+  build (framework detection, build/output settings) — this is the
+  "deployment configuration update" the migration requires; still
+  Vercel, still the same project, no new environment.
 - **Acceptance criteria:**
   1. `.env.example` exists at repo root, documents every variable name
      `TARGET-ARCHITECTURE.md` §10 identifies, contains zero real
@@ -87,8 +137,8 @@ sequence, and matches the old roadmap's own dependency graph
      the "no error states anywhere" gap flagged in the audit).
   4. A basic structured-logging/monitoring plan is written (which
      Vercel/Supabase built-ins are used at minimum; whether a paid
-     error-reporting service is added is called out as a decision, not
-     assumed — see the executive summary).
+     error-reporting service is added is a genuine remaining owner
+     decision — see the PR description's executive summary).
   5. Every existing "Preview only" and "not yet functional" label is
      re-confirmed still accurate; the two misleading dead-control
      buttons (Selections "Review & Approve," Documents "Download") are
@@ -96,9 +146,31 @@ sequence, and matches the old roadmap's own dependency graph
      removed until their real package lands — a rendered, clickable,
      no-op primary action is not acceptable to carry into a
      production-labeled build.
+  6. **The existing UI is migrated into Next.js with no broad
+     redesign** — the approved visual language (design tokens,
+     layout, `AppShell` chrome), navigation structure, financial
+     logic, and construction terminology are preserved exactly;
+     the change is structural (framework, routing, server/client
+     boundary), not visual or product scope.
+  7. **Server/client component boundary is established**: data-fetching
+     and any future privileged logic live in Server Components/Route
+     Handlers; interactive UI (the demo role switcher's eventual real
+     replacement, form state, mobile drawer/sheet open-close state)
+     stays in Client Components — this boundary is drawn now, before
+     P2 has real mutations to place on the correct side of it.
+  8. **Route and rendering regression tests pass**: every screen
+     reachable today (Overview, Financials, Action Center,
+     Conversations, Contacts, Settings, and every `ProjectWorkspace`
+     tab, on both admin and client) renders under its new real URL
+     route with equivalent content to today's `activeKey`-based
+     render, verified by the tests described above, not by manual
+     click-through alone.
 - **Dependencies:** None.
 - **Explicit exclusions:** No new tables, no auth, no real financial
-  writes, no external service connections of any kind.
+  writes, no external service connections of any kind. No product
+  scope change, no new screens, no visual redesign — this package
+  changes *how* the existing approved UI is served, never *what* it
+  looks like or does.
 
 ## Package P1 — Database and security validation
 
@@ -153,11 +225,10 @@ sequence, and matches the old roadmap's own dependency graph
 - **Acceptance criteria:**
   1. Every SQL test file in `tests/sql/` passes against a real
      Postgres instance, in CI, on every PR.
-  2. At least one defect is expected to be found (no schema this size
-     has ever run clean on its first real execution) — it must be
-     fixed via a new forward migration with its own `_down.sql`, and
-     documented in this file's changelog section (added once a defect
-     is actually found — not fabricated now).
+  2. Any defects discovered must be corrected through new forward
+     migrations and documented. Finding no defect does not prevent
+     acceptance if all execution, RLS, transaction, concurrency,
+     migration, and rollback tests pass.
   3. RLS is proven, not asserted: a real test user with role `client`
      cannot read another project's `expenses` row, and a real test
      user with role `staff` cannot read another org's `projects` row,
@@ -190,10 +261,16 @@ sequence, and matches the old roadmap's own dependency graph
   policies from creation. `bootstrap_organization()` gated behind an
   invite code or manual-approval flag before this package is
   considered complete for production use (per its own SQL comment).
-- **Server-side operations:** Invitation-send RPC (or Next.js API
-  route if adopted this early — see `TARGET-ARCHITECTURE.md` §5)
-  emailing an invite link; invitation-accept RPC creating the
-  `profiles` row; decision-maker designation RPC (admin/staff only).
+- **Server-side operations:** Invitation-send Next.js Route Handler
+  (using the server runtime established in P0 — see
+  `TARGET-ARCHITECTURE.md` §5.1) emailing an invite link, calling a
+  Postgres RPC for the actual row insert; invitation-accept flow
+  creating the `profiles` row; decision-maker designation RPC
+  (admin/staff only). All of these run under the ordinary
+  user-JWT-and-RLS access pattern (§5.2) except the invite email send
+  itself, which needs an email-provider credential and is one of the
+  narrow, explicitly-justified service-role/privileged-credential
+  cases per §5.2's enumerated list.
 - **UI screens connected to live data:** Login/logout, a minimal
   "Team & Invitations" screen, a minimal "Decision Makers" designation
   UI on the project. `DemoControls.tsx` is deleted from any build with
@@ -248,14 +325,16 @@ sequence, and matches the old roadmap's own dependency graph
     (the `project_status` enum exists; no transition-validity trigger
     exists yet, unlike the expense state machine's own precedent).
   - New migration: `is_project_vendor(project_id)` helper function +
-    vendor RLS policies on every table that currently has only
-    staff/client policies, scoped to what a vendor should ever see at
-    this stage (their own `project_members` row only — no vendor
-    product screens ship until P11, matching the old roadmap's own
-    "foundation only" framing).
+    exactly one new policy consuming it — a vendor may read their own
+    `project_members` row, nothing else. **No vendor policy is added
+    to any other table in this package** (see "Vendor RLS sequencing"
+    above) — no vendor product screens ship until P11, matching the
+    old roadmap's own "foundation only" framing, and no other table's
+    RLS is touched by this migration.
 - **Permissions/RLS policies:** Vendor baseline ("vendor sees nothing
-  except their own membership") tested from this package forward, per
-  the recommended-change rationale above.
+  except their own membership row") tested from this package forward,
+  per the recommended-change rationale above — this is the whole of
+  P3's vendor scope, deliberately minimal.
 - **Server-side operations:** Project-create RPC (validates
   project-number uniqueness per org, GMP amount/flag consistency —
   already enforced at the CHECK-constraint level, RPC just surfaces
@@ -270,10 +349,12 @@ sequence, and matches the old roadmap's own dependency graph
 - **Audit events:** Every project create/edit/status-change/
   archive/reactivate.
 - **Tests:** Status-transition validity test (reject an invalid jump,
-  e.g. `draft → closed_out` directly); vendor-isolation RLS test
-  ("Vendor A sees nothing" — extending the exact test class Package 1
-  already wrote for this, now runnable for real since P1 executed the
-  schema).
+  e.g. `draft → closed_out` directly); vendor-isolation RLS tests on
+  **both axes** required by the vendor RLS sequencing above —
+  cross-project ("Vendor A sees nothing on a project they're not a
+  member of," extending the exact test class Package 1 already wrote,
+  now runnable for real since P1 executed the schema) and cross-vendor
+  ("Vendor A sees nothing belonging to Vendor B on the same project").
 - **CI requirements:** Extends P1/P2's Postgres+Auth CI job with the
   new migrations; vendor-isolation test added to the required suite.
 - **Deployment requirements:** No new environment; still on the P2
@@ -283,6 +364,8 @@ sequence, and matches the old roadmap's own dependency graph
      through enforced valid transitions only, with a full audit trail.
   2. A vendor test account, added to Project A only, cannot read any
      row scoped to Project B, verified by an actual query, not review.
+     A second vendor test account, also added to Project A, cannot
+     read the first vendor's `project_members` row either.
   3. Contacts screen shows real project team/client data, zero
      hardcoded names.
 - **Dependencies:** P2.
@@ -317,10 +400,11 @@ no less specificity in scope, dependencies, and exclusions.
   `expenses_staff_full_access`, `import_batches_staff_only`,
   `import_rows_staff_only` — all already designed, now actually
   exercised by a real import flow for the first time.
-- **Server-side operations:** Import-file parser (needs a server
-  runtime — see `TARGET-ARCHITECTURE.md` §5 decision); category-
-  rollup and independent-control-total real SQL implementations,
-  finally retiring `SupabaseFinancialRepository`'s stub status.
+- **Server-side operations:** Import-file parser, running as a Next.js
+  Route Handler on the server runtime established in P0 (see
+  `TARGET-ARCHITECTURE.md` §5.1); category-rollup and independent-
+  control-total real SQL implementations, finally retiring
+  `SupabaseFinancialRepository`'s stub status.
 - **UI screens connected to live data:** `AdminFinancialsScreen`,
   `ClientBudgetAndInvoicesScreen`, new import wizard screens.
 - **Fixture behavior removed:** `FixtureFinancialRepository` is no
@@ -357,10 +441,14 @@ no less specificity in scope, dependencies, and exclusions.
   procurement/material orders.
 - **Schema/migrations:** `bid_packages`, `bid_submissions`,
   `bid_questions`, `bid_addenda`, `material_orders`,
-  `material_order_line_items` (new).
-- **RLS:** References the vendor RLS foundation from P3 — this
-  package must not introduce any new vendor-facing security boundary
-  of its own; it only extends the one already tested.
+  `material_order_line_items` (new) — each with its own narrowly
+  scoped vendor-read policy (own bid/submission only, never a
+  competing vendor's) calling P3's `is_project_vendor()` helper.
+- **RLS:** Extends the vendor identity boundary P3 already established
+  — calls `is_project_vendor()`, does not redefine vendor identity and
+  does not introduce a new security boundary of its own. Every new
+  vendor policy here gets its own cross-project and cross-vendor
+  isolation test per the roadmap-wide vendor RLS sequencing rule.
 - **Server-side operations:** Commitment supersede flow (already has
   real RPCs — `supersede_committed_cost()` — wire real UI to them for
   the first time); PDF generation for PO/subcontract documents.
@@ -406,9 +494,12 @@ no less specificity in scope, dependencies, and exclusions.
   improvised custom payment implementation); convenience-fee handling;
   provider reconciliation; partial/failed/reversed payments; refunds.
 - **Schema/migrations:** `payment_provider_transactions` (new).
-- **Server-side operations:** Webhook handler (requires the server
-  runtime decision from §5 to be resolved by now at the latest);
-  reconciliation job matching provider transactions to `payments` rows.
+- **Server-side operations:** Webhook handler, running on the Next.js
+  server runtime already established in P0 (§5.1) — this is exactly
+  the kind of verified-external-caller case §5.2 scopes service-role/
+  privileged-credential use to, with explicit signature verification
+  before anything is trusted; reconciliation job matching provider
+  transactions to `payments` rows.
 - **Action Center events added:** Failed/reversed payment.
 - **Tests:** A failed/reversed payment is proven to never silently
   disappear — it always produces a visible, queryable record.
@@ -417,7 +508,7 @@ no less specificity in scope, dependencies, and exclusions.
   webhook before any UI reflects paid status, per instruction.
 - **Dependencies:** P6.
 - **Exclusions:** Provider selection itself is an owner decision, not
-  made by this document (see executive summary).
+  made by this document (see the PR description's executive summary).
 
 ### Package P7 — Change Orders, Field Directives, E-Signature
 
@@ -473,9 +564,11 @@ no less specificity in scope, dependencies, and exclusions.
 - **Scope:** `schedule_phases`, `daily_logs`, `field_issues`,
   `documents`, `rfis` (five tables — corrected count carried forward
   from the old roadmap's own correction), plus `tasks`, `meetings`,
-  `meeting_action_items`, `safety_documents`, `safety_incidents` —
-  nine tables total.
-- **Schema/migrations:** All nine tables above (new). `documents`
+  `meeting_action_items`, `safety_documents`, `safety_incidents` (five
+  more) — **ten tables total** (corrected here: the previous version
+  of this document said "nine," which undercounted the second group of
+  five as four).
+- **Schema/migrations:** All ten tables above (new). `documents`
   follows the `onedrive_item_id`/`onedrive_last_synced_at` metadata-
   only pattern already established on `expenses` (§8 of
   `TARGET-ARCHITECTURE.md`).
