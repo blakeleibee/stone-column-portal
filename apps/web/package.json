@@ -4,24 +4,24 @@
   "private": true,
   "description": "Stone Column Portal — browser-viewable interactive preview using the approved Package 2 AppShell, repositories, view models, and the Package 1 financial engine. Sample data only; no auth, no Supabase, no real credentials.",
   "scripts": {
-    "dev": "node build.mjs --serve",
-    "build": "node build.mjs --build",
+    "dev": "next dev -p 5173 -H 127.0.0.1",
+    "build": "next build",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx test/render_smoke.tsx",
-    "test": "tsx test/render_smoke.tsx"
+    "test": "tsx test/route_smoke.ts"
   },
   "dependencies": {
+    "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "esbuild": "0.21.5",
     "tsx": "4.16.2",
+    "@types/node": "20.14.15",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.17.0"
   }
 }
