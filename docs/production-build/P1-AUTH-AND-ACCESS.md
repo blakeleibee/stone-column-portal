@@ -196,3 +196,26 @@ Graph credentials are provisioned.
 - Project-creation/settings/team-management UI does not exist — the
   `/admin/financials` route's "first project in the org" placeholder
   (see `P1-DESIGN.md` §D) stands in for a real project picker.
+- **Document download is not yet functional end-to-end.**
+  `LocalFilesystemStorageAdapter.getDownloadUrl()` returns a URL for a
+  `/api/documents/download-by-key` route that doesn't exist, and the
+  actual download route (`/api/documents/[id]/download/route.ts`)
+  redirects using a hardcoded `new URL(url, "http://localhost")` base —
+  so no configuration today actually delivers file bytes end-to-end.
+  The `canViewDocument` authorization gate itself is real and tested; a
+  later package must add the missing local-serving route and fix the
+  redirect's base URL.
+- **`accept_invitation()` does not verify the caller's authenticated
+  email matches the invitation's target email** — token possession
+  alone is sufficient to accept. Acceptable for a manual-link,
+  single-use, 14-day-expiry model, but should be tightened before real
+  invitations are sent to real people.
+- An authenticated user with the wrong role visiting a route they
+  can't access sees the generic error boundary, not a redirect to their
+  own home — correct denial, minor UX rough edge.
+- `getClientSafeBudgetLines`'s `revisedEstimateCents: row.original_estimate_cents
+  + row.approved_changes_cents` arithmetic assumes both values
+  deserialize as JS numbers from Postgres/PostgREST — verify this holds
+  once real Supabase is connected (a `numeric` column type returned as
+  a string would silently become string concatenation instead of
+  addition).
