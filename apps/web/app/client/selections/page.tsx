@@ -8,7 +8,7 @@ export default async function ClientSelectionsPage() {
     await requireRole(["client"]);
   }
   return (
-    <ClientChrome activeKey="selections">
+    <ClientChrome activeKey="selections" isDemoMode={isDemoMode()}>
       <SelectionsTab isClient />
     </ClientChrome>
   );

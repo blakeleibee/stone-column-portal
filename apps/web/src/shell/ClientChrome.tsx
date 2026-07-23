@@ -20,7 +20,15 @@ const CLIENT_PATH: Record<string, string> = {
 
 const ADMIN_OVERVIEW_PATH = "/admin/overview";
 
-export function ClientChrome({ activeKey, children }: { activeKey: string; children: React.ReactNode }) {
+export function ClientChrome({
+  activeKey,
+  isDemoMode,
+  children,
+}: {
+  activeKey: string;
+  isDemoMode: boolean;
+  children: React.ReactNode;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const isPreviewingAsClient = searchParams.get("preview") === "1";
@@ -54,12 +62,14 @@ export function ClientChrome({ activeKey, children }: { activeKey: string; child
 
   return (
     <div>
-      <DemoControls
-        role="client"
-        onChangeRole={handleChangeRole}
-        isPreviewingAsClient={isPreviewingAsClient}
-        onPreviewAsClient={handlePreviewAsClient}
-      />
+      {isDemoMode && (
+        <DemoControls
+          role="client"
+          onChangeRole={handleChangeRole}
+          isPreviewingAsClient={isPreviewingAsClient}
+          onPreviewAsClient={handlePreviewAsClient}
+        />
+      )}
       <AppShell
         role="client"
         activeKey={activeKey}
@@ -68,7 +78,7 @@ export function ClientChrome({ activeKey, children }: { activeKey: string; child
         isPreviewingAsClient={isPreviewingAsClient}
         onExitPreview={handleExitPreview}
       >
-        <SampleDataTag />
+        {isDemoMode && <SampleDataTag />}
         {children}
       </AppShell>
     </div>

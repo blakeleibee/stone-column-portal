@@ -8,7 +8,7 @@ export default async function AdminSettingsPage() {
     await requireRole(["admin", "staff"]);
   }
   return (
-    <AdminChrome activeKey="settings">
+    <AdminChrome activeKey="settings" isDemoMode={isDemoMode()}>
       <PlaceholderScreen
         title="Settings"
         description="Company profile, user management, cost-code library, and notification preferences."

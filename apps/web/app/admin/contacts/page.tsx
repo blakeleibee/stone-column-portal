@@ -8,7 +8,7 @@ export default async function AdminContactsPage() {
     await requireRole(["admin", "staff"]);
   }
   return (
-    <AdminChrome activeKey="contacts">
+    <AdminChrome activeKey="contacts" isDemoMode={isDemoMode()}>
       <ContactsScreen />
     </AdminChrome>
   );

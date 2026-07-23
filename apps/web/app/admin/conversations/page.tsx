@@ -8,7 +8,7 @@ export default async function AdminConversationsPage() {
     await requireRole(["admin", "staff"]);
   }
   return (
-    <AdminChrome activeKey="conversations">
+    <AdminChrome activeKey="conversations" isDemoMode={isDemoMode()}>
       <ConversationsTab />
     </AdminChrome>
   );

@@ -10,7 +10,7 @@ export default async function ClientBudgetPage() {
   }
   const clientVM = await loadClientVM();
   return (
-    <ClientChrome activeKey="budget">
+    <ClientChrome activeKey="budget" isDemoMode={isDemoMode()}>
       <ClientBudgetAndInvoicesScreen viewModel={clientVM} />
     </ClientChrome>
   );

@@ -8,7 +8,7 @@ export default async function ClientMessagesPage() {
     await requireRole(["client"]);
   }
   return (
-    <ClientChrome activeKey="messages">
+    <ClientChrome activeKey="messages" isDemoMode={isDemoMode()}>
       <ConversationsTab />
     </ClientChrome>
   );

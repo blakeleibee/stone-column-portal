@@ -10,7 +10,7 @@ export default async function AdminFinancialsPage() {
   if (isDemoMode()) {
     const adminVM = await loadAdminVM();
     return (
-      <AdminChrome activeKey="financials">
+      <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
         <ProjectWorkspace adminViewModel={adminVM} initialTab="financials" />
       </AdminChrome>
     );
@@ -29,7 +29,7 @@ export default async function AdminFinancialsPage() {
 
   if (!firstProject) {
     return (
-      <AdminChrome activeKey="financials">
+      <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
         <p style={{ padding: 24 }}>No projects yet for this organization.</p>
       </AdminChrome>
     );
@@ -37,7 +37,7 @@ export default async function AdminFinancialsPage() {
 
   const adminVM = await loadAdminVMFor(firstProject.id, repo);
   return (
-    <AdminChrome activeKey="financials">
+    <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
       <ProjectWorkspace adminViewModel={adminVM} initialTab="financials" />
     </AdminChrome>
   );

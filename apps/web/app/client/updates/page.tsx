@@ -8,7 +8,7 @@ export default async function ClientUpdatesPage() {
     await requireRole(["client"]);
   }
   return (
-    <ClientChrome activeKey="updates">
+    <ClientChrome activeKey="updates" isDemoMode={isDemoMode()}>
       <UpdatesTab isClient />
     </ClientChrome>
   );

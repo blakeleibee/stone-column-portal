@@ -8,7 +8,7 @@ export default async function AdminActionCenterPage() {
     await requireRole(["admin", "staff"]);
   }
   return (
-    <AdminChrome activeKey="action-center">
+    <AdminChrome activeKey="action-center" isDemoMode={isDemoMode()}>
       <ActionCenterScreen />
     </AdminChrome>
   );

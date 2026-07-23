@@ -8,7 +8,7 @@ export default async function ClientSchedulePage() {
     await requireRole(["client"]);
   }
   return (
-    <ClientChrome activeKey="schedule">
+    <ClientChrome activeKey="schedule" isDemoMode={isDemoMode()}>
       <ScheduleClientTab />
     </ClientChrome>
   );

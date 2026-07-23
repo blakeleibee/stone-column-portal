@@ -10,7 +10,7 @@ export default async function AdminOverviewPage() {
   }
   const adminVM = await loadAdminVM();
   return (
-    <AdminChrome activeKey="overview">
+    <AdminChrome activeKey="overview" isDemoMode={isDemoMode()}>
       <AdminOverviewScreen adminVM={adminVM} />
     </AdminChrome>
   );

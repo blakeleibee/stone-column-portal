@@ -10,7 +10,7 @@ export default async function AdminProjectsPage() {
   }
   const adminVM = await loadAdminVM();
   return (
-    <AdminChrome activeKey="projects">
+    <AdminChrome activeKey="projects" isDemoMode={isDemoMode()}>
       <ProjectWorkspace adminViewModel={adminVM} />
     </AdminChrome>
   );

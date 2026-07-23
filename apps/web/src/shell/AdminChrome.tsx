@@ -21,7 +21,15 @@ const ADMIN_PATH: Record<string, string> = {
 const CLIENT_HOME_PATH = "/client/home";
 const CLIENT_PREVIEW_PATH = "/client/budget?preview=1";
 
-export function AdminChrome({ activeKey, children }: { activeKey: string; children: React.ReactNode }) {
+export function AdminChrome({
+  activeKey,
+  isDemoMode,
+  children,
+}: {
+  activeKey: string;
+  isDemoMode: boolean;
+  children: React.ReactNode;
+}) {
   const router = useRouter();
   const [subRole, setSubRole] = useState<"admin" | "staff">("admin");
 
@@ -44,12 +52,14 @@ export function AdminChrome({ activeKey, children }: { activeKey: string; childr
 
   return (
     <div>
-      <DemoControls
-        role={subRole}
-        onChangeRole={handleChangeRole}
-        isPreviewingAsClient={false}
-        onPreviewAsClient={handlePreviewAsClient}
-      />
+      {isDemoMode && (
+        <DemoControls
+          role={subRole}
+          onChangeRole={handleChangeRole}
+          isPreviewingAsClient={false}
+          onPreviewAsClient={handlePreviewAsClient}
+        />
+      )}
       <AppShell
         role={subRole}
         activeKey={activeKey}
@@ -57,7 +67,7 @@ export function AdminChrome({ activeKey, children }: { activeKey: string; childr
         userName={subRole === "admin" ? "Brent Leibee" : "Staff Member"}
         projectName={projectMeta.name}
       >
-        <SampleDataTag />
+        {isDemoMode && <SampleDataTag />}
         {children}
       </AppShell>
     </div>

@@ -8,7 +8,7 @@ export default async function ClientDocumentsPage() {
     await requireRole(["client"]);
   }
   return (
-    <ClientChrome activeKey="documents">
+    <ClientChrome activeKey="documents" isDemoMode={isDemoMode()}>
       <DocumentsTab isClient />
     </ClientChrome>
   );

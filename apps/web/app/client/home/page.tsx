@@ -10,7 +10,7 @@ export default async function ClientHomePage() {
   }
   const clientVM = await loadClientVM();
   return (
-    <ClientChrome activeKey="home">
+    <ClientChrome activeKey="home" isDemoMode={isDemoMode()}>
       <ClientHomeScreen clientVM={clientVM} />
     </ClientChrome>
   );
