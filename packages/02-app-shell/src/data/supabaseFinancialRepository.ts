@@ -90,7 +90,15 @@ export class SupabaseFinancialRepository implements FinancialRepository {
   async getCommittedCosts(projectId: string) {
     const { data, error } = await this.client.from("committed_costs").select("*").eq("project_id", projectId);
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      projectId: row.project_id,
+      costCodeId: row.cost_code_id,
+      amountCents: row.amount_cents,
+      status: row.status,
+      supersededAt: row.superseded_at,
+      supersededById: row.superseded_by_id,
+    }));
   }
 
   async getForecastEntries(projectId: string) {
@@ -100,7 +108,14 @@ export class SupabaseFinancialRepository implements FinancialRepository {
       .eq("project_id", projectId)
       .is("superseded_at", null);
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      projectId: row.project_id,
+      costCodeId: row.cost_code_id,
+      forecastToCompleteCents: row.forecast_to_complete_cents,
+      method: row.method,
+      supersededAt: row.superseded_at,
+    }));
   }
 
   async getFeeRule(projectId: string) {
@@ -116,6 +131,7 @@ export class SupabaseFinancialRepository implements FinancialRepository {
       projectId: data.project_id,
       feeBasis: data.fee_basis,
       feeBasisPoints: data.fee_basis_points,
+      feeFixedAmountCents: data.fee_fixed_amount_cents,
       contingencyFeeEligible: data.contingency_fee_eligible,
       allowanceFeeEligible: data.allowance_fee_eligible,
       effectiveFrom: data.effective_from,
@@ -125,7 +141,15 @@ export class SupabaseFinancialRepository implements FinancialRepository {
   async getFeeLedgerEntries(projectId: string) {
     const { data, error } = await this.client.from("fee_ledger").select("*").eq("project_id", projectId);
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      projectId: row.project_id,
+      sourceType: row.source_type,
+      sourceId: row.source_id,
+      feeAmountCents: row.fee_amount_cents,
+      reversesEntryId: row.reverses_entry_id,
+      isAdjustment: row.is_adjustment,
+    }));
   }
 
   /**
