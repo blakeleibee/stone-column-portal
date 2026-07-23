@@ -183,15 +183,15 @@ closeout record: `docs/milestones/P0-complete.md`.
 
 ## Package P1 — Database and security validation
 
-**Status: Active** (as of P0's completion). **Scope under review as of
-2026-07-22:** a newer, broader P1 request (full auth, Prisma,
-role-based access control for a flat ADMIN/VENDOR/HOMEOWNER model) was
-received that conflicts with this section's existing scope in several
-material ways — this package validates the existing Supabase/Postgres
-schema only, with no auth UI (that's Package P2 below) and no vendor
-identity (that's Package P3). See the conversation record for the
-reconciliation decision before treating this section's content as
-stale; it has not yet been rewritten.
+**Status: Active — scope superseded by `docs/production-build/P1-DESIGN.md`.**
+That document is now the authoritative P1 scope: it consolidates this
+section, the auth-wiring portion of Package P2 below, and the
+vendor-identity slice of Package P3 below into one package, reconciling
+a broader P1 request against this repository's existing Supabase/RLS
+architecture (kept) rather than replacing it. Read `P1-DESIGN.md`
+first. The section below is retained as the original, narrower
+schema-validation-only scope for historical reference — it is no
+longer what "P1" means going forward.
 
 - **Exact scope:** Execute the existing, already-written schema for
   the first time ever against a real disposable Postgres/Supabase
@@ -258,6 +258,11 @@ stale; it has not yet been rewritten.
   `schema/001`–`005` only. No auth UI. No production Supabase project.
 
 ## Package P2 — Authentication, company membership, and project access
+
+**Status: Auth-wiring/invitations content folded into P1 — see
+`docs/production-build/P1-DESIGN.md`.** `project_decision_makers` is
+explicitly excluded from P1 (open product decision) and remains this
+section's (future) scope once that decision is made.
 
 - **Exact scope:** Real Supabase Auth wiring end-to-end; the
   `DemoControls` role switcher is removed from any authenticated
@@ -330,6 +335,11 @@ stale; it has not yet been rewritten.
   (P12). No real financial mutation UI yet.
 
 ## Package P3 — Production project foundation
+
+**Status: Vendor-identity RLS slice folded into P1 — see
+`docs/production-build/P1-DESIGN.md`.** Project CRUD/lifecycle UI,
+team-management UI, and project settings screens remain this
+section's (future) scope.
 
 - **Exact scope:** Real project CRUD and lifecycle, plus (per the
   recommended change above) the vendor identity/RLS foundation.
