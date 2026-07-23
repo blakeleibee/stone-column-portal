@@ -1,5 +1,11 @@
 # Production Roadmap
 
+**Status:** P0 complete (`p0-complete` tag, commit `54f05a3`) — see
+`docs/milestones/P0-complete.md` for the closeout record (final
+acceptance-criteria status, verified commands, and the regressions
+found and fixed during execution; details are not duplicated here).
+**P1 is the active package.**
+
 Replaces the "Package 3 onward" portion of
 `docs/product-definition/05-implementation-roadmap.md` with small,
 reviewable **production** packages. Packages 1–2 (financial engine,
@@ -74,6 +80,9 @@ sequence, and matches the old roadmap's own dependency graph
 ---
 
 ## Package P0 — Production foundation and environment verification
+
+**Status: Complete.** Tag `p0-complete`, commit `54f05a3`. Full
+closeout record: `docs/milestones/P0-complete.md`.
 
 - **Exact scope:** No product feature work and no broad visual
   redesign. Establishes the scaffolding every later package depends
@@ -173,6 +182,16 @@ sequence, and matches the old roadmap's own dependency graph
   looks like or does.
 
 ## Package P1 — Database and security validation
+
+**Status: Active** (as of P0's completion). **Scope under review as of
+2026-07-22:** a newer, broader P1 request (full auth, Prisma,
+role-based access control for a flat ADMIN/VENDOR/HOMEOWNER model) was
+received that conflicts with this section's existing scope in several
+material ways — this package validates the existing Supabase/Postgres
+schema only, with no auth UI (that's Package P2 below) and no vendor
+identity (that's Package P3). See the conversation record for the
+reconciliation decision before treating this section's content as
+stale; it has not yet been rewritten.
 
 - **Exact scope:** Execute the existing, already-written schema for
   the first time ever against a real disposable Postgres/Supabase
