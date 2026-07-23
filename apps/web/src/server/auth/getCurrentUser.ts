@@ -10,8 +10,10 @@ import type { AppUser } from "./types";
  * RLS is always the second, independent enforcement layer behind every
  * check built on this function.
  */
-export async function getCurrentUser(): Promise<AppUser | null> {
-  const supabase = await createServerSupabaseClient();
+export async function getCurrentUser(
+  client?: Awaited<ReturnType<typeof createServerSupabaseClient>>
+): Promise<AppUser | null> {
+  const supabase = client ?? (await createServerSupabaseClient());
   const {
     data: { user },
   } = await supabase.auth.getUser();

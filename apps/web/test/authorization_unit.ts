@@ -8,13 +8,19 @@
  * tests/sql/package_p1_auth_tests.sql, which cover the same scenarios
  * at the database layer.
  *
- * This file fakes next/headers' cookies() (used by
- * createServerSupabaseClient) and @supabase/ssr's createServerClient,
- * so it must run standalone via tsx (not inside a Next.js request
- * context) — matching how route_smoke.ts/auth_smoke.ts already run
- * outside Next's runtime via tsx.
+ * Each of the 5 scenario checks below calls the REAL exported function
+ * from src/server/auth/ (getCurrentUser/requireAuthenticatedUser/
+ * requireRole/requireOrganizationAccess/canViewProject), passing the
+ * fake Supabase client through the optional dependency-injection
+ * parameter those functions accept (added specifically so this file
+ * doesn't have to re-derive their decision logic and call it a test).
+ * Only the 6th, fixture-isolation check does not need this seam --
+ * it already calls the real getRepository().
  */
 import { strict as assert } from "node:assert";
+import { getCurrentUser } from "../src/server/auth/getCurrentUser";
+import { requireAuthenticatedUser, requireRole, requireOrganizationAccess, AuthorizationError } from "../src/server/auth/require";
+import { canViewProject } from "../src/server/auth/can";
 
 let checks = 0;
 function check(name: string, condition: boolean) {
@@ -24,13 +30,21 @@ function check(name: string, condition: boolean) {
 }
 
 async function checkThrows(name: string, fn: () => Promise<unknown>) {
+  // NOTE: the "did not throw" case must be raised and caught OUTSIDE this
+  // try/catch, or it self-catches and this helper reports "ok" no matter
+  // what fn() does. (This was previously a live bug in this exact file --
+  // fixed here so a real regression in fn() can actually fail the check.)
+  let threw = false;
+  let caughtMessage = "";
   try {
     await fn();
-    throw new Error(`FAILED: ${name} — expected it to throw/redirect, but it did not`);
   } catch (err) {
-    checks++;
-    console.log(`  ok — ${name} (rejected: ${(err as Error).message})`);
+    threw = true;
+    caughtMessage = (err as Error).message;
   }
+  assert.ok(threw, `FAILED: ${name} — expected it to throw/redirect, but it did not`);
+  checks++;
+  console.log(`  ok — ${name} (rejected: ${caughtMessage})`);
 }
 
 // ---------------------------------------------------------------------
@@ -79,26 +93,28 @@ function makeFakeSupabaseClient(opts: {
 }
 
 async function main() {
-  const { AuthorizationError } = await import("../src/server/auth/require");
-
-  // Patch createServerSupabaseClient's module to return our fake —
-  // done via a lightweight manual mock since this repo has no test-
-  // mocking framework installed: re-require getCurrentUser/require/can
-  // with a monkeypatched module cache entry isn't available in plain
-  // ESM, so instead these tests call the exported functions with the
-  // fake client injected via a test-only seam. If require.ts/can.ts/
-  // getCurrentUser.ts don't yet expose a way to inject a client (they
-  // call createServerSupabaseClient() internally), this file instead
-  // tests the DECISION LOGIC directly by importing and unit-testing
-  // getCurrentUser's shape via a local reimplementation of its query
-  // logic against the fake client below — see each check's comment
-  // for exactly what it verifies.
+  // Each scenario below calls the REAL exported function from
+  // src/server/auth/, passing the fake client through that function's
+  // optional dependency-injection parameter. This exercises the actual
+  // decision logic (role checks, org comparisons, query shapes) — a
+  // regression in the real code (inverted role check, dropped org
+  // comparison, wrong query/column) will make these checks fail, not
+  // just a hand-authored Array.filter standing in for it.
 
   console.log("--- Scenario: unauthenticated request to a protected resource ---");
   {
     const client = makeFakeSupabaseClient({ currentUserId: null, profiles: [], projects: [] });
-    const { data } = await client.auth.getUser();
-    check("no session means no user", data.user === null);
+    const user = await getCurrentUser(client);
+    check("getCurrentUser() returns null when there is no session (real function, fake client)", user === null);
+
+    // redirect() from next/navigation throws a special internal signal
+    // that depends on Next's request-context internals; outside a real
+    // Next.js request it still throws (just not a usable HTTP redirect),
+    // which is all checkThrows needs: requireAuthenticatedUser() must
+    // not silently return a user for an unauthenticated session.
+    await checkThrows("requireAuthenticatedUser() throws/redirects when there is no session (real function, fake client)", () =>
+      requireAuthenticatedUser(client)
+    );
   }
 
   console.log("\n--- Scenario: homeowner (client) attempting to access another client's project ---");
@@ -111,8 +127,10 @@ async function main() {
       profiles: [{ id: "client-a-id", org_id: "org-1", role: "client", full_name: "Client A", email: "a@x.com", is_active: true }],
       projects: [{ id: "project-a" }], // project-b deliberately absent — RLS would never return it
     });
-    const { data: project } = await client.from("projects").eq("id", "project-b").maybeSingle();
-    check("client-supplied project ID for an unrelated project resolves to no row (RLS-shaped denial)", project === null);
+    const denied = await canViewProject("project-b", client);
+    check("canViewProject() denies a client access to another client's project (real function, fake client)", denied === false);
+    const allowed = await canViewProject("project-a", client);
+    check("canViewProject() allows a client access to their own project (real function, fake client)", allowed === true);
   }
 
   console.log("\n--- Scenario: vendor attempting to access a project they're not assigned to ---");
@@ -122,15 +140,29 @@ async function main() {
       profiles: [{ id: "vendor-a-id", org_id: "org-1", role: "vendor", full_name: "Vendor A", email: "v@x.com", is_active: true }],
       projects: [{ id: "project-a" }], // vendor-a is only a member of project-a
     });
-    const { data: project } = await client.from("projects").eq("id", "project-z").maybeSingle();
-    check("vendor-supplied project ID for an unassigned project resolves to no row", project === null);
+    const denied = await canViewProject("project-z", client);
+    check("canViewProject() denies a vendor access to an unassigned project (real function, fake client)", denied === false);
+    const allowed = await canViewProject("project-a", client);
+    check("canViewProject() allows a vendor access to their assigned project (real function, fake client)", allowed === true);
   }
 
   console.log("\n--- Scenario: vendor attempting an admin-only action (role check) ---");
   {
-    const vendorRole = "vendor";
-    const allowedRoles = ["admin", "staff"];
-    check("requireRole(['admin','staff']) rejects a vendor by role membership", !allowedRoles.includes(vendorRole));
+    const client = makeFakeSupabaseClient({
+      currentUserId: "vendor-a-id",
+      profiles: [{ id: "vendor-a-id", org_id: "org-1", role: "vendor", full_name: "Vendor A", email: "v@x.com", is_active: true }],
+      projects: [],
+    });
+    let caught: unknown;
+    try {
+      await requireRole(["admin", "staff"], client);
+    } catch (err) {
+      caught = err;
+    }
+    check(
+      "requireRole(['admin','staff']) throws AuthorizationError for a vendor (real function, fake client)",
+      caught instanceof AuthorizationError
+    );
   }
 
   console.log("\n--- Scenario: client-supplied ID horizontal privilege escalation (org boundary) ---");
@@ -140,10 +172,15 @@ async function main() {
       profiles: [{ id: "staff-org1-id", org_id: "org-1", role: "staff", full_name: "Staff Org1", email: "s@x.com", is_active: true }],
       projects: [],
     });
-    const { data: profile } = await client.from("profiles").eq("id", "staff-org1-id").single();
+    let caught: unknown;
+    try {
+      await requireOrganizationAccess("org-2-someone-elses-org", client);
+    } catch (err) {
+      caught = err;
+    }
     check(
-      "a staff user's own org_id never matches a client-supplied different org id",
-      (profile as FakeRow).org_id !== "org-2-someone-elses-org"
+      "requireOrganizationAccess() throws AuthorizationError for a client-supplied different org id (real function, fake client)",
+      caught instanceof AuthorizationError
     );
   }
 
