@@ -1,3 +1,5 @@
+drop policy if exists audit_log_org_scoped_select on audit_log;
+
 drop trigger if exists audit_project_fee_rules on project_fee_rules;
 drop trigger if exists audit_project_members on project_members;
 drop trigger if exists audit_projects on projects;

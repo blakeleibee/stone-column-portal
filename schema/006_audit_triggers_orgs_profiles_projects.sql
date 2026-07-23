@@ -114,3 +114,38 @@ create trigger audit_profiles         after insert or update on profiles        
 create trigger audit_projects         after insert or update on projects         for each row execute function public.log_audit_self_scoped();
 create trigger audit_project_members  after insert or update or delete on project_members for each row execute function public.log_audit();
 create trigger audit_project_fee_rules after insert or update on project_fee_rules for each row execute function public.log_audit();
+
+-- =====================================================================
+-- Fix for the gap called out in this migration's own header comment
+-- above: audit_log_staff_select (schema/001) is
+--   `using (project_id is not null and is_org_staff(project_id))`
+-- which structurally can never match a row with project_id IS NULL --
+-- exactly what log_audit_no_project() writes for every orgs/profiles
+-- audit event (org renames, profile role/org/active-status changes --
+-- the same events schema/001's own reject_profile_self_escalation
+-- trigger already treats as security-sensitive). Without this, those
+-- rows are written durably but permanently unreadable by anyone,
+-- including admin/staff, via any normal RLS-scoped query.
+--
+-- Additive to audit_log_staff_select, not a replacement -- RLS
+-- policies for the same command are OR'd together, so this simply
+-- extends read access to cover the project_id IS NULL rows the
+-- original policy can't and was never meant to cover.
+--
+--   - table_name = 'orgs': record_id IS the org's own id, so
+--     is_org_staff_for_org(record_id) directly checks "is this caller
+--     staff/admin of the org this row concerns".
+--   - table_name = 'profiles': record_id is the profile's own id, not
+--     an org id, so it must be translated to that profile's org_id
+--     first, then the same is_org_staff_for_org() check applies.
+-- =====================================================================
+create policy audit_log_org_scoped_select on audit_log
+  for select to authenticated
+  using (
+    project_id is null and (
+      (table_name = 'orgs' and is_org_staff_for_org(record_id))
+      or (table_name = 'profiles' and is_org_staff_for_org(
+            (select org_id from profiles where id = record_id)
+          ))
+    )
+  );

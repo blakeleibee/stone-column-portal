@@ -517,6 +517,78 @@ end $$;
 select clear_test_user();
 
 -- =====================================================================
+-- SECTION 10 — audit_log_org_scoped_select: staff/admin CAN now read
+-- the project_id IS NULL rows this migration's own
+-- log_audit_no_project() writes for orgs/profiles.
+--
+-- Section 9 above (added alongside the triggers) runs its do $$ block
+-- WITHOUT `set local role authenticated`, so it executes as the
+-- unrestricted table owner and never actually exercised RLS -- it only
+-- proved the trigger writes a row, not that anyone can read it back
+-- through the app's normal RLS-scoped path. This section switches to
+-- `authenticated` (same pattern as every other RLS assertion in this
+-- file) so it genuinely proves the previously-reported gap is closed:
+-- before audit_log_org_scoped_select existed, this exact query would
+-- have returned 0 rows for admin/staff, not >=1, because
+-- audit_log_staff_select alone requires project_id IS NOT NULL.
+--
+-- Only one org exists in this fixture set (bootstrapping a second org
+-- for an existing profile is itself rejected -- see Section 1), so
+-- there's no second-org staff fixture available to pair this with a
+-- cross-org negative case in this addition. The positive same-org case
+-- below is still a real, meaningful proof that the new policy grants
+-- exactly the access it's supposed to.
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+declare
+  v_org_id uuid;
+  v_count int;
+begin
+  select org_id into v_org_id from profiles where id = (select value from test_fixture_ids where key = 'admin');
+
+  select count(*) into v_count from audit_log where table_name = 'orgs' and record_id = v_org_id;
+  perform assert_that(
+    v_count >= 1,
+    'admin should be able to read the orgs audit_log row for their own org via audit_log_org_scoped_select (previously invisible with project_id IS NULL under audit_log_staff_select alone)'
+  );
+
+  select count(*) into v_count from audit_log
+    where table_name = 'profiles'
+      and record_id = (select value from test_fixture_ids where key = 'staff_a');
+  perform assert_that(
+    v_count >= 1,
+    'admin should be able to read a profiles audit_log row for a profile in their own org via audit_log_org_scoped_select'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+select set_test_user((select value from test_fixture_ids where key = 'staff_a'));
+set local role authenticated;
+
+do $$
+declare
+  v_org_id uuid;
+  v_count int;
+begin
+  select org_id into v_org_id from profiles where id = (select value from test_fixture_ids where key = 'staff_a');
+
+  select count(*) into v_count from audit_log where table_name = 'orgs' and record_id = v_org_id;
+  perform assert_that(
+    v_count >= 1,
+    'staff (not just admin) should also be able to read the orgs audit_log row for their own org -- is_org_staff_for_org covers both roles, same as every other staff-scoped policy in this schema'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- =====================================================================
 -- If we reach this line, every assert_raises/assert_that above either
 -- fired when expected or never fired when not expected — the whole
 -- suite passed.
