@@ -23,7 +23,9 @@ const FILES = [
   "schema/004_committed_cost_insert_guard_and_forecast_lineage_lock.sql",
   "schema/005_forecast_commit_time_lineage_consistency.sql",
   "schema/006_audit_triggers_orgs_profiles_projects.sql",
+  "schema/007_vendor_identity.sql",
   "tests/sql/package1_tests.sql",
+  "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
 ];
 
