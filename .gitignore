@@ -26,6 +26,9 @@ Thumbs.db
 # Vercel local state
 .vercel/
 
+# P1 local file-storage adapter (dev only, never committed)
+.local-storage/
+
 # Claude Code local settings (personal, not shared with the repo)
 .claude/settings.local.json
 
