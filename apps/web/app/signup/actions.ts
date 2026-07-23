@@ -21,6 +21,18 @@ export async function bootstrapFirstAdmin(formData: FormData) {
     redirect("/signup?error=" + encodeURIComponent(signUpError.message));
   }
 
+  // KNOWN LIMITATION (tracked, not fixed here — see
+  // docs/production-build/P1-DESIGN.md's production-readiness
+  // limitations): signUp() above and this RPC are not atomic. If this
+  // call fails (transient DB error, or a race where this email somehow
+  // already bootstrapped between the two calls), the just-created
+  // auth.users row is left with no profiles row, and a retry with the
+  // same email will get "already registered" from signUp() before ever
+  // reaching this RPC again — an orphaned account with no self-service
+  // recovery path. A full fix (idempotent retry / reuse an existing
+  // profile-less session) is bigger than this flow's current scope;
+  // this is acceptable for a single, rarely-run first-admin bootstrap
+  // but must be revisited before this path sees real, repeated use.
   const { error: rpcError } = await supabase.rpc("bootstrap_organization", {
     p_org_name: orgName,
     p_admin_full_name: fullName,
