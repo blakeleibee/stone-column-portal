@@ -49,6 +49,7 @@ function startServer(): ChildProcess {
     cwd: APP_DIR,
     stdio: ["ignore", "pipe", "pipe"],
     shell: isWin,
+    env: { ...process.env, DEMO_MODE: "true" },
   });
 }
 
