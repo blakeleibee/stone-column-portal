@@ -1,7 +1,12 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { PlaceholderScreen } from "../../../src/screens/PlaceholderScreen";
+import { isDemoMode } from "../../../src/server/demoMode";
+import { requireRole } from "../../../src/server/auth/require";
 
-export default function AdminSettingsPage() {
+export default async function AdminSettingsPage() {
+  if (!isDemoMode()) {
+    await requireRole(["admin", "staff"]);
+  }
   return (
     <AdminChrome activeKey="settings">
       <PlaceholderScreen
