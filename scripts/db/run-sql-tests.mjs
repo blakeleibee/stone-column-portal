@@ -24,6 +24,7 @@ const FILES = [
   "schema/005_forecast_commit_time_lineage_consistency.sql",
   "schema/006_audit_triggers_orgs_profiles_projects.sql",
   "schema/007_vendor_identity.sql",
+  "schema/008_project_status_transitions.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",

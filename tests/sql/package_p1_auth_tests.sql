@@ -42,3 +42,31 @@ end $$;
 
 reset role;
 select clear_test_user();
+
+-- =====================================================================
+-- SECTION 2 (migration 008) — project status transitions
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+begin
+  update projects set status = 'active' where id = (select value from test_fixture_ids where key = 'project_a');
+  perform assert_that(
+    (select status from projects where id = (select value from test_fixture_ids where key = 'project_a')) = 'active',
+    'draft -> active should be a valid project status transition'
+  );
+end $$;
+
+select assert_raises(
+  format(
+    'update projects set status = %L where id = %L',
+    'archived',
+    (select value from test_fixture_ids where key = 'project_a')
+  ),
+  'active -> archived must be rejected (must go through closed_out first)'
+);
+
+reset role;
+select clear_test_user();
