@@ -33,7 +33,8 @@ create table invitations (
   created_at  timestamptz not null default now(),
 
   constraint invitations_role_valid check (role in ('staff', 'client', 'vendor')),
-  constraint invitations_not_accepted_and_revoked check (accepted_at is null or revoked_at is null)
+  constraint invitations_not_accepted_and_revoked check (accepted_at is null or revoked_at is null),
+  constraint invitations_staff_not_project_scoped check (role <> 'staff' or project_id is null)
 );
 
 alter table invitations enable row level security;

@@ -97,6 +97,23 @@ begin
   );
 end $$;
 
+-- A staff invitation scoped to a project must be rejected outright (would
+-- otherwise fail atomically inside accept_invitation() later, since
+-- project_members.member_role only allows 'client'/'vendor' -- see
+-- invitations_staff_not_project_scoped). Run while still admin/authenticated
+-- in their own org so the only thing that can reject this insert is the
+-- new CHECK constraint, not RLS.
+select assert_raises(
+  format(
+    'insert into invitations (org_id, project_id, email, role) values (%L, %L, %L, %L)',
+    (select org_id from profiles where id = (select value from test_fixture_ids where key = 'admin')),
+    (select value from test_fixture_ids where key = 'project_a'),
+    'new-staff-scoped@example.com',
+    'staff'
+  ),
+  'a staff invitation must not be scoped to a project (invitations_staff_not_project_scoped)'
+);
+
 reset role;
 select clear_test_user();
 
