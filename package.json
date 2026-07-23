@@ -12,6 +12,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present && npm run test:db",
     "test:db": "node scripts/db/run-sql-tests.mjs",
+    "db:seed": "node scripts/db/seed.mjs",
     "build": "npm run build --workspace=apps/web",
     "dev": "npm run dev --workspace=apps/web"
   },
