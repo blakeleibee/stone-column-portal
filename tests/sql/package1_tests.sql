@@ -88,6 +88,7 @@ end;
 $$;
 
 create temporary table test_fixture_ids (key text primary key, value uuid);
+grant select, insert, update, delete on test_fixture_ids to authenticated, anon;
 
 -- =====================================================================
 -- SECTION 1 — Bootstrap
@@ -131,60 +132,65 @@ select assert_raises(
 
 select set_test_user((select value from test_fixture_ids where key = 'admin'));
 
-insert into projects (org_id, name, project_number, pricing_model)
-select org_id, 'Hawks Ridge', 'HR-001', 'cost_plus_percentage' from profiles where id = current_setting('app.current_test_user')::uuid
-returning id as project_a \gset fixture_
+with new_row as (
+  insert into projects (org_id, name, project_number, pricing_model)
+  select org_id, 'Hawks Ridge', 'HR-001', 'cost_plus_percentage' from profiles where id = current_setting('app.current_test_user')::uuid
+  returning id
+)
+insert into test_fixture_ids select 'project_a', id from new_row;
 
-insert into test_fixture_ids values ('project_a', :'fixture_project_a');
+with new_row as (
+  insert into projects (org_id, name, project_number, pricing_model)
+  select org_id, 'Maple Street Reno', 'MS-002', 'fixed_price' from profiles where id = current_setting('app.current_test_user')::uuid
+  returning id
+)
+insert into test_fixture_ids select 'project_b', id from new_row;
 
-insert into projects (org_id, name, project_number, pricing_model)
-select org_id, 'Maple Street Reno', 'MS-002', 'fixed_price' from profiles where id = current_setting('app.current_test_user')::uuid
-returning id as project_b \gset fixture_
+with new_row as (
+  insert into cost_codes (project_id, code)
+  values ((select value from test_fixture_ids where key = 'project_a'), 'Framing')
+  returning id
+)
+insert into test_fixture_ids select 'cost_code_a', id from new_row;
 
-insert into test_fixture_ids values ('project_b', :'fixture_project_b');
+with new_row as (
+  insert into cost_codes (project_id, code)
+  values ((select value from test_fixture_ids where key = 'project_b'), 'Demo')
+  returning id
+)
+insert into test_fixture_ids select 'cost_code_b', id from new_row;
 
-insert into cost_codes (project_id, code) values (:'fixture_project_a', 'Framing')
-returning id as cost_code_a \gset fixture_
-insert into test_fixture_ids values ('cost_code_a', :'fixture_cost_code_a');
+insert into test_fixture_ids (key, value) values
+  ('client_a', gen_random_uuid()),
+  ('client_b', gen_random_uuid()),
+  ('vendor_a', gen_random_uuid()),
+  ('staff_a', gen_random_uuid());
 
-insert into cost_codes (project_id, code) values (:'fixture_project_b', 'Demo')
-returning id as cost_code_b \gset fixture_
-insert into test_fixture_ids values ('cost_code_b', :'fixture_cost_code_b');
-
-select gen_random_uuid() as client_a \gset fixture_
-select gen_random_uuid() as client_b \gset fixture_
-select gen_random_uuid() as vendor_a \gset fixture_
-select gen_random_uuid() as staff_a \gset fixture_
-insert into test_fixture_ids values
-  ('client_a', :'fixture_client_a'),
-  ('client_b', :'fixture_client_b'),
-  ('vendor_a', :'fixture_vendor_a'),
-  ('staff_a', :'fixture_staff_a');
-
-insert into auth.users (id) values (:'fixture_client_a'), (:'fixture_client_b'), (:'fixture_vendor_a'), (:'fixture_staff_a');
+insert into auth.users (id)
+select value from test_fixture_ids where key in ('client_a', 'client_b', 'vendor_a', 'staff_a');
 insert into profiles (id, org_id, role, full_name, email)
-select :'fixture_client_a', org_id, 'client', 'Alex Carter', 'alex@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
+select (select value from test_fixture_ids where key = 'client_a'), org_id, 'client'::app_role, 'Alex Carter', 'alex@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
 union all
-select :'fixture_client_b', org_id, 'client', 'Jordan Someone', 'jordan@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
+select (select value from test_fixture_ids where key = 'client_b'), org_id, 'client'::app_role, 'Jordan Someone', 'jordan@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
 union all
-select :'fixture_vendor_a', org_id, 'vendor', 'Vendor Contractor', 'vendor@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
+select (select value from test_fixture_ids where key = 'vendor_a'), org_id, 'vendor'::app_role, 'Vendor Contractor', 'vendor@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
 union all
-select :'fixture_staff_a', org_id, 'staff', 'Staff Member', 'staff@example.com' from profiles where id = current_setting('app.current_test_user')::uuid;
+select (select value from test_fixture_ids where key = 'staff_a'), org_id, 'staff'::app_role, 'Staff Member', 'staff@example.com' from profiles where id = current_setting('app.current_test_user')::uuid;
 
-insert into project_members (project_id, user_id, member_role) values (:'fixture_project_a', :'fixture_client_a', 'client');
-insert into project_members (project_id, user_id, member_role) values (:'fixture_project_b', :'fixture_client_b', 'client');
-insert into project_members (project_id, user_id, member_role) values (:'fixture_project_a', :'fixture_vendor_a', 'vendor');
+insert into project_members (project_id, user_id, member_role) values ((select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'client_a'), 'client');
+insert into project_members (project_id, user_id, member_role) values ((select value from test_fixture_ids where key = 'project_b'), (select value from test_fixture_ids where key = 'client_b'), 'client');
+insert into project_members (project_id, user_id, member_role) values ((select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'vendor_a'), 'vendor');
 
 insert into expenses (project_id, cost_code_id, vendor_name, transaction_date, amount_cents, financial_status, publication_status, posted_by, posted_at, published_by, published_at)
-select :'fixture_project_a', :'fixture_cost_code_a', 'Lumber Co', '2026-06-01', 500000, 'posted', 'published',
+select (select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'cost_code_a'), 'Lumber Co', '2026-06-01', 500000, 'posted', 'published',
        current_setting('app.current_test_user')::uuid, now(), current_setting('app.current_test_user')::uuid, now();
 
 insert into expenses (project_id, cost_code_id, vendor_name, transaction_date, amount_cents, financial_status, publication_status, posted_by, posted_at)
-select :'fixture_project_a', :'fixture_cost_code_a', 'Internal Vendor', '2026-06-02', 250000, 'posted', 'internal',
+select (select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'cost_code_a'), 'Internal Vendor', '2026-06-02', 250000, 'posted', 'internal',
        current_setting('app.current_test_user')::uuid, now();
 
 insert into expenses (project_id, cost_code_id, vendor_name, transaction_date, amount_cents, financial_status, publication_status)
-values (:'fixture_project_a', :'fixture_cost_code_a', 'Pending Vendor', '2026-06-03', 100000, 'pending', 'internal');
+values ((select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'cost_code_a'), 'Pending Vendor', '2026-06-03', 100000, 'pending', 'internal');
 
 select clear_test_user();
 
@@ -254,10 +260,22 @@ begin
   perform assert_that(v_count > 0, 'staff should see internal (non-published) expenses too, same as admin');
 end $$;
 
-select assert_raises(
-  format('update profiles set full_name = ''Hacked'' where id = %L', (select value from test_fixture_ids where key = 'client_a')),
-  'staff (role=staff, not admin) must NOT be able to update another user''s profile — only admin can'
-);
+-- RLS silently blocks disallowed UPDATEs (0 rows affected) rather than
+-- raising an error, so this must assert the value is unchanged instead
+-- of expecting an exception via assert_raises.
+do $$
+declare
+  v_name_before text;
+  v_name_after text;
+begin
+  select full_name into v_name_before from profiles where id = (select value from test_fixture_ids where key = 'client_a');
+  update profiles set full_name = 'Hacked' where id = (select value from test_fixture_ids where key = 'client_a');
+  select full_name into v_name_after from profiles where id = (select value from test_fixture_ids where key = 'client_a');
+  perform assert_that(
+    v_name_before = v_name_after,
+    'staff (role=staff, not admin) must NOT be able to update another user''s profile — RLS silently blocks the write (0 rows affected), it does not raise an error, so this asserts the value is unchanged rather than expecting an exception'
+  );
+end $$;
 
 reset role;
 select clear_test_user();
@@ -339,19 +357,21 @@ select clear_test_user();
 select set_test_user((select value from test_fixture_ids where key = 'admin'));
 set local role authenticated;
 
-insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'original', 1000000, 'initial_setup'
-returning id as ledger_id \gset fixture_
-insert into test_fixture_ids values ('ledger_1', :'fixture_ledger_id');
+with new_row as (
+  insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'original', 1000000, 'initial_setup'
+  returning id
+)
+insert into test_fixture_ids select 'ledger_1', id from new_row;
 
 select assert_raises(
-  format('update budget_ledger set amount_cents = 1 where id = %L', :'fixture_ledger_id'),
+  format('update budget_ledger set amount_cents = 1 where id = %L', (select value from test_fixture_ids where key = 'ledger_1')),
   'budget_ledger UPDATE must be rejected (append-only trigger)'
 );
 select assert_raises(
-  format('delete from budget_ledger where id = %L', :'fixture_ledger_id'),
+  format('delete from budget_ledger where id = %L', (select value from test_fixture_ids where key = 'ledger_1')),
   'budget_ledger DELETE must be rejected (append-only trigger)'
 );
 
@@ -425,18 +445,21 @@ select clear_test_user();
 select set_test_user((select value from test_fixture_ids where key = 'admin'));
 set local role authenticated;
 
-insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'approved_change', 100000, 'change_order'
-returning id as original_id \gset fixture_
+with new_row as (
+  insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'approved_change', 100000, 'change_order'
+  returning id
+)
+insert into test_fixture_ids select 'original_id', id from new_row;
 
 select assert_raises(
   format(
     'insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type, reverses_entry_id) values (%L, %L, ''correction'', -150000, ''manual_correction'', %L)',
     (select value from test_fixture_ids where key = 'project_a'),
     (select value from test_fixture_ids where key = 'cost_code_a'),
-    :'fixture_original_id'
+    (select value from test_fixture_ids where key = 'original_id')
   ),
   'a reversal exceeding the original entry''s magnitude must be rejected unless flagged as an adjustment'
 );
@@ -445,7 +468,7 @@ select assert_raises(
 insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type, reverses_entry_id, is_adjustment)
 select (select value from test_fixture_ids where key = 'project_a'),
        (select value from test_fixture_ids where key = 'cost_code_a'),
-       'correction', -150000, 'manual_correction', :'fixture_original_id', true;
+       'correction', -150000, 'manual_correction', (select value from test_fixture_ids where key = 'original_id'), true;
 
 reset role;
 select clear_test_user();

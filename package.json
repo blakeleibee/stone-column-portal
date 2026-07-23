@@ -10,11 +10,13 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:db",
+    "test:db": "node scripts/db/run-sql-tests.mjs",
     "build": "npm run build --workspace=apps/web",
     "dev": "npm run dev --workspace=apps/web"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "typescript": "5.9.3"
   },
   "engines": {

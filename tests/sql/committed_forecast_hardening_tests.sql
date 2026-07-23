@@ -67,15 +67,17 @@ set local role authenticated;
 
 -- ---- committed_costs: valid transitions ----
 
-insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'Framing Crew Phase 2', 660000, 'open'
-returning id as committed_id \gset fixture_
-insert into test_fixture_ids values ('committed_1', :'fixture_committed_id');
+with new_row as (
+  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'Framing Crew Phase 2', 660000, 'open'
+  returning id
+)
+insert into test_fixture_ids select 'committed_1', id from new_row;
 
 -- Allowed: open -> fulfilled (a terminal status).
-update committed_costs set status = 'fulfilled' where id = :'fixture_committed_id';
+update committed_costs set status = 'fulfilled' where id = (select value from test_fixture_ids where key = 'committed_1');
 
 do $$
 begin
@@ -91,26 +93,32 @@ end $$;
 -- treated that as valid, which review correctly flagged as a decision
 -- that was never actually made on purpose.
 select assert_raises(
-  format('update committed_costs set status = ''superseded'' where id = %L', :'fixture_committed_id'),
+  format('update committed_costs set status = ''superseded'' where id = %L', (select value from test_fixture_ids where key = 'committed_1')),
   'a FULFILLED committed cost must not be supersedable — fulfilled is terminal'
 );
 select assert_raises(
-  format('update committed_costs set status = ''open'' where id = %L', :'fixture_committed_id'),
+  format('update committed_costs set status = ''open'' where id = %L', (select value from test_fixture_ids where key = 'committed_1')),
   'a terminal committed cost must never transition back to open'
 );
 
 -- Separate, still-open commitment to actually exercise a valid
 -- open -> superseded transition, via the atomic RPC (item 4/5's
 -- "atomic replace/supersede workflow" requirement).
-insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'Electrical rough-in quote', 500000, 'open'
-returning id as electrical_committed_id \gset fixture_
-insert into test_fixture_ids values ('committed_electrical', :'fixture_electrical_committed_id');
+with new_row as (
+  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'Electrical rough-in quote', 500000, 'open'
+  returning id
+)
+insert into test_fixture_ids select 'committed_electrical', id from new_row;
 
-select supersede_committed_cost(:'fixture_electrical_committed_id', 620000, 'Electrical rough-in quote (revised)') as new_committed_id \gset fixture_
-insert into test_fixture_ids values ('committed_electrical_v2', :'fixture_new_committed_id');
+insert into test_fixture_ids (key, value)
+select 'committed_electrical_v2', supersede_committed_cost(
+  (select value from test_fixture_ids where key = 'committed_electrical'),
+  620000,
+  'Electrical rough-in quote (revised)'
+);
 
 do $$
 declare v_old_status committed_cost_status; v_new_amount bigint;
@@ -130,14 +138,14 @@ end $$;
 
 -- Rejected: core field edits still apply on top of the new status rules.
 select assert_raises(
-  format('update committed_costs set amount_cents = 1 where id = %L', :'fixture_new_committed_id'),
+  format('update committed_costs set amount_cents = 1 where id = %L', (select value from test_fixture_ids where key = 'committed_electrical_v2')),
   'committed_costs.amount_cents must be immutable after creation'
 );
 select assert_raises(
   format(
     'update committed_costs set cost_code_id = %L where id = %L',
     (select value from test_fixture_ids where key = 'cost_code_b'),
-    :'fixture_new_committed_id'
+    (select value from test_fixture_ids where key = 'committed_electrical_v2')
   ),
   'committed_costs.cost_code_id must be immutable (also violates the cross-project composite FK)'
 );
@@ -147,19 +155,21 @@ select assert_raises(
   format(
     'update committed_costs set status = ''superseded'', superseded_at = now(), superseded_by_id = %L where id = %L',
     (select value from test_fixture_ids where key = 'committed_1'),  -- already 'fulfilled', not 'open'
-    :'fixture_new_committed_id'
+    (select value from test_fixture_ids where key = 'committed_electrical_v2')
   ),
   'superseded_by_id must reference a currently OPEN row, not a terminal one'
 );
 
 -- ---- forecast_entries: atomic supersede via RPC (item 4 fix) ----
 
-insert into forecast_entries (project_id, cost_code_id, forecast_to_complete_cents, method)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       500000, 'manual'
-returning id as forecast_id \gset fixture_
-insert into test_fixture_ids values ('forecast_1', :'fixture_forecast_id');
+with new_row as (
+  insert into forecast_entries (project_id, cost_code_id, forecast_to_complete_cents, method)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         500000, 'manual'
+  returning id
+)
+insert into test_fixture_ids select 'forecast_1', id from new_row;
 
 -- REJECTED (this is the fix — item 4): inserting a second simultaneously-
 -- active forecast for the SAME cost code, without superseding the
@@ -175,8 +185,11 @@ select assert_raises(
 );
 
 -- The correct, atomic way to replace it:
-select supersede_forecast(:'fixture_forecast_id', 300000, 'manual', 'HVAC rough-in quote came in higher than allowance') as new_forecast_id \gset fixture_
-insert into test_fixture_ids values ('forecast_2', :'fixture_new_forecast_id');
+insert into test_fixture_ids (key, value)
+select 'forecast_2', supersede_forecast(
+  (select value from test_fixture_ids where key = 'forecast_1'),
+  300000, 'manual', 'HVAC rough-in quote came in higher than allowance'
+);
 
 do $$
 declare v_old_superseded_at timestamptz; v_link uuid; v_new_amount bigint;
@@ -205,11 +218,11 @@ select assert_raises(
 
 -- Rejected: core field edits on the replacement forecast.
 select assert_raises(
-  format('update forecast_entries set forecast_to_complete_cents = 1 where id = %L', :'fixture_new_forecast_id'),
+  format('update forecast_entries set forecast_to_complete_cents = 1 where id = %L', (select value from test_fixture_ids where key = 'forecast_2')),
   'forecast_entries.forecast_to_complete_cents must be immutable after creation'
 );
 select assert_raises(
-  format('update forecast_entries set method = ''accepted_suggestion'' where id = %L', :'fixture_new_forecast_id'),
+  format('update forecast_entries set method = ''accepted_suggestion'' where id = %L', (select value from test_fixture_ids where key = 'forecast_2')),
   'forecast_entries.method must be immutable after creation'
 );
 
@@ -221,23 +234,26 @@ select assert_raises(
 
 -- ---- budget_suggestions (unchanged from the previous round) ----
 
-insert into budget_suggestions (project_id, cost_code_id, suggested_amount_cents, direction, reason, source_type, confidence)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       50000, 'over', 'Test suggestion', 'actual_plus_committed_exceeds_revised', 'high'
-returning id as suggestion_id \gset fixture_
+with new_row as (
+  insert into budget_suggestions (project_id, cost_code_id, suggested_amount_cents, direction, reason, source_type, confidence)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         50000, 'over', 'Test suggestion', 'actual_plus_committed_exceeds_revised', 'high'
+  returning id
+)
+insert into test_fixture_ids select 'suggestion_id', id from new_row;
 
 update budget_suggestions
   set status = 'accepted', resolved_by = (select value from test_fixture_ids where key = 'admin'),
       resolved_at = now(), resolved_amount_cents = 50000
-  where id = :'fixture_suggestion_id';
+  where id = (select value from test_fixture_ids where key = 'suggestion_id');
 
 select assert_raises(
-  format('update budget_suggestions set suggested_amount_cents = 1 where id = %L', :'fixture_suggestion_id'),
+  format('update budget_suggestions set suggested_amount_cents = 1 where id = %L', (select value from test_fixture_ids where key = 'suggestion_id')),
   'budget_suggestions.suggested_amount_cents must be immutable once created, even after resolution'
 );
 select assert_raises(
-  format('update budget_suggestions set reason = ''rewritten after the fact'' where id = %L', :'fixture_suggestion_id'),
+  format('update budget_suggestions set reason = ''rewritten after the fact'' where id = %L', (select value from test_fixture_ids where key = 'suggestion_id')),
   'budget_suggestions.reason must be immutable once created'
 );
 
@@ -266,11 +282,14 @@ select assert_raises(
 );
 
 -- ALLOWED: an ordinary open insert with no supersede fields.
-insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'Plain open commitment', 75000, 'open'
-returning id as plain_open_id \gset fixture_
+with new_row as (
+  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'Plain open commitment', 75000, 'open'
+  returning id
+)
+insert into test_fixture_ids select 'plain_open_id', id from new_row;
 do $$
 begin
   perform assert_that(
@@ -292,15 +311,18 @@ select assert_raises(
 );
 
 -- REJECTED: redirecting superseded_by_id to a different (also-open) row.
-insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'Decoy open row', 1000, 'open'
-returning id as decoy_id \gset fixture_
+with new_row as (
+  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'Decoy open row', 1000, 'open'
+  returning id
+)
+insert into test_fixture_ids select 'decoy_id', id from new_row;
 select assert_raises(
   format(
     'update committed_costs set superseded_by_id = %L where id = %L',
-    :'fixture_decoy_id',
+    (select value from test_fixture_ids where key = 'decoy_id'),
     (select value from test_fixture_ids where key = 'committed_electrical')
   ),
   'superseded_by_id must not be redirectable once a committed cost is terminal'
@@ -309,24 +331,27 @@ select assert_raises(
 -- REJECTED: any further transition away from fulfilled/cancelled/superseded,
 -- covering all three terminal states explicitly (fulfilled already
 -- covered earlier in this file via committed_1).
-insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
-select (select value from test_fixture_ids where key = 'project_a'),
-       (select value from test_fixture_ids where key = 'cost_code_a'),
-       'To be cancelled', 2000, 'open'
-returning id as cancelled_test_id \gset fixture_
-update committed_costs set status = 'cancelled' where id = :'fixture_cancelled_test_id';
+with new_row as (
+  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, status)
+  select (select value from test_fixture_ids where key = 'project_a'),
+         (select value from test_fixture_ids where key = 'cost_code_a'),
+         'To be cancelled', 2000, 'open'
+  returning id
+)
+insert into test_fixture_ids select 'cancelled_test_id', id from new_row;
+update committed_costs set status = 'cancelled' where id = (select value from test_fixture_ids where key = 'cancelled_test_id');
 select assert_raises(
-  format('update committed_costs set status = ''open'' where id = %L', :'fixture_cancelled_test_id'),
+  format('update committed_costs set status = ''open'' where id = %L', (select value from test_fixture_ids where key = 'cancelled_test_id')),
   'a CANCELLED committed cost must never transition back to open'
 );
 select assert_raises(
-  format('update committed_costs set status = ''fulfilled'' where id = %L', :'fixture_cancelled_test_id'),
+  format('update committed_costs set status = ''fulfilled'' where id = %L', (select value from test_fixture_ids where key = 'cancelled_test_id')),
   'a CANCELLED committed cost must never transition to fulfilled either — terminal means terminal'
 );
 select assert_raises(
   format(
     'update committed_costs set superseded_at = now(), superseded_by_id = %L where id = %L',
-    :'fixture_plain_open_id',
+    (select value from test_fixture_ids where key = 'plain_open_id'),
     (select value from test_fixture_ids where key = 'committed_electrical')  -- already 'superseded'
   ),
   'an already-SUPERSEDED committed cost must never transition again, including to superseded once more with a different link'
@@ -348,23 +373,39 @@ select assert_raises(
 );
 
 -- REJECTED: redirecting the lineage to a different forecast.
-insert into forecast_entries (project_id, cost_code_id, forecast_to_complete_cents, method)
-select (select value from test_fixture_ids where key = 'project_b'),
-       (select value from test_fixture_ids where key = 'cost_code_b'),
-       10000, 'manual'
-returning id as unrelated_forecast_id \gset fixture_
+with new_row as (
+  insert into forecast_entries (project_id, cost_code_id, forecast_to_complete_cents, method)
+  select (select value from test_fixture_ids where key = 'project_b'),
+         (select value from test_fixture_ids where key = 'cost_code_b'),
+         10000, 'manual'
+  returning id
+)
+insert into test_fixture_ids select 'unrelated_forecast_id', id from new_row;
 select assert_raises(
   format(
     'update forecast_entries set superseded_by_id = %L where id = %L',
-    :'fixture_unrelated_forecast_id',
+    (select value from test_fixture_ids where key = 'unrelated_forecast_id'),
     (select value from test_fixture_ids where key = 'forecast_1')
   ),
   'superseded_by_id must not be redirectable once a forecast is already superseded (also would violate the same-cost-code composite FK)'
 );
 
 -- REJECTED: changing the supersede timestamp after the fact.
+--
+-- NOTE: deliberately `now() + interval '1 second'`, not bare `now()`.
+-- This whole file runs as a single implicit transaction (Postgres wraps
+-- an entire multi-statement simple-query batch in one transaction
+-- unless it contains explicit BEGIN/COMMIT), and `now()` is
+-- transaction_timestamp() — frozen for the whole transaction, not the
+-- wall clock. forecast_1's superseded_at was already set via `now()`
+-- earlier in this same file/transaction, so a bare `now()` here would
+-- evaluate to the exact same frozen value, making `NEW.superseded_at
+-- IS DISTINCT FROM OLD.superseded_at` false and silently passing the
+-- trigger (no-op write) instead of exercising the immutability check.
+-- Adding an interval guarantees a genuinely different value regardless
+-- of real elapsed wall-clock time.
 select assert_raises(
-  format('update forecast_entries set superseded_at = now() where id = %L', (select value from test_fixture_ids where key = 'forecast_1')),
+  format('update forecast_entries set superseded_at = now() + interval ''1 second'' where id = %L', (select value from test_fixture_ids where key = 'forecast_1')),
   'superseded_at must be immutable once set on a forecast, even to a different non-null timestamp'
 );
 
@@ -380,11 +421,11 @@ select assert_raises(
 -- rejected by forecast_entries_one_active_per_cost_code, the same class
 -- of bug this file was already correcting for forecast_1/forecast_2.
 -- See the full per-cost-code trace in this file's header comment.
-select supersede_forecast(
+insert into test_fixture_ids (key, value)
+select 'forecast_2b', supersede_forecast(
   (select value from test_fixture_ids where key = 'forecast_2'),
   40000, 'manual', 'Re-verified after migrations 004/005'
-) as forecast_2b_id \gset fixture_
-insert into test_fixture_ids values ('forecast_2b', :'fixture_forecast_2b_id');
+);
 
 do $$
 begin
@@ -418,16 +459,20 @@ select assert_raises(
 -- file's header for exactly why.
 -- =====================================================================
 
-insert into cost_codes (project_id, code, fee_eligible, status)
-select (select value from test_fixture_ids where key = 'project_a'), 'Migration 005 Test Category', true, 'active'
-returning id as cost_code_m5_id \gset fixture_
-insert into test_fixture_ids values ('cost_code_m5', :'fixture_cost_code_m5_id');
+with new_row as (
+  insert into cost_codes (project_id, code, fee_eligible, status)
+  select (select value from test_fixture_ids where key = 'project_a'), 'Migration 005 Test Category', true, 'active'
+  returning id
+)
+insert into test_fixture_ids select 'cost_code_m5', id from new_row;
 
 -- "Active rows with both fields null succeed" — the ordinary case.
-insert into forecast_entries (project_id, cost_code_id, forecast_to_complete_cents, method)
-select (select value from test_fixture_ids where key = 'project_a'), :'fixture_cost_code_m5_id', 100000, 'manual'
-returning id as m5_active_1_id \gset fixture_
-insert into test_fixture_ids values ('m5_active_1', :'fixture_m5_active_1_id');
+with new_row as (
+  insert into forecast_entries (project_id, cost_code_id, forecast_to_complete_cents, method)
+  select (select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'cost_code_m5'), 100000, 'manual'
+  returning id
+)
+insert into test_fixture_ids select 'm5_active_1', id from new_row;
 do $$
 begin
   perform assert_that(
@@ -529,11 +574,11 @@ select assert_raises(
 );
 
 -- "supersede_forecast() succeeds with both fields populated."
-select supersede_forecast(
+insert into test_fixture_ids (key, value)
+select 'm5_active_2', supersede_forecast(
   (select value from test_fixture_ids where key = 'm5_active_1'),
   80000, 'manual', 'Migration 005 verification'
-) as m5_active_2_id \gset fixture_
-insert into test_fixture_ids values ('m5_active_2', :'fixture_m5_active_2_id');
+);
 
 do $$
 begin
@@ -561,8 +606,12 @@ select assert_raises(
   format('update forecast_entries set superseded_by_id = null where id = %L', (select value from test_fixture_ids where key = 'm5_active_1')),
   'superseded_by_id must remain immutable on an already-superseded forecast (m5 chain)'
 );
+-- NOTE: `now() + interval '1 second'`, not bare `now()` — same reason
+-- as the forecast_1 case above (this whole file is one implicit
+-- transaction, so `now()` is frozen and would equal the value already
+-- stored, silently passing as a no-op instead of exercising the check).
 select assert_raises(
-  format('update forecast_entries set superseded_at = now() where id = %L', (select value from test_fixture_ids where key = 'm5_active_1')),
+  format('update forecast_entries set superseded_at = now() + interval ''1 second'' where id = %L', (select value from test_fixture_ids where key = 'm5_active_1')),
   'superseded_at must not be changeable to a different timestamp on an already-superseded forecast (m5 chain)'
 );
 
