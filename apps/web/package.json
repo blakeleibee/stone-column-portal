@@ -8,7 +8,8 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "test": "tsx test/route_smoke.ts",
-    "test:auth": "tsx test/auth_smoke.ts"
+    "test:auth": "tsx test/auth_smoke.ts",
+    "test:authz": "tsx test/authorization_unit.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",
