@@ -489,6 +489,34 @@ reset role;
 select clear_test_user();
 
 -- =====================================================================
+-- SECTION 9 — Migration 006: audit triggers fire on orgs/profiles/
+-- projects/project_members/project_fee_rules
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+
+do $$
+declare
+  v_org_id uuid;
+  v_before_count int;
+  v_after_count int;
+begin
+  select org_id into v_org_id from profiles where id = (select value from test_fixture_ids where key = 'admin');
+
+  select count(*) into v_before_count from audit_log where table_name = 'orgs' and record_id = v_org_id;
+  update orgs set name = name || ' (renamed)' where id = v_org_id;
+  select count(*) into v_after_count from audit_log where table_name = 'orgs' and record_id = v_org_id;
+  perform assert_that(v_after_count = v_before_count + 1, 'updating orgs should write exactly one new audit_log row');
+
+  select count(*) into v_before_count from audit_log where table_name = 'projects' and record_id = (select value from test_fixture_ids where key = 'project_a');
+  update projects set phase = 'Framing' where id = (select value from test_fixture_ids where key = 'project_a');
+  select count(*) into v_after_count from audit_log where table_name = 'projects' and record_id = (select value from test_fixture_ids where key = 'project_a');
+  perform assert_that(v_after_count = v_before_count + 1, 'updating projects should write exactly one new audit_log row');
+end $$;
+
+select clear_test_user();
+
+-- =====================================================================
 -- If we reach this line, every assert_raises/assert_that above either
 -- fired when expected or never fired when not expected — the whole
 -- suite passed.
