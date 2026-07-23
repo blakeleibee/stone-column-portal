@@ -1,10 +1,15 @@
 # Production Roadmap
 
 **Status:** P0 complete (`p0-complete` tag, commit `54f05a3`) — see
-`docs/milestones/P0-complete.md` for the closeout record (final
-acceptance-criteria status, verified commands, and the regressions
-found and fixed during execution; details are not duplicated here).
-**P1 is the active package.**
+`docs/milestones/P0-complete.md`. **P1 complete** (`p1-complete` tag,
+commit `7145c18`) — see `docs/milestones/P1-complete.md` for the
+closeout record (final acceptance-criteria status, verified commands,
+and the significant findings — including two caught only by the final
+whole-branch review — found and fixed during execution; details are
+not duplicated here). P1 consolidated the old P1 (schema/RLS
+validation), P2 (auth wiring), and P3's vendor-identity slice into one
+package — see `docs/production-build/P1-DESIGN.md` for the
+reconciliation record. **The next package is active.**
 
 Replaces the "Package 3 onward" portion of
 `docs/product-definition/05-implementation-roadmap.md` with small,
@@ -183,15 +188,14 @@ closeout record: `docs/milestones/P0-complete.md`.
 
 ## Package P1 — Database and security validation
 
-**Status: Active — scope superseded by `docs/production-build/P1-DESIGN.md`.**
-That document is now the authoritative P1 scope: it consolidates this
+**Status: Complete** (`p1-complete` tag, commit `7145c18`) — scope
+superseded by `docs/production-build/P1-DESIGN.md`, which is the
+authoritative record of what P1 actually became: it consolidated this
 section, the auth-wiring portion of Package P2 below, and the
-vendor-identity slice of Package P3 below into one package, reconciling
-a broader P1 request against this repository's existing Supabase/RLS
-architecture (kept) rather than replacing it. Read `P1-DESIGN.md`
-first. The section below is retained as the original, narrower
-schema-validation-only scope for historical reference — it is no
-longer what "P1" means going forward.
+vendor-identity slice of Package P3 below into one package. See
+`docs/milestones/P1-complete.md` for the closeout record. The section
+below is retained as the original, narrower schema-validation-only
+scope for historical reference.
 
 - **Exact scope:** Execute the existing, already-written schema for
   the first time ever against a real disposable Postgres/Supabase
@@ -259,10 +263,14 @@ longer what "P1" means going forward.
 
 ## Package P2 — Authentication, company membership, and project access
 
-**Status: Auth-wiring/invitations content folded into P1 — see
-`docs/production-build/P1-DESIGN.md`.** `project_decision_makers` is
-explicitly excluded from P1 (open product decision) and remains this
-section's (future) scope once that decision is made.
+**Status: Auth-wiring/invitations content delivered as part of P1 (complete)
+— see `docs/production-build/P1-DESIGN.md` and
+`docs/milestones/P1-complete.md`.** `project_decision_makers` was
+explicitly excluded from P1 (open product decision, per `CLAUDE.md`)
+and remains this section's (future) scope once that decision is made.
+Project-creation/settings/team-management UI is also still this
+section's/Package P3's future scope — P1 only built the data/auth
+foundation, not this product UI.
 
 - **Exact scope:** Real Supabase Auth wiring end-to-end; the
   `DemoControls` role switcher is removed from any authenticated
@@ -336,8 +344,9 @@ section's (future) scope once that decision is made.
 
 ## Package P3 — Production project foundation
 
-**Status: Vendor-identity RLS slice folded into P1 — see
-`docs/production-build/P1-DESIGN.md`.** Project CRUD/lifecycle UI,
+**Status: Vendor-identity RLS slice delivered as part of P1 (complete)
+— see `docs/production-build/P1-DESIGN.md` and
+`docs/milestones/P1-complete.md`.** Project CRUD/lifecycle UI,
 team-management UI, and project settings screens remain this
 section's (future) scope.
 
