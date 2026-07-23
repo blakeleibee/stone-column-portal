@@ -225,3 +225,171 @@ end $$;
 
 reset role;
 select clear_test_user();
+
+-- =====================================================================
+-- SECTION 5 — cross-organization staff isolation, PROVEN via real RLS
+-- queries, not asserted via a mocked client.
+--
+-- Every fixture in package1_tests.sql and Sections 1-4 above belongs to
+-- exactly ONE organization: bootstrap_organization() rejects a second
+-- call by the same already-profiled user (see package1_tests.sql
+-- Section 1), so that file never actually exercises a second org. That
+-- left "staff cannot read another org's projects" -- the single most
+-- important multi-tenant security property in this whole schema --
+-- proven only by authorization_unit.ts's requireOrganizationAccess()
+-- check against a fake/mocked Supabase client, never by an actual
+-- query against real Postgres RLS.
+--
+-- This section bootstraps a genuinely SEPARATE Org B via a brand-new,
+-- never-before-seen auth user (the same pattern already used in
+-- SECTION 3 above for the new invited staff member), creates a project
+-- and an invitation entirely owned by Org B, and proves isolation in
+-- both directions via set_test_user() + `set local role authenticated`
+-- -- the same real-RLS pattern as every other assertion in this file.
+-- =====================================================================
+
+select set_test_user(gen_random_uuid());
+insert into auth.users (id) select current_setting('app.current_test_user')::uuid;
+insert into test_fixture_ids values ('org_b_admin', current_setting('app.current_test_user')::uuid);
+
+select bootstrap_organization('Org B', 'Org B Admin', 'orgb-admin@example.com') as new_org_id;
+
+insert into test_fixture_ids
+select 'org_b_id', org_id from profiles where id = (select value from test_fixture_ids where key = 'org_b_admin');
+
+with new_row as (
+  insert into projects (org_id, name, project_number, pricing_model)
+  select org_id, 'Org B Project', 'OB-001', 'cost_plus_percentage'
+  from profiles where id = (select value from test_fixture_ids where key = 'org_b_admin')
+  returning id
+)
+insert into test_fixture_ids select 'project_org_b', id from new_row;
+
+do $$
+declare v_invitation_id uuid;
+begin
+  insert into invitations (org_id, email, role)
+  select org_id, 'orgb-newstaff@example.com', 'staff'
+  from profiles where id = (select value from test_fixture_ids where key = 'org_b_admin')
+  returning id into v_invitation_id;
+
+  insert into test_fixture_ids values ('invitation_org_b', v_invitation_id);
+end $$;
+
+select clear_test_user();
+
+-- Org A's admin must NOT see Org B's project, and a full count must
+-- not include it.
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+declare v_count int; v_total int;
+begin
+  select count(*) into v_count from projects
+  where id = (select value from test_fixture_ids where key = 'project_org_b');
+  perform assert_that(v_count = 0, 'Org A admin must NOT see Org B''s project by id');
+
+  select count(*) into v_total from projects;
+  perform assert_that(v_total = 2, 'Org A admin''s total project count must be exactly the 2 Org-A projects, not 3');
+
+  select count(*) into v_count from invitations
+  where id = (select value from test_fixture_ids where key = 'invitation_org_b');
+  perform assert_that(v_count = 0, 'Org A admin must NOT see Org B''s invitation');
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Org A's staff (distinct fixture from admin) must ALSO not see Org
+-- B's project -- is_org_staff_for_org covers both roles, so both must
+-- be proven, not just admin.
+select set_test_user((select value from test_fixture_ids where key = 'staff_a'));
+set local role authenticated;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from projects
+  where id = (select value from test_fixture_ids where key = 'project_org_b');
+  perform assert_that(v_count = 0, 'Org A staff must NOT see Org B''s project by id');
+
+  select count(*) into v_count from invitations
+  where id = (select value from test_fixture_ids where key = 'invitation_org_b');
+  perform assert_that(v_count = 0, 'Org A staff must NOT see Org B''s invitation');
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Org B's admin must NOT see Org A's projects or invitations, in
+-- either direction (the mirror image of the assertions above).
+select set_test_user((select value from test_fixture_ids where key = 'org_b_admin'));
+set local role authenticated;
+
+do $$
+declare v_count int; v_total int;
+begin
+  select count(*) into v_count from projects
+  where id in (
+    (select value from test_fixture_ids where key = 'project_a'),
+    (select value from test_fixture_ids where key = 'project_b')
+  );
+  perform assert_that(v_count = 0, 'Org B admin must NOT see either of Org A''s projects');
+
+  select count(*) into v_total from projects;
+  perform assert_that(v_total = 1, 'Org B admin should see exactly 1 project (their own), not Org A''s 2');
+
+  select count(*) into v_count from invitations
+  where id = (select value from test_fixture_ids where key = 'invitation_staff');
+  perform assert_that(v_count = 0, 'Org B admin must NOT see Org A''s invitation');
+
+  select count(*) into v_total from invitations;
+  perform assert_that(v_total = 1, 'Org B admin should see exactly 1 invitation (their own org''s), not Org A''s');
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- =====================================================================
+-- SECTION 6 (migration 011) — sum_posted_expenses() is actually
+-- invoked with a real value and asserted against a hand-computed
+-- expectation (M-1 from the final whole-branch review: nothing
+-- previously called this RPC at all).
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+declare v_sum bigint;
+begin
+  -- project_b has no expenses anywhere else in this fixture set, so
+  -- the expected sum is exactly this one posted expense's amount.
+  insert into expenses (project_id, cost_code_id, vendor_name, transaction_date, amount_cents, financial_status, publication_status, posted_by, posted_at)
+  values (
+    (select value from test_fixture_ids where key = 'project_b'),
+    (select value from test_fixture_ids where key = 'cost_code_b'),
+    'Sum Check Vendor', '2026-06-10', 42500, 'posted', 'internal',
+    (select value from test_fixture_ids where key = 'admin'), now()
+  );
+
+  -- A pending (not posted) expense of a much larger amount must be
+  -- excluded from the sum -- proves the function filters on
+  -- financial_status, not just project_id.
+  insert into expenses (project_id, cost_code_id, vendor_name, transaction_date, amount_cents, financial_status, publication_status)
+  values (
+    (select value from test_fixture_ids where key = 'project_b'),
+    (select value from test_fixture_ids where key = 'cost_code_b'),
+    'Not Yet Posted Vendor', '2026-06-11', 999999, 'pending', 'internal'
+  );
+
+  select sum_posted_expenses((select value from test_fixture_ids where key = 'project_b')) into v_sum;
+  perform assert_that(
+    v_sum = 42500,
+    'sum_posted_expenses(project_b) should equal the single posted expense''s amount (42500), excluding the 999999 pending one'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
