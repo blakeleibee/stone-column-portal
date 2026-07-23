@@ -8,6 +8,7 @@
 // the failing file and the raised error.
 import { PGlite } from "@electric-sql/pglite";
 import { uuid_ossp } from "@electric-sql/pglite/contrib/uuid_ossp";
+import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,13 +26,14 @@ const FILES = [
   "schema/006_audit_triggers_orgs_profiles_projects.sql",
   "schema/007_vendor_identity.sql",
   "schema/008_project_status_transitions.sql",
+  "schema/009_invitations.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
 ];
 
 async function main() {
-  const db = new PGlite({ extensions: { uuid_ossp } });
+  const db = new PGlite({ extensions: { uuid_ossp, pgcrypto } });
 
   // Migration-runner setting, not a schema edit: is_org_staff() in
   // 001 is a LANGUAGE SQL function that forward-references the

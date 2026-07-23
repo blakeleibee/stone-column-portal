@@ -70,3 +70,79 @@ select assert_raises(
 
 reset role;
 select clear_test_user();
+
+-- =====================================================================
+-- SECTION 3 (migration 009) — invitations
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+declare
+  v_org_id uuid;
+  v_invitation_id uuid;
+begin
+  select org_id into v_org_id from profiles where id = (select value from test_fixture_ids where key = 'admin');
+
+  insert into invitations (org_id, email, role)
+  values (v_org_id, 'new-staff@example.com', 'staff')
+  returning id into v_invitation_id;
+
+  insert into test_fixture_ids values ('invitation_staff', v_invitation_id);
+
+  perform assert_that(
+    (select count(*) from invitations where id = v_invitation_id) = 1,
+    'admin should be able to create an invitation in their own org'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- A client (non-staff) must not be able to see the org's invitations at all.
+select set_test_user((select value from test_fixture_ids where key = 'client_a'));
+set local role authenticated;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from invitations;
+  perform assert_that(v_count = 0, 'a non-staff user should see zero invitations via RLS');
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- accept_invitation() end-to-end: a brand-new auth user, never before
+-- seen, accepts the staff invitation created above.
+select set_test_user(gen_random_uuid());
+insert into auth.users (id) select current_setting('app.current_test_user')::uuid;
+insert into test_fixture_ids values ('new_staff_user', current_setting('app.current_test_user')::uuid);
+set local role authenticated;
+
+do $$
+declare
+  v_token text;
+  v_result_org uuid;
+begin
+  reset role;
+  select token into v_token from invitations where id = (select value from test_fixture_ids where key = 'invitation_staff');
+  set local role authenticated;
+
+  select accept_invitation(v_token, 'New Staff Person') into v_result_org;
+  perform assert_that(v_result_org is not null, 'accept_invitation should succeed for a valid, unexpired, unaccepted token');
+  perform assert_that(
+    (select role from profiles where id = (select value from test_fixture_ids where key = 'new_staff_user')) = 'staff',
+    'accepting the invitation should create a profile with the invited role'
+  );
+end $$;
+
+-- Re-running the same token must fail (already accepted).
+select assert_raises(
+  format('select accept_invitation(%L, %L)', (select token from invitations where id = (select value from test_fixture_ids where key = 'invitation_staff')), 'Someone Else'),
+  'accept_invitation must reject a token that was already accepted'
+);
+
+reset role;
+select clear_test_user();
