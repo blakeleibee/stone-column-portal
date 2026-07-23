@@ -27,6 +27,7 @@ const FILES = [
   "schema/007_vendor_identity.sql",
   "schema/008_project_status_transitions.sql",
   "schema/009_invitations.sql",
+  "schema/010_documents.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",

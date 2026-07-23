@@ -146,3 +146,65 @@ select assert_raises(
 
 reset role;
 select clear_test_user();
+
+-- =====================================================================
+-- SECTION 4 (migration 010) — documents
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+declare v_doc_id uuid;
+begin
+  insert into documents (project_id, uploaded_by, file_name, mime_type, size_bytes, category, storage_key, is_published_to_client)
+  values (
+    (select value from test_fixture_ids where key = 'project_a'),
+    (select value from test_fixture_ids where key = 'admin'),
+    'contract.pdf', 'application/pdf', 102400, 'contract', 'local/project_a/contract.pdf', false
+  ) returning id into v_doc_id;
+  insert into test_fixture_ids values ('document_unpublished', v_doc_id);
+
+  insert into documents (project_id, uploaded_by, file_name, mime_type, size_bytes, category, storage_key, is_published_to_client)
+  values (
+    (select value from test_fixture_ids where key = 'project_a'),
+    (select value from test_fixture_ids where key = 'admin'),
+    'floor-plan.pdf', 'application/pdf', 51200, 'plans', 'local/project_a/floor-plan.pdf', true
+  ) returning id into v_doc_id;
+  insert into test_fixture_ids values ('document_published', v_doc_id);
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Client A (a member of project_a) sees only the published document.
+select set_test_user((select value from test_fixture_ids where key = 'client_a'));
+set local role authenticated;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from documents;
+  perform assert_that(v_count = 1, 'client should see exactly one document (the published one)');
+
+  select count(*) into v_count from documents where id = (select value from test_fixture_ids where key = 'document_unpublished');
+  perform assert_that(v_count = 0, 'client must not see the unpublished document');
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Vendor A (also a member of project_a) sees zero documents -- no
+-- vendor policy exists on this table yet, by design.
+select set_test_user((select value from test_fixture_ids where key = 'vendor_a'));
+set local role authenticated;
+
+do $$
+declare v_count int;
+begin
+  select count(*) into v_count from documents;
+  perform assert_that(v_count = 0, 'vendor should see zero documents (no vendor policy on this table in P1)');
+end $$;
+
+reset role;
+select clear_test_user();
