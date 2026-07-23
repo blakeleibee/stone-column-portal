@@ -38,6 +38,33 @@ for (const file of trackedFiles) {
   }
 }
 
+// Second check: `new FixtureFinancialRepository(` must only appear in
+// the one file allowed to construct it directly (getRepository.ts's
+// DEMO_MODE-gated factory) or a test file.
+const CONSTRUCTOR_PATTERN = "new FixtureFinancialRepository(";
+const CONSTRUCTOR_ALLOWED_PATTERNS = [
+  /apps\/web\/src\/data\/getRepository\.ts$/,
+  // KNOWN, INTENTIONAL, TEMPORARY EXCEPTION (P1 scope decision, see
+  // docs/production-build/P1-DESIGN.md §D): every admin/client screen
+  // except /admin/financials still reads fixture data unconditionally
+  // via loadViewModels.ts's loadAdminVM()/loadClientVM(), even outside
+  // DEMO_MODE -- full fixture replacement across every screen is
+  // later-package scope, not P1's. Remove this line only once a later
+  // package replaces loadViewModels.ts's remaining fixture-only call
+  // sites with getRepository()-backed equivalents.
+  /apps\/web\/src\/data\/loadViewModels\.ts$/,
+  /\/test\//,
+  /\.test\./,
+];
+
+for (const file of trackedFiles) {
+  if (CONSTRUCTOR_ALLOWED_PATTERNS.some((pattern) => pattern.test(file))) continue;
+  const content = readFileSync(file, "utf8");
+  if (content.includes(CONSTRUCTOR_PATTERN)) {
+    failures.push(`${file} constructs FixtureFinancialRepository directly outside getRepository.ts's DEMO_MODE gate`);
+  }
+}
+
 if (failures.length > 0) {
   console.error("Fixture/demo data referenced outside its allowed boundary:\n");
   for (const failure of failures) console.error(`  - ${failure}`);
