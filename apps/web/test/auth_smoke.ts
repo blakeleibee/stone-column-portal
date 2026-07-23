@@ -6,7 +6,7 @@
  * protected route to /login, proving real route protection works).
  * Run with `npx tsx test/auth_smoke.ts`.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,7 +35,13 @@ function startServer(demoMode: boolean): ChildProcess {
 
 function killServer(server: ChildProcess) {
   if (process.platform === "win32" && server.pid) {
-    spawn("taskkill", ["/pid", String(server.pid), "/T", "/F"]);
+    // Blocking, not fire-and-forget: this script spawn-kill-respawns on
+    // the SAME port twice (once per DEMO_MODE pass) in immediate
+    // succession, unlike route_smoke.ts's single spawn per run — a
+    // fire-and-forget taskkill risks the second next dev racing the
+    // first server's port release. Matches route_smoke.ts's proven
+    // spawnSync pattern.
+    spawnSync("taskkill", ["/pid", String(server.pid), "/T", "/F"]);
   } else {
     server.kill();
   }
