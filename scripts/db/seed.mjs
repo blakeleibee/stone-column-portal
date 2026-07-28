@@ -55,7 +55,20 @@ async function main() {
   // signup, by definition.
   console.log("(expected) bootstrap_organization via service role:", orgError?.message ?? orgResult);
 
-  const { data: org, error: orgInsertError } = await admin.from("orgs").insert({ name: "Seed Co" }).select("id").single();
+  const { data: org, error: orgInsertError } = await admin
+    .from("orgs")
+    .insert({
+      name: "Seed Co",
+      payable_to_name: "Seed Co Properties, LLC.",
+      billing_address: "123 Seed St.",
+      billing_city: "Seedville",
+      billing_state: "GA",
+      billing_zip: "30188",
+      billing_phone: "555-0100",
+      billing_email: "billing@seed.local",
+    })
+    .select("id")
+    .single();
   if (orgInsertError) throw orgInsertError;
 
   await admin.from("profiles").insert([
@@ -76,6 +89,73 @@ async function main() {
     { project_id: project.id, user_id: created.client, member_role: "client" },
     { project_id: project.id, user_id: created.vendor, member_role: "vendor" },
   ]);
+
+  // apply_standard_cost_code_template() is SECURITY INVOKER and checks
+  // is_org_staff(project_id), which needs a real auth.uid() — the
+  // service-role client has none (same limitation already noted above
+  // for bootstrap_organization). So this seed script reproduces the
+  // function's own logic directly against the templates using the
+  // service-role client, exactly like it already does for orgs/profiles.
+  const { data: divisionTemplates, error: divTemplateError } = await admin
+    .from("division_templates")
+    .select("id, name, sort_order")
+    .order("sort_order");
+  if (divTemplateError) throw divTemplateError;
+
+  const divisionIdByTemplateId = {};
+  for (const dt of divisionTemplates) {
+    const { data: division, error: divisionError } = await admin
+      .from("divisions")
+      .insert({ project_id: project.id, name: dt.name, sort_order: dt.sort_order })
+      .select("id")
+      .single();
+    if (divisionError) throw divisionError;
+    divisionIdByTemplateId[dt.id] = division.id;
+  }
+
+  const { data: costCodeTemplates, error: codeTemplateError } = await admin
+    .from("cost_code_templates")
+    .select("division_template_id, code, activity_name, include_in_estimate, billable, sort_order")
+    .order("sort_order");
+  if (codeTemplateError) throw codeTemplateError;
+
+  const { error: costCodesError } = await admin.from("cost_codes").insert(
+    costCodeTemplates.map((ct) => ({
+      project_id: project.id,
+      division_id: divisionIdByTemplateId[ct.division_template_id],
+      code: ct.code,
+      activity_name: ct.activity_name,
+      include_in_estimate: ct.include_in_estimate,
+      billable: ct.billable,
+      sort_order: ct.sort_order,
+    }))
+  );
+  if (costCodesError) throw costCodesError;
+  console.log(`applied standard cost-code template: ${divisionTemplates.length} divisions, ${costCodeTemplates.length} cost codes`);
+
+  await admin.from("project_financial_settings").insert({
+    project_id: project.id,
+    deposit_basis_points: 4000,
+    estimate_number_prefix: "EST-",
+    invoice_number_prefix: "INV-",
+    created_by: created.admin,
+  });
+
+  await admin.from("project_clients").insert({
+    project_id: project.id,
+    full_name: "Seed Client",
+    email: users.client.email,
+    is_primary: true,
+    created_by: created.admin,
+  });
+
+  await admin.from("vendors").insert({
+    org_id: org.id,
+    name: "Seed Cabinets Co",
+    contact_name: "Seed Vendor Contact",
+    email: "vendor@seed.local",
+    created_by: created.admin,
+  });
 
   await admin.from("documents").insert([
     {

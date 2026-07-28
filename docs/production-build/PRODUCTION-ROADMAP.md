@@ -9,7 +9,17 @@ whole-branch review — found and fixed during execution; details are
 not duplicated here). P1 consolidated the old P1 (schema/RLS
 validation), P2 (auth wiring), and P3's vendor-identity slice into one
 package — see `docs/production-build/P1-DESIGN.md` for the
-reconciliation record. **The next package is active.**
+reconciliation record. **P2.1 (Financial Master Data & Project Setup)
+complete** (`p2.1-complete` tag) — see
+`docs/production-build/P2.1-DESIGN.md` and
+`docs/milestones/P2.1-complete.md`. This was not one of the brief's
+original P0-P15 packages; it was inserted between P1 and P4 because P4
+(Estimating & Budgeting UI) needs real cost-code granularity to build
+against, and
+`docs/production-build/WORKBOOK-GAP-ANALYSIS.md` (an approved gap
+analysis comparing this portal against Stone Column's actual cost-plus
+Excel workbook) found that granularity didn't exist yet — see that
+document for the full comparison. **The next package is P4.**
 
 Replaces the "Package 3 onward" portion of
 `docs/product-definition/05-implementation-roadmap.md` with small,
@@ -261,6 +271,55 @@ scope for historical reference.
   etc.) — this package validates what already exists in
   `schema/001`–`005` only. No auth UI. No production Supabase project.
 
+## Package P2.1 — Financial Master Data & Project Setup
+
+**Status: Complete.** Tag `p2.1-complete`. Full design record:
+`docs/production-build/P2.1-DESIGN.md`. Closeout record:
+`docs/milestones/P2.1-complete.md`. Not one of the brief's original
+P0-P15 packages — inserted here after
+`docs/production-build/WORKBOOK-GAP-ANALYSIS.md` (comparing this portal
+against Stone Column's actual cost-plus Excel workbook,
+`docs/reference/Stone_Column_Cost_Plus_Blank_Template.xlsx`) found the
+portal's cost-code model was far coarser than the real business's
+(18 broad categories vs. the workbook's 113 numbered codes across 7
+divisions) — a gap P4 (Estimating & Budgeting UI) would otherwise have
+built real UI on top of.
+
+- **Exact scope:** Schema/master-data only — normalized `divisions`;
+  all 113 workbook cost codes with activity names, and the two
+  independent `include_in_estimate`/`billable` flags (distinct from the
+  pre-existing `fee_eligible`); project financial setup fields (deposit
+  %, estimate/invoice numbering, draw counter, estimate terms text);
+  organization billing identity; client billing/contact information; a
+  credit-applied tracking ledger structure; a vendor master table.
+  **No UI, no estimates, no vendor quotes, no change orders, no
+  QuickBooks import wiring, no draws, no invoices, no invoice lines** —
+  all of those remain later packages' scope, per
+  `docs/production-build/WORKBOOK-GAP-ANALYSIS.md` §7.
+- **Schema/migration changes:** `schema/012_financial_master_data.sql`
+  (+ down). New tables: `divisions`, `vendors`,
+  `project_financial_settings`, `project_clients`, `credit_ledger`,
+  `division_templates`, `cost_code_templates`. Extends `cost_codes`
+  (+5 columns) and `orgs` (+7 billing-identity columns, +1 new UPDATE
+  policy — previously bootstrap-only). New RPC:
+  `apply_standard_cost_code_template(project_id)`.
+- **Permissions/RLS policies:** Every new table RLS-enabled from
+  creation, `to authenticated` only, following the exact staff-full/
+  client-read or staff-only patterns already established in
+  schema/001-011. Full detail in `P2.1-DESIGN.md`.
+- **Tests:** `tests/sql/package_p2_1_financial_master_data_tests.sql` —
+  9 sections, run for real against PGlite via
+  `scripts/db/run-sql-tests.mjs` (all 17 SQL files, migrations 001-012
+  plus every test suite, pass together in one session).
+- **Acceptance criteria:** All met — see `P2.1-DESIGN.md`'s "How this
+  was verified" section for the exact verification performed, and its
+  "Unresolved decisions"/"Known limitations" sections for what was
+  deliberately flagged rather than resolved.
+- **Dependencies:** P1.
+- **Explicit exclusions:** Estimates, vendor quotes, change orders,
+  QuickBooks import, draws, invoices, invoice lines — all remain future
+  packages' scope (P4 onward).
+
 ## Package P2 — Authentication, company membership, and project access
 
 **Status: Auth-wiring/invitations content delivered as part of P1 (complete)
@@ -466,7 +525,10 @@ no less specificity in scope, dependencies, and exclusions.
   appears correctly in both admin and client-safe views with figures
   matching the engine's computation, end to end through a live
   database — no fixture involved anywhere in the path.
-- **Dependencies:** P3.
+- **Dependencies:** P3, P2.1 (divisions/cost-code master data and
+  `apply_standard_cost_code_template()` already exist — this package
+  builds the entry UI and QuickBooks import on top of them, it does not
+  design the cost-code model itself).
 - **Exclusions:** No live QuickBooks API (file-based only, per
   instruction — QuickBooks Desktop has no live cloud API to begin
   with). No commitments/bids yet (P5).

@@ -29,8 +29,10 @@ const FILES = [
   "schema/009_invitations.sql",
   "schema/010_documents.sql",
   "schema/011_sum_posted_expenses_rpc.sql",
+  "schema/012_financial_master_data.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
+  "tests/sql/package_p2_1_financial_master_data_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
 ];
 
