@@ -624,7 +624,18 @@ git commit -m "P4: QuickBooks CSV parsing/matching module, unit tests, sample fi
 
 - [ ] **Step 1: Read `apps/web/app/api/documents/[id]/route.ts` first** — this is the one existing Route Handler in the codebase; match its exact style for extracting the authenticated Supabase client and returning `NextResponse` errors.
 
-- [ ] **Step 2: Write `route.ts`** — parses the multipart body, loads the mapping profile and the project's cost codes (via existing RLS-scoped queries, not service role), loads existing `expenses` keys for duplicate-context (project-scoped, `financial_status <> 'void'`), calls `parseQuickBooksCsv`, inserts one `import_batches` row (`status: 'ready_for_review'`, `mapping_profile_id`) and one `import_rows` row per result (`raw_data: row.rawData`, `match_status: row.matchStatus`, plus a way to recover `resolvedCostCodeId` per row for the confirm step — store it in `raw_data` under a reserved key like `__resolved_cost_code_id`, since `import_rows` has no dedicated column for it and adding one isn't necessary when `raw_data` is already schema-free JSON).
+- [ ] **Step 2: Write `route.ts`** — parses the multipart body, loads the mapping profile and the project's cost codes (via existing RLS-scoped queries, not service role), loads existing `expenses` keys for duplicate-context (project-scoped, `financial_status <> 'void'`), calls `parseQuickBooksCsv`. For each returned `ParsedImportRow`, **do not store `row.rawData` verbatim** — its keys are whatever the source CSV's own headers were (per the mapping profile's `columnMapping`, which can point at any header name). Instead build a normalized object with fixed keys, using the mapping profile's `columnMapping` to pull each value out of `row.rawData`:
+  ```ts
+  const normalized = {
+    Item: row.rawData[mappingProfile.columnMapping.item],
+    Name: row.rawData[mappingProfile.columnMapping.vendor],
+    Memo: row.rawData[mappingProfile.columnMapping.memo],
+    Date: row.rawData[mappingProfile.columnMapping.date],
+    Amount: row.rawData[mappingProfile.columnMapping.amount],
+    __resolved_cost_code_id: row.resolvedCostCodeId,
+  };
+  ```
+  Insert one `import_batches` row (`status: 'ready_for_review'`, `mapping_profile_id`) and one `import_rows` row per result (`raw_data: normalized`, `match_status: row.matchStatus`). **This exact five-fixed-key-plus-`__resolved_cost_code_id` shape is a hard contract with Task 10's `confirm_import_batch` RPC**, which reads `raw_data->>'Name'`/`'Date'`/`'Memo'`/`'Amount'`/`'__resolved_cost_code_id'` verbatim — those two tasks must not disagree on this shape.
 
 - [ ] **Step 3: Manual verification**
 
@@ -701,7 +712,7 @@ revoke all on function public.confirm_import_batch(uuid) from public;
 grant execute on function public.confirm_import_batch(uuid) to authenticated;
 ```
 
-Note the hardcoded `'Name'`/`'Date'`/`'Memo'`/`'Amount'` keys above assume the mapping profile's column headers happen to match these literal names — this is a simplification that only works when the CSV's own headers are used verbatim. Before finalizing this step, reconcile it with Task 9: either (a) have the parse Route Handler normalize `raw_data` to always use these four fixed keys regardless of the source CSV's actual header names (recommended — simpler, and this RPC becomes header-agnostic), or (b) pass the mapping profile's `column_mapping` into this RPC too so it can look up the right keys dynamically. Pick (a) and adjust Task 9's Route Handler to write `raw_data` with normalized keys (`Item`, `Name`, `Memo`, `Date`, `Amount`, plus `__resolved_cost_code_id`) before this task is considered done — do not leave two tasks silently disagreeing on `raw_data`'s shape.
+The `raw_data->>'Name'`/`'Date'`/`'Memo'`/`'Amount'`/`'__resolved_cost_code_id'` keys above are the fixed, normalized shape Task 9's Route Handler now writes (settled there, not a per-task choice) — this RPC is header-agnostic by construction, it never sees the source CSV's actual column names.
 
 - [ ] **Step 2: Write `confirmImportBatch` in `importService.ts`, then a thin `confirmActions.ts` wrapper** — the service function calls the `confirm_import_batch` RPC via the `supabase` client passed to it, returning `{ error: error.message }` on failure; the Server Action constructs `createServerSupabaseClient()` and delegates, same shape as every prior task's wrapper.
 
@@ -743,7 +754,7 @@ git commit -m "P4: confirm_import_batch RPC, service function/thin Server Action
 
 - [ ] **Step 2: Write `ImportWizard.tsx`** — three-step client component:
   1. Profile step: `<MappingProfileForm />` (Task 7) or select an existing profile.
-  2. Upload step: a file input posting to `/api/imports/parse`; on response, fetch and display `import_rows` for the returned `batchId`, grouped by `matchStatus`, with a per-row cost-code override `<select>` (writing directly to `import_rows.raw_data.__resolved_cost_code_id` and flipping `match_status` to `'changed'` via a small new Server Action — add `overrideImportRow(rowId: string, costCodeId: string): Promise<{error?:string}>` to `confirmActions.ts`) and a per-row "Exclude" button (sets `match_status = 'excluded'` via a sibling `excludeImportRow(rowId: string)` action).
+  2. Upload step: a file input posting to `/api/imports/parse`; on response, fetch and display `import_rows` for the returned `batchId`, grouped by `matchStatus`, with a per-row cost-code override `<select>` (writing directly to `import_rows.raw_data.__resolved_cost_code_id` and flipping `match_status` to `'changed'`) and a per-row "Exclude" button (sets `match_status = 'excluded'`). Both actions follow this plan's standard split: `overrideImportRow(supabase, rowId: string, costCodeId: string): Promise<{error?:string}>` and `excludeImportRow(supabase, rowId: string): Promise<{error?:string}>` as service functions in `importService.ts` (Task 10 already reserves this file for them), each with a thin same-name wrapper added to `confirmActions.ts`.
   3. Confirm step: shows counts per `matchStatus`, disables "Confirm Import" while any `unmatched`/`error` row remains un-excluded, calls `confirmImportBatch` on click, then displays the `reconcileImportBatch` result (imported total vs. resulting expenses total) — if `!matches`, show the difference prominently, don't hide it.
 
 - [ ] **Step 3: Manual verification**
