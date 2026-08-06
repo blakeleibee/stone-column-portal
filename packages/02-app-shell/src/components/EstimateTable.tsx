@@ -28,8 +28,7 @@
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
 import { colors, spacing, typography, radius } from "../design/tokens";
-import type { CategoryFinancials } from "../../../01-financial-engine/src/types";
-import type { CostCode } from "../../../01-financial-engine/src/types";
+import type { CategoryFinancials, CostCode } from "../../../01-financial-engine/src/types";
 import { formatCents } from "../../../01-financial-engine/src/money";
 
 type ActionResult = { error?: string } | void | undefined;
