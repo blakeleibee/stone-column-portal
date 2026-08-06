@@ -657,6 +657,7 @@ git commit -m "P4: QuickBooks import parse Route Handler"
 - Create: `packages/02-app-shell/src/services/importService.ts` (also destined to hold Task 11's `overrideImportRow`/`excludeImportRow` — one service file per domain, not one per screen)
 - Create: `apps/web/app/admin/import/confirmActions.ts`
 - Modify: `packages/01-financial-engine/src/reconciliation.ts` (add the batch-level check)
+- Modify: `tests/sql/package_p4_estimating_qb_import_tests.sql` (Task 2 wrote this file's SECTION 4 — the `confirm_import_batch()` contract assertions — as a commented-out `/* ... */` block with a `TODO(Task 10)` marker, since the function didn't exist yet. **This task must uncomment that block now that the RPC is real, fix up any details that no longer match the RPC's final shape, and confirm it passes.** Do not skip this — a commented-out test block that nobody re-activates is a permanent silent gap, not a temporary one.
 
 **Interfaces:**
 - Produces (SQL): `confirm_import_batch(p_batch_id uuid) returns void`.
