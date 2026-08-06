@@ -99,3 +99,16 @@ create trigger audit_import_rows after insert or update on import_rows
 
 create trigger audit_import_mapping_profiles after insert or update on import_mapping_profiles
   for each row execute function public.log_audit_no_project();
+
+-- log_audit_no_project() writes project_id = NULL for import_mapping_profiles
+-- (it's org-scoped, not project-scoped), and audit_log_staff_select
+-- (schema/001) is `using (project_id is not null and is_org_staff(project_id))`,
+-- which structurally can never match a NULL-project_id row. Without this,
+-- those audit rows would be written durably but permanently unreadable by
+-- anyone — exactly the gap schema/006 already called out and fixed for
+-- orgs/profiles, and schema/012 already fixed for vendors. Same shape here.
+create policy audit_log_import_mapping_profiles_staff_select on audit_log
+  for select to authenticated
+  using (project_id is null and table_name = 'import_mapping_profiles' and is_org_staff_for_org(
+    (select org_id from import_mapping_profiles where id = record_id)
+  ));
