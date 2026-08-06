@@ -492,6 +492,15 @@ exception (`fee_ledger.source_type`'s closed CHECK constraint, which
 would need an ordinary additive migration if a new fee-triggering event
 type is ever introduced).
 
+**Every package below is also constrained by
+`docs/production-build/AI-ASSISTANT-ARCHITECTURE.md`** (see also
+`TARGET-ARCHITECTURE.md` §14): business logic is exposed as a
+repository (reads) and plain service functions (writes) that Server
+Actions wrap thinly, so P15 (Project Intelligence Assistant) can later
+call the same functions the UI calls, under the same asking user's
+session — no package builds a service-role shortcut or a
+duplicate-logic path for the assistant to use later.
+
 ### Package P4 — Estimating & Budgeting UI + QuickBooks Desktop Import
 
 - **Scope:** Real cost-code/budget-ledger entry UI (replacing
@@ -769,12 +778,95 @@ type is ever introduced).
   — never PM/Field/Client/Vendor visible, unchanged from the old
   roadmap's own explicit requirement.
 
-### Package P15 — Carefully Controlled AI Assistance
+### Package P15 — Project Intelligence Assistant
 
-- **Scope:** `ai_interaction_log`; scoped AI assistance layered onto
-  whichever modules are live by this point.
-- **Dependencies:** Deliberately last, per instruction and the old
-  roadmap alike.
+**Long-term core feature, not a bolt-on chatbot** — the assistant is
+intended to eventually become the portal's primary interface across
+every role. It is still built **last**, deliberately, per the original
+roadmap's own instruction and the highest-scrutiny-review requirement
+below — what changed on 2026-08-06 is that every package from P4
+onward is now built so this package requires no refactor of anything
+beneath it. Full architectural rationale, the repository/service
+pattern every prior package must expose, and the authorization/
+grounding/audit rules this package must follow:
+`docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` and
+`TARGET-ARCHITECTURE.md` §14 — both required reading before this
+package's own detailed design doc is written.
+
+- **Scope:** Conversational Q&A, project summaries, financial
+  explanations, document search, schedule questions, change order
+  explanations, homeowner assistance, vendor assistance, admin
+  insights, and — last to mature, highest scrutiny — secure action
+  execution on behalf of an authorized user. Every capability is a
+  caller of the repository/service layer P4–P14 already built; this
+  package introduces **no parallel data model and no independent
+  calculation path** (per `FINANCIAL-ARCHITECTURE.md`'s permanent-
+  backbone rule and `AI-ASSISTANT-ARCHITECTURE.md`'s grounding rule).
+- **User workflows made genuinely functional:** A user in any role asks
+  a natural-language question or, later, requests an action, from a
+  persistent assistant surface available across the portal — not a
+  separate page bolted onto one screen.
+- **Schema/migrations:** `ai_interaction_log` (new — every question
+  asked, which repositories/services were called, what was returned;
+  distinct from `audit_log`, which continues to record only data
+  mutations). `audit_log.initiated_via` (new nullable column,
+  `'ui' | 'api' | 'ai_assistant'`) — the one schema addition flagged in
+  advance by `AI-ASSISTANT-ARCHITECTURE.md`, an ordinary additive
+  migration. A search index over P9's document metadata (exact
+  mechanism — Postgres full-text vs. an external vector store — is this
+  package's own decision to make when it's actually designed, not
+  pre-decided here).
+- **Permissions/RLS policies:** None new on any existing table — the
+  assistant answers through the *asking user's own* session, so every
+  existing RLS policy already governs what it can see or do. New:
+  `ai_interaction_log` policies scoping each user (and staff oversight)
+  to their own interaction history, following the same staff-
+  full/self-read shape used elsewhere.
+- **Server-side operations:** An assistant Route Handler
+  (`/api/assistant/chat` or equivalent) authenticating the caller
+  exactly like every other Route Handler (§5.2's JWT pattern, never
+  service-role); a tool-calling layer where every tool is a thin
+  adapter over an existing repository/service function, never a new
+  bespoke query written "for the AI"; a grounding step that calls the
+  real calculation before the model narrates it, for every financial or
+  quantitative claim.
+- **UI screens connected to live data:** A persistent assistant surface
+  integrated into `AppShell`, available (with role-scoped content) to
+  admin, staff, client, and vendor sessions alike — the eventual "natural
+  interface" framing means this is treated as a first-class navigation
+  element by the time this package is designed in detail, not a
+  corner-of-the-screen widget.
+- **Audit events:** Every assistant-initiated mutation logged via the
+  same `log_audit()` path as its human-equivalent action, tagged
+  `initiated_via='ai_assistant'`. Every question (mutating or not)
+  logged to `ai_interaction_log`.
+- **Tests:** Everything every prior package already tests for
+  human-driven RLS/authorization boundaries, re-run with the assistant
+  as the caller — a vendor's question must be provably unable to
+  surface data vendor RLS doesn't already grant, a client's question
+  must be provably unable to surface another client's project,
+  following the exact "real query, not review" bar every package since
+  P1 has held to. Additionally: a grounding-violation test proving a
+  financial answer's cited numbers match a real, independently-called
+  engine result, not a model-generated figure.
+- **Acceptance criteria:** A real user in each of the four roles can
+  ask a real question and receive an answer scoped to exactly what
+  their role's RLS already permits, with every quantitative claim
+  traceable to a real repository/engine call logged in
+  `ai_interaction_log`; secure action execution (last capability to
+  ship within this package) requires explicit user confirmation before
+  any financially or legally consequential action, never an autonomous
+  mutation from a single ambiguous request.
+- **Dependencies:** P4 through P14 — this package is a caller of every
+  repository/service those packages build, not a foundation any of them
+  depend on.
+- **Explicit exclusions:** No autonomous action without human
+  confirmation for anything financially or legally consequential. No
+  chat data used to train or fine-tune any shared/external model
+  without a separate, explicit data-handling decision — out of scope
+  for this roadmap entry. No bypassing `project_decision_makers`
+  approval-authority rules (§3) for any action the assistant proposes
+  on a user's behalf.
 - **Security:** Highest-scrutiny review in the entire roadmap, by
   explicit request — no change from prior direction.
 
@@ -808,5 +900,7 @@ P3 (real projects + vendor RLS foundation) ────────────�
  └─→ P10 (Conversations + Email-to-Project Capture)
 
 P14 (Company Operations & Reporting) ← trails P4 through P13
-P15 (AI Assistance) ← deliberately last
+P15 (Project Intelligence Assistant) ← deliberately last; calls every
+  package's repository/service layer, introduces no parallel data or
+  calculation path (FINANCIAL-ARCHITECTURE.md, AI-ASSISTANT-ARCHITECTURE.md)
 ```

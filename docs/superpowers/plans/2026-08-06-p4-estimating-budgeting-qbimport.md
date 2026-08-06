@@ -10,6 +10,19 @@
 
 **Design record (read first, authoritative for every "why"):** `docs/production-build/P4-DESIGN.md`.
 
+**Amendment (2026-08-06, before any task was executed):** per
+`TARGET-ARCHITECTURE.md` §14 / `docs/production-build/AI-ASSISTANT-ARCHITECTURE.md`,
+every mutation this plan builds is now split into a plain service
+function (validation + the actual write) plus a thin Server Action
+adapter, instead of the logic living directly in the Server Action.
+This affects Tasks 4, 5, 7, and 10 below — each now creates its
+function in `packages/02-app-shell/src/services/` (a new directory)
+first, then a thin Server Action in `apps/web/app/...` that imports and
+calls it. The function bodies/signatures described in those tasks are
+otherwise unchanged; only the file they live in and the one-line
+Server Action wrapper are new relative to the original draft of this
+plan.
+
 ## Global Constraints
 
 - Money is always an integer number of cents. Never a float. (CLAUDE.md)
@@ -17,6 +30,7 @@
 - Nothing is silently overwritten, merged, or recalculated. Corrections are new ledger rows with a reason, not edits. (CLAUDE.md)
 - Never edit `schema/001`–`012` in place. All P4 schema changes are additive, in a new `schema/013_*.sql` (+ down) file only.
 - Every mutation runs through the caller's own JWT-bearing Supabase client (RLS-scoped) via a Server Action — never a client-side browser call to Supabase, never the service-role client. (TARGET-ARCHITECTURE.md §5.2)
+- Business logic (validation + the write) lives in a plain service function under `packages/02-app-shell/src/services/`; the Server Action that calls it is a thin adapter only — parse input, call the service function, shape the result. (TARGET-ARCHITECTURE.md §14, AI-ASSISTANT-ARCHITECTURE.md)
 - `npm run typecheck` / `npm run test` / `npm run build` must pass after every task.
 - Do not begin P5 or P6 work of any kind.
 
@@ -264,23 +278,24 @@ git commit -m "P4: surface P2.1 cost-code fields (division, activity, scope, est
 
 ---
 
-### Task 4: Budget entry Server Actions
+### Task 4: Budget entry service functions + thin Server Actions
 
 **Files:**
+- Create: `packages/02-app-shell/src/services/budgetService.ts`
 - Create: `apps/web/app/admin/estimate/actions.ts`
 - Test: `apps/web/test/estimate_actions_unit.ts` (new — same DI-seam style as `authorization_unit.ts`, not a live-server test)
 
 **Interfaces:**
-- Produces: `enterOriginalBudget(projectId: string, costCodeId: string, amountCents: number, note?: string): Promise<{ error?: string }>`, `adjustBudget(projectId: string, costCodeId: string, deltaCents: number, reason: string): Promise<{ error?: string }>`.
+- Produces (`budgetService.ts`, framework-agnostic — takes the caller's already-authenticated Supabase client as a parameter, exactly like `authorization_unit.ts`'s DI-seam precedent, rather than constructing one internally, so a future AI tool-calling layer can call these with its own request's client): `enterOriginalBudget(supabase: SupabaseClient, projectId: string, costCodeId: string, amountCents: number, note?: string): Promise<{ error?: string }>`, `adjustBudget(supabase: SupabaseClient, projectId: string, costCodeId: string, deltaCents: number, reason: string): Promise<{ error?: string }>`.
+- Produces (`actions.ts`, thin Server Actions with the same names and signatures minus the `supabase` parameter — they construct it via `createServerSupabaseClient()` and pass it through).
 
-- [ ] **Step 1: Write `actions.ts`**
+- [ ] **Step 1: Write `packages/02-app-shell/src/services/budgetService.ts`**
 
 ```ts
-"use server";
-
-import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function enterOriginalBudget(
+  supabase: SupabaseClient,
   projectId: string,
   costCodeId: string,
   amountCents: number,
@@ -289,7 +304,6 @@ export async function enterOriginalBudget(
   if (!Number.isInteger(amountCents) || amountCents < 0) {
     return { error: "Amount must be a whole number of cents, zero or greater." };
   }
-  const supabase = await createServerSupabaseClient();
   const { error } = await supabase.from("budget_ledger").insert({
     project_id: projectId,
     cost_code_id: costCodeId,
@@ -301,6 +315,7 @@ export async function enterOriginalBudget(
 }
 
 export async function adjustBudget(
+  supabase: SupabaseClient,
   projectId: string,
   costCodeId: string,
   deltaCents: number,
@@ -312,7 +327,6 @@ export async function adjustBudget(
   if (!reason.trim()) {
     return { error: "A reason is required for every budget adjustment." };
   }
-  const supabase = await createServerSupabaseClient();
   const { error } = await supabase.from("budget_ledger").insert({
     project_id: projectId,
     cost_code_id: costCodeId,
@@ -324,42 +338,67 @@ export async function adjustBudget(
 }
 ```
 
-- [ ] **Step 2: Write `estimate_actions_unit.ts`** covering the input-validation branches that don't need a real database (negative amount, zero-delta adjustment, empty reason) — real assertions, following `authorization_unit.ts`'s plain `assert`/console-report style, no test framework.
+- [ ] **Step 2: Write the thin `actions.ts`**
 
-- [ ] **Step 3: Run**
+```ts
+"use server";
+
+import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
+import { enterOriginalBudget as enterOriginalBudgetService, adjustBudget as adjustBudgetService } from "@stone-column/app-shell/services/budgetService";
+
+export async function enterOriginalBudget(projectId: string, costCodeId: string, amountCents: number, note?: string) {
+  const supabase = await createServerSupabaseClient();
+  return enterOriginalBudgetService(supabase, projectId, costCodeId, amountCents, note);
+}
+
+export async function adjustBudget(projectId: string, costCodeId: string, deltaCents: number, reason: string) {
+  const supabase = await createServerSupabaseClient();
+  return adjustBudgetService(supabase, projectId, costCodeId, deltaCents, reason);
+}
+```
+
+Confirm the exact package-import path (`@stone-column/app-shell/...` above is illustrative) against how `apps/web` already imports from `packages/02-app-shell` elsewhere (check `apps/web/app/admin/financials/page.tsx`'s existing imports) — use that same resolved path/alias, don't introduce a second import convention.
+
+- [ ] **Step 3: Write `estimate_actions_unit.ts`** covering the input-validation branches that don't need a real database (negative amount, zero-delta adjustment, empty reason) by calling `budgetService.ts`'s functions directly with a minimal fake `SupabaseClient` stub — real assertions, following `authorization_unit.ts`'s plain `assert`/console-report style, no test framework.
+
+- [ ] **Step 4: Run**
 
 Run: `tsx apps/web/test/estimate_actions_unit.ts`
 Expected: all checks print `ok`.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add apps/web/app/admin/estimate/actions.ts apps/web/test/estimate_actions_unit.ts
-git commit -m "P4: budget entry Server Actions (enterOriginalBudget, adjustBudget)"
+git add packages/02-app-shell/src/services/budgetService.ts apps/web/app/admin/estimate/actions.ts apps/web/test/estimate_actions_unit.ts
+git commit -m "P4: budget entry service functions + thin Server Actions (enterOriginalBudget, adjustBudget)"
 ```
 
 ---
 
-### Task 5: Cost code metadata Server Action
+### Task 5: Cost code metadata service function + thin Server Action
 
 **Files:**
+- Create: `packages/02-app-shell/src/services/costCodeService.ts`
 - Create: `apps/web/app/admin/estimate/costCodeActions.ts`
 
 **Interfaces:**
-- Produces: `updateCostCodeMetadata(costCodeId: string, patch: { activityName?: string; scopeDescription?: string; includeInEstimate?: boolean; billable?: boolean }): Promise<{ error?: string }>`.
+- Produces (`costCodeService.ts`, same DI-seam shape as Task 4's `budgetService.ts`): `updateCostCodeMetadata(supabase: SupabaseClient, costCodeId: string, patch: { activityName?: string; scopeDescription?: string; includeInEstimate?: boolean; billable?: boolean }): Promise<{ error?: string }>`.
+- Produces (`costCodeActions.ts`, thin wrapper, same shape as Task 4's `actions.ts`): `updateCostCodeMetadata(costCodeId, patch)` — constructs the server client, delegates to the service function.
 
-- [ ] **Step 1: Write the action** — plain RLS-gated `.update()` on `cost_codes`, mapping the camelCase patch keys to their snake_case columns (`activity_name`, `scope_description`, `include_in_estimate`, `billable`) before the update call; only include keys actually present in `patch`.
+- [ ] **Step 1: Write `costCodeService.ts`** — plain RLS-gated `.update()` on `cost_codes`, mapping the camelCase patch keys to their snake_case columns (`activity_name`, `scope_description`, `include_in_estimate`, `billable`) before the update call; only include keys actually present in `patch`. Follow Task 4's exact `budgetService.ts` shape (function takes `supabase` as its first parameter, does not construct one).
 
-- [ ] **Step 2: Run typecheck**
+- [ ] **Step 2: Write the thin `costCodeActions.ts`** — same wrapper shape as Task 4's `actions.ts`: construct `createServerSupabaseClient()`, call the service function, return its result.
+
+- [ ] **Step 3: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add apps/web/app/admin/estimate/costCodeActions.ts
-git commit -m "P4: cost code metadata Server Action"
+git add packages/02-app-shell/src/services/costCodeService.ts apps/web/app/admin/estimate/costCodeActions.ts
+git commit -m "P4: cost code metadata service function + thin Server Action"
 ```
 
 ---
@@ -398,29 +437,33 @@ git commit -m "P4: /admin/estimate screen — real budget entry and editing"
 
 ---
 
-### Task 7: Mapping profile Server Actions + minimal management UI
+### Task 7: Mapping profile service functions + thin Server Actions + minimal management UI
 
 **Files:**
+- Create: `packages/02-app-shell/src/services/importMappingService.ts`
 - Create: `apps/web/app/admin/import/mappingActions.ts`
 - Create: `packages/02-app-shell/src/components/MappingProfileForm.tsx`
 
 **Interfaces:**
-- Produces: `createMappingProfile(orgId: string, input: { name: string; columnMapping: Record<string,string>; strategy: 'prefix'|'exact'|'manual_only'; prefixLength?: number }): Promise<{ error?: string; id?: string }>`, `listMappingProfiles(orgId: string): Promise<MappingProfile[]>` (add a matching `MappingProfile` type alongside these actions — not in the financial engine, since mapping profiles aren't a financial-calculation concern).
+- Produces (`importMappingService.ts`, same DI-seam shape as Task 4's `budgetService.ts`): `createMappingProfile(supabase: SupabaseClient, orgId: string, input: { name: string; columnMapping: Record<string,string>; strategy: 'prefix'|'exact'|'manual_only'; prefixLength?: number }): Promise<{ error?: string; id?: string }>`, `listMappingProfiles(supabase: SupabaseClient, orgId: string): Promise<MappingProfile[]>` (add a matching `MappingProfile` type alongside these functions — not in the financial engine, since mapping profiles aren't a financial-calculation concern).
+- Produces (`mappingActions.ts`, thin wrappers, same shape as Task 4's `actions.ts`).
 
-- [ ] **Step 1: Write `mappingActions.ts`** — plain RLS-gated insert/select on `import_mapping_profiles`, validating `strategy === 'prefix' implies prefixLength is set` client-side too (defense in depth on top of the DB constraint, matching this codebase's existing pattern of validating in both places, e.g. `bootstrapFirstAdmin`'s invite-code check).
+- [ ] **Step 1: Write `importMappingService.ts`** — plain RLS-gated insert/select on `import_mapping_profiles`, validating `strategy === 'prefix' implies prefixLength is set` in code too (defense in depth on top of the DB constraint, matching this codebase's existing pattern of validating in both places, e.g. `bootstrapFirstAdmin`'s invite-code check). Follow Task 4's exact DI-seam shape.
 
-- [ ] **Step 2: Write `MappingProfileForm.tsx`** — a simple form: profile name, five column-mapping text inputs (item/vendor/amount/date/memo — labeled as "which CSV column header contains the ___"), a strategy selector, prefix-length number input (shown only when strategy is `prefix`).
+- [ ] **Step 2: Write the thin `mappingActions.ts`** — same wrapper shape as Task 4's `actions.ts`.
 
-- [ ] **Step 3: Run typecheck**
+- [ ] **Step 3: Write `MappingProfileForm.tsx`** — a simple form: profile name, five column-mapping text inputs (item/vendor/amount/date/memo — labeled as "which CSV column header contains the ___"), a strategy selector, prefix-length number input (shown only when strategy is `prefix`).
+
+- [ ] **Step 4: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add apps/web/app/admin/import/mappingActions.ts packages/02-app-shell/src/components/MappingProfileForm.tsx
-git commit -m "P4: QuickBooks import mapping profile actions + form"
+git add packages/02-app-shell/src/services/importMappingService.ts apps/web/app/admin/import/mappingActions.ts packages/02-app-shell/src/components/MappingProfileForm.tsx
+git commit -m "P4: QuickBooks import mapping profile service functions + thin actions + form"
 ```
 
 ---
@@ -596,16 +639,19 @@ git commit -m "P4: QuickBooks import parse Route Handler"
 
 ---
 
-### Task 10: `confirm_import_batch` RPC + Server Action + reconciliation check
+### Task 10: `confirm_import_batch` RPC + service function/thin Server Action + reconciliation check
 
 **Files:**
 - Modify: `schema/013_estimating_and_qb_import.sql` (add the RPC — this migration hasn't been applied to any real environment yet at this point in the plan if tasks are executed in order before Task 1's migration is pushed live, so amending it here is still "additive to an unshipped migration," not a rewrite of history; if Task 1 was already pushed to the real hosted dev project by the time this task runs, add the RPC in a NEW `schema/014_confirm_import_batch.sql` instead — check `supabase db query --linked "select * from supabase_migrations.schema_migrations"` first to decide which applies)
+- Create: `packages/02-app-shell/src/services/importService.ts` (also destined to hold Task 11's `overrideImportRow`/`excludeImportRow` — one service file per domain, not one per screen)
 - Create: `apps/web/app/admin/import/confirmActions.ts`
 - Modify: `packages/01-financial-engine/src/reconciliation.ts` (add the batch-level check)
 
 **Interfaces:**
 - Produces (SQL): `confirm_import_batch(p_batch_id uuid) returns void`.
-- Produces (TS): `confirmImportBatch(batchId: string): Promise<{ error?: string }>`; `reconcileImportBatch(importedTotalCents: number, resultingExpensesTotalCents: number): { matches: boolean; differenceCents: number }` (pure function, engine-owned per CLAUDE.md's "no screen computes its own financial numbers").
+- Produces (`importService.ts`, same DI-seam shape as Task 4's `budgetService.ts`): `confirmImportBatch(supabase: SupabaseClient, batchId: string): Promise<{ error?: string }>` — thin even at the service-function level here, since the real logic lives in the RPC, not in TypeScript; the service function's whole job is calling `supabase.rpc('confirm_import_batch', { p_batch_id: batchId })` and shaping the error. It still lives in `importService.ts`, not directly in the Server Action, so it's consistent with every other mutation in this plan and equally callable by a future AI tool.
+- Produces (`confirmActions.ts`, thin wrapper, same shape as Task 4's `actions.ts`).
+- Produces (engine): `reconcileImportBatch(importedTotalCents: number, resultingExpensesTotalCents: number): { matches: boolean; differenceCents: number }` (pure function, engine-owned per CLAUDE.md's "no screen computes its own financial numbers").
 
 - [ ] **Step 1: Write the RPC**
 
@@ -657,7 +703,7 @@ grant execute on function public.confirm_import_batch(uuid) to authenticated;
 
 Note the hardcoded `'Name'`/`'Date'`/`'Memo'`/`'Amount'` keys above assume the mapping profile's column headers happen to match these literal names — this is a simplification that only works when the CSV's own headers are used verbatim. Before finalizing this step, reconcile it with Task 9: either (a) have the parse Route Handler normalize `raw_data` to always use these four fixed keys regardless of the source CSV's actual header names (recommended — simpler, and this RPC becomes header-agnostic), or (b) pass the mapping profile's `column_mapping` into this RPC too so it can look up the right keys dynamically. Pick (a) and adjust Task 9's Route Handler to write `raw_data` with normalized keys (`Item`, `Name`, `Memo`, `Date`, `Amount`, plus `__resolved_cost_code_id`) before this task is considered done — do not leave two tasks silently disagreeing on `raw_data`'s shape.
 
-- [ ] **Step 2: Write `confirmActions.ts`** — thin Server Action wrapper calling the `confirm_import_batch` RPC via the caller's own Supabase client, returning `{ error: error.message }` on failure.
+- [ ] **Step 2: Write `confirmImportBatch` in `importService.ts`, then a thin `confirmActions.ts` wrapper** — the service function calls the `confirm_import_batch` RPC via the `supabase` client passed to it, returning `{ error: error.message }` on failure; the Server Action constructs `createServerSupabaseClient()` and delegates, same shape as every prior task's wrapper.
 
 - [ ] **Step 3: Write `reconcileImportBatch` in `reconciliation.ts`**
 
@@ -678,8 +724,8 @@ Expected: PASS, including SECTION 4/5 of `package_p4_estimating_qb_import_tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add schema/013_estimating_and_qb_import.sql apps/web/app/admin/import/confirmActions.ts packages/01-financial-engine/src/reconciliation.ts
-git commit -m "P4: confirm_import_batch RPC, Server Action, batch reconciliation check"
+git add schema/013_estimating_and_qb_import.sql packages/02-app-shell/src/services/importService.ts apps/web/app/admin/import/confirmActions.ts packages/01-financial-engine/src/reconciliation.ts
+git commit -m "P4: confirm_import_batch RPC, service function/thin Server Action, batch reconciliation check"
 ```
 
 ---
@@ -758,3 +804,4 @@ git tag p4-complete
 
 - **Spec coverage check against the user's P4 requirements:** real budget entry/editing → Tasks 4, 6. Original/revised tracking → Task 1 (guard trigger), 4 (actions), design doc §"Decisions made" #2. Scope descriptions → Task 5 (already a P2.1 column, just needed an editor). Estimate-visible/billable flags → Task 5 (ditto). QuickBooks file import → Tasks 8, 9. Import mapping profiles → Tasks 1, 7. Duplicate detection → Task 8 (`existingExpenseKeys` + in-file check). Pending review before posting → Task 10's RPC (`financial_status: 'pending'`) + existing posting action (unchanged). Import exception handling → Task 8/9 (`unmatched`/`error` statuses) + Task 10 (RPC blocks confirm). Audit history → Task 1 (three new/extended audit triggers). Reconciliation reporting → Task 10/11 (`reconcileImportBatch`). One ledger centered on project+cost code → the design doc's opening section, honored by every task reusing the existing composite-FK tables, never a new one.
 - **Known open seam flagged during authoring, not resolved here:** Task 10 Step 1's note about `raw_data`'s key normalization must be resolved consistently between Tasks 9 and 10 during execution — flagged explicitly rather than silently picking one and hoping the other task agrees, since a fresh subagent implementing Task 9 won't see Task 10's file otherwise.
+- **AI-readiness retrofit (2026-08-06 amendment):** Tasks 4, 5, 7, and 10 were revised after initial authoring to split each mutation into a plain, DI-seam-style service function under `packages/02-app-shell/src/services/` plus a thin Server Action wrapper, per `TARGET-ARCHITECTURE.md` §14 / `AI-ASSISTANT-ARCHITECTURE.md` — added before any task was executed, so this is a plan revision, not a mid-implementation scope change. Verified every mutation task got the same treatment: `budgetService.ts` (Task 4), `costCodeService.ts` (Task 5), `importMappingService.ts` (Task 7), `importService.ts` (Tasks 10 and 11's row-level actions). Task 9's Route Handler was left as-is — file parsing is a Route Handler concern per `TARGET-ARCHITECTURE.md` §5.1, not a repository/service call, so it isn't part of this pattern.

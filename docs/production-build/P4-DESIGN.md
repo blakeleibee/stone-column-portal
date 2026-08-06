@@ -4,11 +4,15 @@
 before `docs/superpowers/plans/2026-08-06-p4-estimating-budgeting-qbimport.md`
 is executed. Full scope reference: `docs/production-build/PRODUCTION-ROADMAP.md`
 §"Package P4"; business-workflow context: `docs/production-build/WORKBOOK-GAP-ANALYSIS.md`;
-governing cross-package constraint:
-`docs/production-build/FINANCIAL-ARCHITECTURE.md` (read that document
-first — it states the permanent-backbone rule this design record
-follows, the money-flow diagram P4's own place in, and the `source_type`
-registry P4's new values are drawn from).
+governing cross-package constraints:
+`docs/production-build/FINANCIAL-ARCHITECTURE.md` (the permanent-
+backbone rule this design record follows, the money-flow diagram P4's
+own place in, and the `source_type` registry P4's new values are drawn
+from) and `docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` (the
+repository/service-layer discipline this design's "Server-side
+operations" section below now follows, so P4's mutations are directly
+callable by a future AI tool-calling layer without a second
+implementation).
 
 ## The core architectural fact this design rests on
 
@@ -138,22 +142,34 @@ surface into a single file:
 
 ## Server-side operations
 
-Per `TARGET-ARCHITECTURE.md` §5.1/§5.2: ordinary user-JWT client via
-Server Actions for everything below, RLS as the real gate — no
-service-role client anywhere in this package.
+Per `TARGET-ARCHITECTURE.md` §5.1/§5.2: ordinary user-JWT client, RLS
+as the real gate — no service-role client anywhere in this package.
+**Per `TARGET-ARCHITECTURE.md` §14 / `AI-ASSISTANT-ARCHITECTURE.md`
+(added after this design was first drafted, retrofitted here before
+implementation begins):** the validation and mutation logic below lives
+in plain service functions under a new
+`packages/02-app-shell/src/services/` directory
+(`budgetService.ts`, `costCodeService.ts`, `importMappingService.ts`),
+not inline in the Server Action. Each Server Action listed below is a
+thin adapter — parse `FormData`, call the service function, shape the
+result for the UI — so a future AI tool-calling layer can call the
+identical service function directly, under the same asking user's
+session, without a second implementation.
 
 - `enterOriginalBudget(costCodeId, amountCents, note?)` and
-  `adjustBudget(costCodeId, deltaCents, reason)` — Server Actions,
-  plain RLS-gated `.insert()` on `budget_ledger` (no RPC needed; the
-  new trigger/constraint enforce the invariants at the DB level, so
-  there's nothing left for a wrapper function to "re-derive"). Staff
-  RLS already grants this via `cost_codes_staff_full`'s sibling
-  `budget_ledger_staff_insert`.
+  `adjustBudget(costCodeId, deltaCents, reason)` — in `budgetService.ts`,
+  called by a thin Server Action of the same name. Plain RLS-gated
+  `.insert()` on `budget_ledger` (no RPC needed; the new trigger/
+  constraint enforce the invariants at the DB level, so there's nothing
+  left for a wrapper function to "re-derive"). Staff RLS already grants
+  this via `cost_codes_staff_full`'s sibling `budget_ledger_staff_insert`.
 - `updateCostCodeMetadata(costCodeId, { activityName?, scopeDescription?, includeInEstimate?, billable? })`
-  — Server Action, plain RLS-gated `.update()` on `cost_codes`
-  (`cost_codes_staff_full` already grants this).
-- `createMappingProfile(...)` / `updateMappingProfile(...)` — Server
-  Actions, plain RLS-gated inserts/updates on `import_mapping_profiles`.
+  — in `costCodeService.ts`, called by a thin Server Action. Plain
+  RLS-gated `.update()` on `cost_codes` (`cost_codes_staff_full`
+  already grants this).
+- `createMappingProfile(...)` / `updateMappingProfile(...)` — in
+  `importMappingService.ts`, called by thin Server Actions. Plain
+  RLS-gated inserts/updates on `import_mapping_profiles`.
 - **Import parse Route Handler** (`POST /api/imports/parse`, new): accepts
   a multipart file + `projectId` + `mappingProfileId`. Parses the CSV
   with `csv-parse`, resolves `cost_code_id` per row (`item_overrides`

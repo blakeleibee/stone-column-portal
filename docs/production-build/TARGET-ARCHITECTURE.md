@@ -337,3 +337,62 @@ roadmap — unchanged by this transition.
   data-preserving script, not a mechanical `down.sql` run. This matches
   the instruction: never rewrite migration history that may already
   have been applied; fix forward with a new migration instead.
+
+## 14. AI-readiness — the service/repository boundary every future package must expose
+
+**Settled direction, added 2026-08-06, before P4 implementation begins:**
+the Project Intelligence Assistant (`PRODUCTION-ROADMAP.md` §P15) is a
+long-term core feature, not a bolt-on chatbot — it will eventually be
+the primary way users interact with this portal. It is **not built
+now**. What changes now is that every package from here forward is
+built so the assistant can be added later **without a refactor**. Full
+rationale, the assistant's own future design, and the capability list:
+`docs/production-build/AI-ASSISTANT-ARCHITECTURE.md`. This section
+states the constraint on *every other package's* architecture; that
+document states the assistant's own eventual architecture.
+
+- **The assistant is not a new trust boundary.** Whenever it exists, it
+  answers using the *asking user's own* Supabase session (§5.2's JWT
+  pattern) — never a service-role client "to see everything and filter
+  after." A vendor asking the assistant a question gets exactly what
+  vendor RLS already permits, nothing more, enforced by the same
+  policies protecting the UI — not by prompt instructions telling the
+  model to behave.
+- **Every package exposes a repository (reads) and, where it mutates,
+  plain service functions (validation + writes) that Server Actions
+  wrap thinly** — generalizing the `FinancialRepository` pattern
+  already established (`packages/02-app-shell/src/data/financialRepository.ts`)
+  to every future domain (Documents, Schedule, Change Orders,
+  Selections, Conversations, Vendors, Commitments). A Server Action's
+  body should be "parse input, call the service function, shape the
+  result for the UI" — never the place business logic or validation
+  actually lives. This is what lets a future AI tool-calling layer call
+  the *same* functions a Server Action calls, through a different thin
+  adapter, instead of a second, parallel implementation.
+- **No calculation is ever re-derived by the assistant.** Every number
+  it states comes from calling the real repository/engine function
+  server-side first (§6 already requires this of every screen; the
+  assistant is not exempt) and narrating the actual returned value.
+  Financial explanations are retrieval-and-narration over
+  `packages/01-financial-engine`'s real output, never an LLM-estimated
+  figure.
+- **Audit parity, with one flagged future schema addition.** An
+  assistant-initiated mutation goes through the same Server Action/
+  service path a human action would, so `log_audit()`'s existing
+  `actor_id = auth.uid()` already attributes it to the correct real
+  account with no schema change required. The one addition P15 will
+  need: a nullable `audit_log.initiated_via` column (`'ui' | 'api' |
+  'ai_assistant'`, defaulting to null/`'ui'` for every existing and
+  future non-AI row) — an ordinary additive migration, not a
+  redesign, flagged now per the same discipline
+  `FINANCIAL-ARCHITECTURE.md` applied to `fee_ledger`.
+- **Documents carry search-ready metadata from the package that adds
+  real document management (P9), not retrofitted later.** When P9
+  designs its document-management UI on top of the `documents` table
+  (already created in P1 with the `onedrive_item_id`/
+  `onedrive_last_synced_at` metadata-only pattern from §8), it must
+  also include `title`, `description`, `category`/document-type, and a
+  pointer to where extracted text will live (a column or a sibling
+  table) — reserving the shape semantic search will need, even though
+  semantic search itself is P15 scope. This avoids a second migration
+  to `documents` once the assistant is actually built.

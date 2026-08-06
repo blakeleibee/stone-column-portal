@@ -46,6 +46,7 @@ package.
 - Internal notes never appear in any client- or vendor-facing query path.
 - Every mobile-facing screen is designed portrait-first.
 - **The project + cost-code ledger (`budget_ledger`/`expenses`/`committed_costs`/`forecast_entries`/`fee_ledger`, all joined to `cost_codes` via the composite `(cost_code_id, project_id)` foreign key) is the permanent financial backbone.** No future package introduces a parallel or duplicate financial data model — every new financial concept (vendor quotes, commitments, POs, forecasts, change orders, selections, draws, invoices, payments, retainage) references this same backbone via new tables and the registered `source_type`/`source_id` provenance convention. See `docs/production-build/FINANCIAL-ARCHITECTURE.md` (standing record, required reading before any package from P4 onward touches money).
+- **Every package is built AI-ready, even though the AI assistant itself is not built until P15.** Business logic lives in a repository (reads) and plain service functions (writes) that Server Actions wrap thinly — never inline in the Server Action or the UI — so a future AI tool-calling layer can call the exact same functions, under the exact same asking-user's session, that the UI already calls. No package gives the assistant a service-role shortcut, a duplicated calculation, or a parallel data path. See `docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` and `TARGET-ARCHITECTURE.md` §14.
 
 ## Client approval rule (decided — schema/UI not yet built)
 
