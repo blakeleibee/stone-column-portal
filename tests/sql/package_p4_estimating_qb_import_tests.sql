@@ -193,26 +193,14 @@ select clear_test_user();
 -- SECTION 4 — import_batches / import_rows fixture setup, and the
 -- confirm_import_batch() contract.
 --
--- confirm_import_batch() DOES NOT EXIST YET — it's Task 10's job (see
--- docs/production-build P4 task plan). The plain table inserts below
--- (an import_batches row and two import_rows) don't depend on that RPC
--- at all, so they're written and run for real here — they also double
--- as the fixtures SECTION 5 uses to prove audit visibility on
--- import_batches/import_rows. The actual confirm_import_batch() contract
--- assertions are written correctly below per the documented contract,
--- but left commented out (not merely skipped/no-op'd — genuinely not
--- executed) so `npm run test:db` passes cleanly today instead of failing
--- on a function that isn't supposed to exist yet. There is no existing
--- convention in this test suite for an "expected-fail until a later task
--- lands" block (checked package1_tests.sql and
--- package_p2_1_financial_master_data_tests.sql — every assertion in both
--- files tests code that already exists), so a plain commented-out block
--- with a TODO is the most honest option: it neither fakes a pass (an
--- assert_raises around a "function does not exist" error would "pass"
--- without testing any real business logic) nor breaks the suite.
---
--- TODO(Task 10): once confirm_import_batch() is implemented, delete the
--- surrounding /* ... */ comment markers below and re-run.
+-- confirm_import_batch() is now implemented (schema/013, Task 10). The
+-- plain table inserts below (an import_batches row and two import_rows)
+-- also double as the fixtures SECTION 5 uses to prove audit visibility
+-- on import_batches/import_rows. The confirm_import_batch() contract
+-- assertions below were previously written correctly per the documented
+-- contract but left commented out with a TODO(Task 10) marker, since the
+-- function didn't exist yet; they are now reactivated and running for
+-- real against the RPC's actual body.
 -- =====================================================================
 
 select set_test_user((select value from test_fixture_ids where key = 'admin'));
@@ -242,10 +230,23 @@ begin
     'a newly inserted import_batches row defaults to status = processing'
   );
 
+  -- __resolved_cost_code_id is included here (not part of the original
+  -- Task 2 fixture) because confirm_import_batch() (Task 10) requires it
+  -- to populate expenses.cost_code_id, which is NOT NULL and carries a
+  -- composite FK to cost_codes(id, project_id) — this is exactly Task
+  -- 9's settled normalized raw_data shape, resolved against the real
+  -- cost_code_a fixture (which belongs to project_a, matching the batch).
   insert into import_rows (batch_id, row_number, raw_data, match_status)
   values (
     v_batch_id, 1,
-    '{"Item":"5070","Name":"ABC Cabinets","Amount":"1200.00","Date":"2026-08-01","Memo":"Kitchen cabinets"}'::jsonb,
+    jsonb_build_object(
+      'Item', '5070',
+      'Name', 'ABC Cabinets',
+      'Amount', '1200.00',
+      'Date', '2026-08-01',
+      'Memo', 'Kitchen cabinets',
+      '__resolved_cost_code_id', (select value from test_fixture_ids where key = 'cost_code_a')
+    ),
     'new'
   )
   returning id into v_row_new_id;
@@ -266,12 +267,11 @@ begin
   );
 end $$;
 
-/*
 -- ---------------------------------------------------------------------
--- confirm_import_batch() contract (Task 10 — not implemented yet).
--- Written correctly per the documented contract:
---   - raises if any row is 'unmatched'/'error' and not excluded;
---   - on success, creates pending expenses from 'new'/'changed' rows,
+-- confirm_import_batch() contract (Task 10 — now implemented above in
+-- schema/013_estimating_and_qb_import.sql). Confirms:
+--   - it raises if any row is 'unmatched'/'error' and not excluded;
+--   - on success, it creates pending expenses from 'new'/'changed' rows,
 --     sets their import_batch_id, updates import_rows.matched_expense_id,
 --     and sets import_batches.status = 'confirmed'.
 -- ---------------------------------------------------------------------
@@ -306,8 +306,28 @@ begin
     (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new')) is not null,
     'confirm_import_batch should back-fill import_rows.matched_expense_id for the row it created an expense from'
   );
+
+  perform assert_that(
+    (select amount_cents from expenses
+      where id = (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new'))) = 120000,
+    'confirm_import_batch should convert raw_data->>''Amount'' (''1200.00'') to 120000 cents'
+  );
+
+  perform assert_that(
+    (select cost_code_id from expenses
+      where id = (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new')))
+      = (select value from test_fixture_ids where key = 'cost_code_a'),
+    'confirm_import_batch should read raw_data->>''__resolved_cost_code_id'' into the new expense''s cost_code_id'
+  );
+
+  perform assert_that(
+    (select financial_status from expenses
+      where id = (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new'))) = 'pending'
+    and (select source_type from expenses
+      where id = (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new'))) = 'quickbooks_import',
+    'confirm_import_batch should create the expense as financial_status=pending, source_type=quickbooks_import'
+  );
 end $$;
-*/
 
 reset role;
 select clear_test_user();

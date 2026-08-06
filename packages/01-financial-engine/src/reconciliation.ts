@@ -56,3 +56,16 @@ export function reconcileProject(
 
   return { ok: issues.length === 0, issues };
 }
+
+/** Batch-level check for a confirmed QuickBooks import: compares the
+ *  total the source file reported against the total actually landed in
+ *  expenses once confirm_import_batch() has run. A pure function with no
+ *  side effects — the caller is responsible for computing both totals
+ *  (e.g. summing raw_data->>'Amount' vs. summing the resulting expenses'
+ *  amount_cents) and deciding what to do with a mismatch. */
+export function reconcileImportBatch(importedTotalCents: number, resultingExpensesTotalCents: number) {
+  return {
+    matches: importedTotalCents === resultingExpensesTotalCents,
+    differenceCents: resultingExpensesTotalCents - importedTotalCents,
+  };
+}
