@@ -3,7 +3,12 @@
 **Status:** Design only. Not yet implemented. Awaiting review/approval
 before `docs/superpowers/plans/2026-08-06-p4-estimating-budgeting-qbimport.md`
 is executed. Full scope reference: `docs/production-build/PRODUCTION-ROADMAP.md`
-§"Package P4"; business-workflow context: `docs/production-build/WORKBOOK-GAP-ANALYSIS.md`.
+§"Package P4"; business-workflow context: `docs/production-build/WORKBOOK-GAP-ANALYSIS.md`;
+governing cross-package constraint:
+`docs/production-build/FINANCIAL-ARCHITECTURE.md` (read that document
+first — it states the permanent-backbone rule this design record
+follows, the money-flow diagram P4's own place in, and the `source_type`
+registry P4's new values are drawn from).
 
 ## The core architectural fact this design rests on
 
@@ -12,7 +17,9 @@ exists in the schema — P4 does not invent it.** `budget_ledger`,
 `expenses`, `committed_costs`, `forecast_entries`, and `budget_suggestions`
 all carry a composite foreign key `(cost_code_id, project_id) →
 cost_codes(id, project_id)` (schema/001), which is exactly the shared
-spine the brief asks for. `budget_ledger.source_type`/`source_id` and
+spine the brief asks for and which `FINANCIAL-ARCHITECTURE.md` now
+declares the permanent backbone for every future financial package, not
+just this one. `budget_ledger.source_type`/`source_id` and
 `committed_costs.source_type`/`source_id` are deliberately untyped
 free-text/uuid pairs (per `PRODUCTION-ROADMAP.md`'s own "no reordering
 recommended" note) specifically so future provenance — a QuickBooks
@@ -22,7 +29,12 @@ or a second, disconnected table. **P4's job is to activate this spine
 for real writes for the first time (it has only ever been read), not
 to design a new one.** Every new P4 write path re-uses these exact
 tables and the composite-FK pattern; no new "budget" or "actuals" table
-is created.
+is created. P4 registers two new `source_type` values
+(`quickbooks_import`, and reserves `bid_award`/`change_order`/
+`selection_overage`/`vendor_invoice` for P5/P7/P8/P11 respectively) in
+`FINANCIAL-ARCHITECTURE.md`'s registry — any future package adding a
+new value updates that registry in the same commit, per its own stated
+rule.
 
 ## Scope
 

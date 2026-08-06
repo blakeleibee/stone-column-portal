@@ -479,6 +479,19 @@ Each following package inherits the same required-field structure;
 written more compactly since the pattern is now established, but with
 no less specificity in scope, dependencies, and exclusions.
 
+**Every package below is constrained by
+`docs/production-build/FINANCIAL-ARCHITECTURE.md`**: the project +
+cost-code ledger is the permanent financial backbone, and new financial
+concepts (commitments, change orders, selections, draws, invoices,
+payments, retainage, vendor invoices) reference it via new tables and
+the registered `source_type` provenance convention — never a parallel
+financial model. That document also confirms, package by package, that
+none of P5–P13 requires restructuring `budget_ledger`/`expenses`/
+`committed_costs`/`forecast_entries`/`cost_codes`, with one flagged
+exception (`fee_ledger.source_type`'s closed CHECK constraint, which
+would need an ordinary additive migration if a new fee-triggering event
+type is ever introduced).
+
 ### Package P4 — Estimating & Budgeting UI + QuickBooks Desktop Import
 
 - **Scope:** Real cost-code/budget-ledger entry UI (replacing

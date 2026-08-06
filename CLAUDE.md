@@ -45,6 +45,7 @@ package.
 - Client visibility requires both `status = 'published'` AND an explicit visibility flag — never one or the other.
 - Internal notes never appear in any client- or vendor-facing query path.
 - Every mobile-facing screen is designed portrait-first.
+- **The project + cost-code ledger (`budget_ledger`/`expenses`/`committed_costs`/`forecast_entries`/`fee_ledger`, all joined to `cost_codes` via the composite `(cost_code_id, project_id)` foreign key) is the permanent financial backbone.** No future package introduces a parallel or duplicate financial data model — every new financial concept (vendor quotes, commitments, POs, forecasts, change orders, selections, draws, invoices, payments, retainage) references this same backbone via new tables and the registered `source_type`/`source_id` provenance convention. See `docs/production-build/FINANCIAL-ARCHITECTURE.md` (standing record, required reading before any package from P4 onward touches money).
 
 ## Client approval rule (decided — schema/UI not yet built)
 
