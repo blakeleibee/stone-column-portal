@@ -148,11 +148,15 @@ destination package. Nothing below is "deferred without a destination."
 | Duplicate contacts or companies | #36 |
 | Deceased/incapacitated client or changed signing authority | #37 |
 
-## One open product question flagged, not yet resolved
+## One open product question — now resolved
 
-The Exception Register (#12 and #37) surfaces a genuine, unresolved
+The Exception Register (#12 and #37) surfaced a genuine, unresolved
 product decision: whether a project requires a single "primary
 decision-maker" whose approval is binding, or unanimous approval among
-multiple decision-makers. This needs a decision before Package 7
-(Change Orders) or Package 8 (Selections) is built, since both depend
-on it. It is flagged, not silently assumed, in both documents.
+multiple decision-makers. **Resolved**: the approval rule is a
+per-project, per-record-type configuration — any-one, primary-binding,
+or unanimous — not a single fixed platform behavior. Full design
+record: `docs/production-build/CLIENT-APPROVAL-MODEL.md`. Package 7
+(Change Orders) and Package 8 (Selections) build against this settled
+model; the `project_decision_makers` table itself is still their
+(and P2's) implementation scope, not built by this resolution.

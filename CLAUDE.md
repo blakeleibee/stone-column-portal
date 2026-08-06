@@ -46,7 +46,7 @@ package.
 - Internal notes never appear in any client- or vendor-facing query path.
 - Every mobile-facing screen is designed portrait-first.
 
-## Client approval rule (for future implementation — not yet built)
+## Client approval rule (decided — schema/UI not yet built)
 
 - Projects may have multiple client contacts.
 - Authorized decision-makers are explicitly designated.
@@ -55,10 +55,12 @@ package.
 - A disagreement or missing required signer creates a blocked/disputed state.
 - The system never resolves client disagreement automatically.
 
-(This is currently an open product question flagged in
-`docs/product-definition/COVERAGE_MATRIX.md` — a decision on
-single-decision-maker vs. multi-decision-maker approval is needed
-before Package 7 (Change Orders) or Package 8 (Selections) is built.)
+The single-vs-multi-decision-maker question once flagged as open here
+is resolved: the approval rule is a per-project, per-record-type
+configuration (any-one / primary-binding / unanimous), not a fixed
+platform choice. Full model: `docs/production-build/CLIENT-APPROVAL-MODEL.md`.
+The `project_decision_makers` table and approval UI remain P2/P7/P8
+scope — this is a design decision, not an implementation.
 
 ## Commands (from repository root)
 

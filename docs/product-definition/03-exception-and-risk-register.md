@@ -174,15 +174,15 @@ exist yet.
 - **Record status**: the system doesn't automatically resolve
   disagreement — the platform's job is to surface both positions
   clearly (e.g., on a selection or change order, show which
-  decision-maker responded and how) and require a single, designated
-  "primary decision-maker" concept (not yet modeled anywhere in the
-  schema) whose approval is the one that's binding, OR require
-  unanimous approval if the project explicitly requires it — this is a
-  genuine open product decision the current schema doesn't resolve
-  and should be settled before module 8 (Selections) or module 7
-  (Change Orders) is built, not discovered mid-build.
-- **Approval**: per above — needs a product decision on primary-vs-
-  unanimous decision-maker before implementation.
+  decision-maker responded and how). **Resolved** (previously an open
+  product decision): the approval rule — any-one, primary-binding, or
+  unanimous — is a per-project, per-record-type configuration, not a
+  single fixed platform behavior. Full model:
+  `docs/production-build/CLIENT-APPROVAL-MODEL.md`. Schema
+  (`project_decision_makers` and the rule-storage columns) remains
+  P2/P7/P8 implementation scope.
+- **Approval**: per above — the rule model is settled; P7/P8 implement
+  it against `CLIENT-APPROVAL-MODEL.md`.
 - **Reversal**: not applicable.
 - **Notification**: all decision-makers see all responses on a shared
   item, not siloed views.
@@ -550,5 +550,6 @@ exist yet.
   decision-maker is going forward.
 - **Audit**: the full history of who was ever an authorized decision-
   maker, and when, is retained — this connects directly to Exception
-  Register #12 (multiple decision-makers who disagree) and the same
-  open "primary decision-maker" product question flagged there.
+  Register #12 (multiple decision-makers who disagree) and the
+  approval-rule model resolved there
+  (`docs/production-build/CLIENT-APPROVAL-MODEL.md` §5).
