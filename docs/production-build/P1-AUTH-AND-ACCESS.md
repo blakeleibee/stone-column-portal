@@ -37,12 +37,15 @@ can't leak a row RLS itself would deny.
    with that code to create the first admin.
 5. `npm run dev`.
 
-**This repository's own execution environment for Package P1 has
+**This repository's own execution environment for Package P1 had
 neither Docker nor a hosted Supabase project available** — every piece
 of database/auth code was written and verified as far as possible
 without one (see the "Production-readiness limitations" section
-below); a real person with Docker or a Supabase account is the
-remaining step to exercise the full live flow.
+below). **Resolved 2026-08-06**: a real hosted Supabase project now
+exists and the full live flow (signup, login, session persistence,
+logout, invitation acceptance, role assignment, cross-org isolation)
+has been exercised end-to-end and passed — see
+`docs/production-build/PRE-P4-CHECKPOINT.md`.
 
 ## Database: migrations, testing, seeding
 

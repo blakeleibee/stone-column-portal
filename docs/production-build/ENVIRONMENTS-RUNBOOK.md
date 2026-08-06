@@ -24,6 +24,25 @@ Local and preview both run the exact same migration files as production,
 applied through the exact same tool (`supabase db push` or equivalent).
 There is no environment-specific schema.
 
+`schema/*.sql` (excluding `*_down.sql`) remains the single source of
+truth. `supabase/migrations/*.sql` is a committed, regeneratable mirror
+in the CLI's required `<timestamp>_<name>.sql` naming — `supabase db
+push` cannot read `schema/` directly. Whenever `schema/` changes,
+regenerate the mirror from the repo root before pushing:
+
+```
+rm -f supabase/migrations/*.sql
+i=1
+for f in schema/*.sql; do
+  case "$(basename "$f")" in *_down.sql) continue;; esac
+  ts=$(printf "202601%02d000000" "$i")
+  cp "$f" "supabase/migrations/${ts}_$(basename "$f" | sed -E 's/^[0-9]+_//')"
+  i=$((i+1))
+done
+```
+
+First done as part of `docs/production-build/PRE-P4-CHECKPOINT.md`.
+
 ## What P1 does with this runbook
 
 1. Run `supabase init` at the repo root (once).
