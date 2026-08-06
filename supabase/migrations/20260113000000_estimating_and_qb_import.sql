@@ -82,6 +82,15 @@ begin
 end;
 $$;
 
+revoke all on function public.log_audit_via_batch() from public;
+
+-- Atomic enforcement: only one original budget entry per cost code is allowed.
+-- The trigger above provides a clear error message in the normal (non-race) case;
+-- this unique index is the database-level backstop for concurrent inserts.
+create unique index budget_ledger_one_original_per_cost_code
+  on budget_ledger (cost_code_id)
+  where entry_type = 'original';
+
 create trigger audit_import_batches after insert or update on import_batches
   for each row execute function public.log_audit();
 

@@ -15,6 +15,9 @@ drop trigger if exists enforce_single_original_budget_entry on budget_ledger;
 drop function if exists public.log_audit_via_batch();
 drop function if exists public.enforce_single_original_budget_entry();
 
+-- Indexes (before constraints)
+drop index if exists budget_ledger_one_original_per_cost_code;
+
 -- RLS policy
 drop policy if exists import_mapping_profiles_staff_only on import_mapping_profiles;
 
