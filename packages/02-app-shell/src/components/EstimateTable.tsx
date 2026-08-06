@@ -34,6 +34,44 @@ import { formatCents } from "../../../01-financial-engine/src/money";
 type ActionResult = { error?: string } | void | undefined;
 
 /**
+ * The pure decision at the heart of the resync effect below, pulled out
+ * on its own so it can be unit-tested with plain, deterministic
+ * assertions -- completely independent of any React renderer's
+ * scheduling/batching behavior.
+ *
+ * CORRECTION (post-review round 2): the previous inline version of this
+ * comparison read `lastServerValueRef.current` LIVE from inside the
+ * `setValue` functional updater, on the same line that ALSO mutated that
+ * same ref a moment later in the effect body. Whether that is a bug
+ * depends entirely on when the host renderer actually invokes a
+ * functional `setValue` updater relative to the rest of the effect body
+ * -- e.g. under React 18's automatic batching (the real Next.js/browser
+ * runtime this component actually ships in), the updater runs on a
+ * LATER render, by which point the ref had already advanced to the new
+ * value, making the comparison always compare a value against itself
+ * and permanently fail to resync. This function takes the "previous
+ * server value" as an explicit, already-captured argument instead of a
+ * live mutable reference, which makes the correct behavior true BY
+ * CONSTRUCTION, regardless of when any particular renderer chooses to
+ * invoke a functional state updater.
+ *
+ * (An alternative restructuring -- adjusting state during the render
+ * itself instead of in an effect, avoiding a functional updater
+ * altogether -- was tried and rejected: it re-runs its prop-vs-state
+ * comparison on EVERY render, not just when the server prop actually
+ * changes, so calling markSaved() [which intentionally advances the
+ * internal baseline ahead of the prop, before router.refresh()'s fresh
+ * props have actually landed] made the very next unrelated re-render
+ * treat the still-stale prop as authoritative and revert the
+ * just-committed value. A `useEffect` keyed only on `serverValue`
+ * doesn't have this problem: it only ever fires when the PROP itself
+ * changes, which is exactly the one thing markSaved() does not do.)
+ */
+export function resolveResyncedFieldValue<T>(current: T, previousServerValue: T, nextServerValue: T): T {
+  return Object.is(current, previousServerValue) ? nextServerValue : current;
+}
+
+/**
  * Backs each inline-editable metadata field (activityName,
  * scopeDescription, includeInEstimate, billable) with local draft state
  * that ALWAYS ends up reflecting real server state — never a value the
@@ -53,13 +91,18 @@ type ActionResult = { error?: string } | void | undefined;
  *    in-progress, not-yet-saved local edit to protect (i.e. the current
  *    draft still matches the last value we know the server held).
  */
-function useServerSyncedField<T>(serverValue: T) {
+export function useServerSyncedField<T>(serverValue: T) {
   const [value, setValue] = useState<T>(serverValue);
   const lastServerValueRef = useRef<T>(serverValue);
 
   useEffect(() => {
     if (!Object.is(serverValue, lastServerValueRef.current)) {
-      setValue((current) => (Object.is(current, lastServerValueRef.current) ? serverValue : current));
+      // The old baseline MUST be captured into a plain variable here,
+      // before the ref is mutated below, and closed over by the updater
+      // -- never read live off `lastServerValueRef.current` from inside
+      // the updater itself. See resolveResyncedFieldValue()'s doc comment.
+      const previousServerValue = lastServerValueRef.current;
+      setValue((current) => resolveResyncedFieldValue(current, previousServerValue, serverValue));
       lastServerValueRef.current = serverValue;
     }
   }, [serverValue]);
