@@ -25,13 +25,58 @@
  * props to a Client Component is the standard, supported Next.js App
  * Router pattern.
  */
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { colors, spacing, typography, radius } from "../design/tokens";
 import type { CategoryFinancials, CostCode } from "../../../01-financial-engine/src/types";
 import { formatCents } from "../../../01-financial-engine/src/money";
 
 type ActionResult = { error?: string } | void | undefined;
+
+/**
+ * Backs each inline-editable metadata field (activityName,
+ * scopeDescription, includeInEstimate, billable) with local draft state
+ * that ALWAYS ends up reflecting real server state — never a value the
+ * server has silently rejected or a value some other session has since
+ * overwritten. Two failure modes this exists to close:
+ *
+ * 1. A failed updateCostCodeMetadata() call must not leave the field
+ *    showing the optimistically-applied new value — revertToServerValue()
+ *    snaps it back to the last value actually confirmed saved.
+ * 2. useState(serverValue) alone only seeds the INITIAL value; React
+ *    reuses the same component instance across a router.refresh()
+ *    re-render (keyed by the stable costCodeId), so a plain useState
+ *    initializer never re-runs when fresh props arrive. The effect below
+ *    re-syncs the draft to the incoming prop whenever it changes
+ *    server-side (e.g. another session's edit, or server-side
+ *    normalization of a just-saved value) — but only when there is no
+ *    in-progress, not-yet-saved local edit to protect (i.e. the current
+ *    draft still matches the last value we know the server held).
+ */
+function useServerSyncedField<T>(serverValue: T) {
+  const [value, setValue] = useState<T>(serverValue);
+  const lastServerValueRef = useRef<T>(serverValue);
+
+  useEffect(() => {
+    if (!Object.is(serverValue, lastServerValueRef.current)) {
+      setValue((current) => (Object.is(current, lastServerValueRef.current) ? serverValue : current));
+      lastServerValueRef.current = serverValue;
+    }
+  }, [serverValue]);
+
+  function revertToServerValue() {
+    setValue(lastServerValueRef.current);
+  }
+
+  /** Call after a save the server confirmed succeeded — updates the
+   *  "last known good" baseline so the field is no longer considered
+   *  dirty relative to it. */
+  function markSaved(newValue: T) {
+    lastServerValueRef.current = newValue;
+  }
+
+  return { value, setValue, revertToServerValue, markSaved } as const;
+}
 
 export interface EstimateTableProps {
   categories: CategoryFinancials[];
@@ -135,19 +180,30 @@ function EstimateRow({
 }) {
   const router = useRouter();
 
-  const [activityName, setActivityName] = useState(costCode.activityName ?? "");
-  const [scopeDescription, setScopeDescription] = useState(costCode.scopeDescription ?? "");
-  const [includeInEstimate, setIncludeInEstimate] = useState(costCode.includeInEstimate);
-  const [billable, setBillable] = useState(costCode.billable);
+  const activityNameField = useServerSyncedField(costCode.activityName ?? "");
+  const scopeDescriptionField = useServerSyncedField(costCode.scopeDescription ?? "");
+  const includeInEstimateField = useServerSyncedField(costCode.includeInEstimate);
+  const billableField = useServerSyncedField(costCode.billable);
   const [metadataError, setMetadataError] = useState<string | null>(null);
 
-  async function saveMetadata(patch: Parameters<EstimateTableProps["updateCostCodeMetadata"]>[1]) {
+  /** Saves one metadata field. On a server-reported error, the field's
+   *  draft is reverted to the last confirmed-saved value (never left
+   *  showing the optimistically-applied, actually-rejected value) — on
+   *  success, the field's baseline is advanced to the new value and a
+   *  router.refresh() re-reads real server state for the whole row. */
+  async function saveMetadata<T>(
+    patch: Parameters<EstimateTableProps["updateCostCodeMetadata"]>[1],
+    field: { revertToServerValue: () => void; markSaved: (v: T) => void },
+    nextValue: T
+  ) {
     setMetadataError(null);
     const result = await updateCostCodeMetadata(costCode.id, patch);
     if (result && "error" in result && result.error) {
       setMetadataError(result.error);
+      field.revertToServerValue();
       return;
     }
+    field.markSaved(nextValue);
     router.refresh();
   }
 
@@ -157,11 +213,11 @@ function EstimateRow({
       <td style={{ textAlign: "left" }}>
         <input
           type="text"
-          value={activityName}
-          onChange={(e) => setActivityName(e.target.value)}
+          value={activityNameField.value}
+          onChange={(e) => activityNameField.setValue(e.target.value)}
           onBlur={() => {
-            if (activityName !== (costCode.activityName ?? "")) {
-              saveMetadata({ activityName });
+            if (activityNameField.value !== (costCode.activityName ?? "")) {
+              saveMetadata({ activityName: activityNameField.value }, activityNameField, activityNameField.value);
             }
           }}
           className="sc-estimate-input"
@@ -171,11 +227,15 @@ function EstimateRow({
       <td style={{ textAlign: "left" }}>
         <input
           type="text"
-          value={scopeDescription}
-          onChange={(e) => setScopeDescription(e.target.value)}
+          value={scopeDescriptionField.value}
+          onChange={(e) => scopeDescriptionField.setValue(e.target.value)}
           onBlur={() => {
-            if (scopeDescription !== (costCode.scopeDescription ?? "")) {
-              saveMetadata({ scopeDescription });
+            if (scopeDescriptionField.value !== (costCode.scopeDescription ?? "")) {
+              saveMetadata(
+                { scopeDescription: scopeDescriptionField.value },
+                scopeDescriptionField,
+                scopeDescriptionField.value
+              );
             }
           }}
           className="sc-estimate-input"
@@ -187,11 +247,11 @@ function EstimateRow({
       <td>
         <input
           type="checkbox"
-          checked={includeInEstimate}
+          checked={includeInEstimateField.value}
           onChange={(e) => {
             const next = e.target.checked;
-            setIncludeInEstimate(next);
-            saveMetadata({ includeInEstimate: next });
+            includeInEstimateField.setValue(next);
+            saveMetadata({ includeInEstimate: next }, includeInEstimateField, next);
           }}
           aria-label={`Include ${category.code} in estimate`}
         />
@@ -199,11 +259,11 @@ function EstimateRow({
       <td>
         <input
           type="checkbox"
-          checked={billable}
+          checked={billableField.value}
           onChange={(e) => {
             const next = e.target.checked;
-            setBillable(next);
-            saveMetadata({ billable: next });
+            billableField.setValue(next);
+            saveMetadata({ billable: next }, billableField, next);
           }}
           aria-label={`${category.code} billable`}
         />
