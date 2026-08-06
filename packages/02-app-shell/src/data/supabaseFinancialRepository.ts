@@ -52,6 +52,11 @@ export class SupabaseFinancialRepository implements FinancialRepository {
       feeEligible: row.fee_eligible,
       status: row.status,
       isArchived: row.is_archived,
+      divisionId: row.division_id,
+      activityName: row.activity_name,
+      scopeDescription: row.scope_description,
+      includeInEstimate: row.include_in_estimate,
+      billable: row.billable,
     }));
   }
 

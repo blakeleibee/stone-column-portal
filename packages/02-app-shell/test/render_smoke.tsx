@@ -81,7 +81,19 @@ class TestProjectBRepository implements FinancialRepository {
     return { showVendorNamesToClient: false, showSupportingInvoicesToClient: false };
   }
   async getCostCodes() {
-    return [{ id: "b_cc1", projectId: "proj_test_b", code: "Demo", feeEligible: true, status: "active" as const, isArchived: false }];
+    return [{
+      id: "b_cc1",
+      projectId: "proj_test_b",
+      code: "Demo",
+      feeEligible: true,
+      status: "active" as const,
+      isArchived: false,
+      divisionId: null,
+      activityName: null,
+      scopeDescription: null,
+      includeInEstimate: true,
+      billable: true,
+    }];
   }
   async getBudgetLedger() {
     return [{ id: "b_l1", costCodeId: "b_cc1", entryType: "original" as const, amountCents: 500000, sourceType: "initial_setup", createdAt: "2026-01-01" }];

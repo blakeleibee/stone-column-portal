@@ -51,6 +51,11 @@ function makeCode(overrides: Partial<CostCode> = {}): CostCode {
     feeEligible: true,
     status: "active",
     isArchived: false,
+    divisionId: null,
+    activityName: null,
+    scopeDescription: null,
+    includeInEstimate: true,
+    billable: true,
     ...overrides,
   };
 }

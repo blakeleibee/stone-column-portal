@@ -65,6 +65,14 @@ export const costCodes: CostCode[] = CODES.map((code, i) => ({
   feeEligible: code !== "Contingency / Other",
   status: STATUS_BY_CODE[code],
   isArchived: false,
+  // This fixture predates the P2.1 division/activity/scope columns and
+  // was never seeded via apply_standard_cost_code_template() — null/true
+  // defaults match what an ad hoc (non-templated) cost code looks like.
+  divisionId: null,
+  activityName: null,
+  scopeDescription: null,
+  includeInEstimate: true,
+  billable: true,
 }));
 
 export const codeId = (code: string): string =>

@@ -19,6 +19,24 @@ export interface CostCode {
   feeEligible: boolean;
   status: CostCodeStatus;
   isArchived: boolean;
+  /** FK to divisions(id, project_id) — nullable: ad hoc cost codes that
+   *  never went through apply_standard_cost_code_template() (schema/012)
+   *  have no division. */
+  divisionId: string | null;
+  /** Workbook "Activity" label (schema/012 cost_codes.activity_name).
+   *  Nullable for the same reason as divisionId — not every cost code
+   *  originates from the standard template. */
+  activityName: string | null;
+  /** Free-text scope description (schema/012 cost_codes.scope_description).
+   *  Nullable — no template column populates this; staff-entered only. */
+  scopeDescription: string | null;
+  /** schema/012 cost_codes.include_in_estimate — independent of feeEligible
+   *  and billable (see 012's own header comment on the workbook's 7082/9999
+   *  rows). Not null, defaults true at the DB. */
+  includeInEstimate: boolean;
+  /** schema/012 cost_codes.billable — independent of feeEligible and
+   *  includeInEstimate. Not null, defaults true at the DB. */
+  billable: boolean;
 }
 
 export type BudgetEntryType = "original" | "approved_change" | "correction";
