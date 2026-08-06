@@ -454,9 +454,14 @@ with new_row as (
 )
 insert into test_fixture_ids select 'original_id', id from new_row;
 
+-- Both inserts below carry a note (required for entry_type = 'correction'
+-- since schema/013's budget_ledger_correction_requires_note constraint —
+-- added after this file was originally written) so the error each
+-- produces/doesn't-produce is actually about the reversal-magnitude
+-- guard this section tests, not an unrelated missing-note rejection.
 select assert_raises(
   format(
-    'insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type, reverses_entry_id) values (%L, %L, ''correction'', -150000, ''manual_correction'', %L)',
+    'insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type, reverses_entry_id, note) values (%L, %L, ''correction'', -150000, ''manual_correction'', %L, ''Reversing approved_change beyond original magnitude'')',
     (select value from test_fixture_ids where key = 'project_a'),
     (select value from test_fixture_ids where key = 'cost_code_a'),
     (select value from test_fixture_ids where key = 'original_id')
@@ -465,10 +470,11 @@ select assert_raises(
 );
 
 -- The same thing with is_adjustment = true must succeed.
-insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type, reverses_entry_id, is_adjustment)
+insert into budget_ledger (project_id, cost_code_id, entry_type, amount_cents, source_type, reverses_entry_id, is_adjustment, note)
 select (select value from test_fixture_ids where key = 'project_a'),
        (select value from test_fixture_ids where key = 'cost_code_a'),
-       'correction', -150000, 'manual_correction', (select value from test_fixture_ids where key = 'original_id'), true;
+       'correction', -150000, 'manual_correction', (select value from test_fixture_ids where key = 'original_id'), true,
+       'Reversing approved_change beyond original magnitude, intentionally flagged as adjustment';
 
 reset role;
 select clear_test_user();
