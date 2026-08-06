@@ -68,11 +68,18 @@ export async function listMappingProfiles(supabase: SupabaseClient, orgId: strin
     .eq("is_archived", false)
     .order("created_at", { ascending: false });
 
-  if (error || !data) {
-    return [];
+  // A real failure (RLS denial, dropped connection, bad org_id, a future
+  // schema typo) must NOT collapse into the same [] a genuinely empty
+  // org gets back — Supabase returns `data: []` (never null) for an
+  // actual empty result, so throwing here is safe: it only ever fires
+  // on a real error, and lets a future caller distinguish "no profiles
+  // yet" from "the read failed" instead of silently rendering both the
+  // same way.
+  if (error) {
+    throw new Error(error.message);
   }
 
-  return data.map((row) => ({
+  return (data ?? []).map((row) => ({
     id: row.id,
     orgId: row.org_id,
     name: row.name,
