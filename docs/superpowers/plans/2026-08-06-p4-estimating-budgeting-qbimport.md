@@ -778,10 +778,12 @@ git commit -m "P4: /admin/import QuickBooks wizard — upload, review, confirm, 
 - Create: `docs/milestones/P4-complete.md`
 - Create: `docs/production-build/P4-HANDOFF.md` (only if this plan is executed across multiple sessions — otherwise skip, per this project's own established practice of writing handoffs only when actually needed)
 
+- [ ] **Step 0: Wire the orphaned unit test scripts into `npm run test` before anything else** — Tasks 4 and 8's `estimate_actions_unit.ts`/`import_parse_unit.ts` were never added to any npm script (confirmed during Task 9's review: neither `apps/web/package.json` nor root `package.json` references them), so they have never actually run as part of `npm run test` — only manually via `tsx`. Add `"test:estimate": "tsx test/estimate_actions_unit.ts"` and `"test:import-parse": "tsx test/import_parse_unit.ts"` to `apps/web/package.json`, following the exact existing `"test:authz": "tsx test/authorization_unit.ts"` pattern. Then wire both into root `package.json`'s `test` script and add matching top-level aliases, following the exact existing `test:auth`/`test:authz` pattern (`"test:estimate": "npm run test:estimate --workspace=apps/web"`, appended to the `test` script's chain). Run `npm run test:estimate` and `npm run test:import-parse` from the repo root to confirm both actually execute and pass before proceeding to Step 1 — this closes a real gap where two already-reviewed tasks' test coverage has never actually run automatically.
+
 - [ ] **Step 1: Run the full suite**
 
 Run: `npm ci && npm run typecheck && npm run test && npm run build`
-Expected: all green, from a clean install.
+Expected: all green, from a clean install — and this time `npm run test`'s output should show `test:estimate` and `test:import-parse` actually executing, not just the suites that were already wired.
 
 - [ ] **Step 2: Apply migration 013 (and 014 if Task 10 split it out) to the real hosted dev project**
 
@@ -794,7 +796,7 @@ Then hand the actual `supabase.cmd db push --linked --yes` to the user's own ter
 
 - [ ] **Step 3: Extend or re-run the live checkpoint**
 
-Either extend `scripts/db/live-auth-checkpoint.mjs`'s sibling pattern with a new `scripts/db/live-p4-checkpoint.mjs` (real budget entry, real import parse+confirm, real reconciliation check, against the live project, with full cleanup) or, if time-constrained, perform the manual verification from Tasks 6/9/11 one more time against the now-fully-migrated real project and document the exact commands/results — either way, this package's milestone doc must contain real evidence, not "should work," matching every prior milestone's bar.
+Either extend `scripts/db/live-auth-checkpoint.mjs`'s sibling pattern with a new `scripts/db/live-p4-checkpoint.mjs` (real budget entry, real import parse+confirm, real reconciliation check, against the live project, with full cleanup) or, if time-constrained, perform the manual verification from Tasks 6/9/11 one more time against the now-fully-migrated real project and document the exact commands/results — either way, this package's milestone doc must contain real evidence, not "should work," matching every prior milestone's bar. **Use a real QuickBooks-plausible date format (e.g. `MM/DD/YYYY`, not ISO) in the test import file for at least one row** — Task 9's review flagged that `existingExpenseKeys`' duplicate-detection key uses the raw, unnormalized CSV date string, while `expenses.transaction_date` comes back from PostgREST in canonical `YYYY-MM-DD`; Task 8's ISO-formatted fixture never exercised this mismatch, so this is the first real chance to confirm whether non-ISO QuickBooks exports silently defeat duplicate-against-existing-expense detection. If they do, decide whether to fix now (normalize the date before key construction) or document it as a known limitation — don't let it go unnoticed.
 
 - [ ] **Step 4: Write `docs/milestones/P4-complete.md`**, following `P2.1-complete.md`'s exact structure (Status/Verified commit/Tag, Scope, What shipped, Tests run, Independent review, Unresolved decisions, Known limitations, Relevant files, Recommended next package, Starter prompt for a fresh session).
 
