@@ -19,7 +19,15 @@ against, and
 `docs/production-build/WORKBOOK-GAP-ANALYSIS.md` (an approved gap
 analysis comparing this portal against Stone Column's actual cost-plus
 Excel workbook) found that granularity didn't exist yet — see that
-document for the full comparison. **The next package is P4.**
+document for the full comparison. **P4 (Estimating & Budgeting UI +
+QuickBooks Desktop Import) complete** (`p4-complete` tag) — see
+`docs/production-build/P4-DESIGN.md` and `docs/milestones/P4-complete.md`.
+Built after two permanent cross-package architecture decisions were
+established: `docs/production-build/FINANCIAL-ARCHITECTURE.md` (the
+project + cost-code ledger as the permanent financial backbone) and
+`docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` (business logic
+exposed as repository/service functions a future AI layer can reuse).
+**The next package is P5.**
 
 Replaces the "Package 3 onward" portion of
 `docs/product-definition/05-implementation-roadmap.md` with small,
@@ -502,6 +510,12 @@ session — no package builds a service-role shortcut or a
 duplicate-logic path for the assistant to use later.
 
 ### Package P4 — Estimating & Budgeting UI + QuickBooks Desktop Import
+
+**Status: Complete.** Tag `p4-complete`. Full closeout record:
+`docs/milestones/P4-complete.md`. Built via subagent-driven development
+(12 tasks, fresh implementer + independent reviewer per task) per
+`docs/superpowers/plans/2026-08-06-p4-estimating-budgeting-qbimport.md`.
+**The next package is P5.**
 
 - **Scope:** Real cost-code/budget-ledger entry UI (replacing
   read-only `AdminFinancialsScreen`/`ClientBudgetAndInvoicesScreen`
