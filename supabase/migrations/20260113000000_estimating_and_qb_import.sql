@@ -143,6 +143,16 @@ begin
     raise exception 'Batch % has % unresolved row(s) — resolve or exclude them before confirming.', p_batch_id, v_unresolved_count;
   end if;
 
+  -- Idempotency guard: without this, a double-click on a future Confirm
+  -- button, or a retried request after a dropped response, would re-run
+  -- the loop below against the same 'new'/'changed' rows (their
+  -- match_status isn't changed by a successful confirm) and silently
+  -- insert a second duplicate expenses row per row, overwriting
+  -- matched_expense_id in the process.
+  if (select status from import_batches where id = p_batch_id) = 'confirmed' then
+    raise exception 'Batch % is already confirmed.', p_batch_id;
+  end if;
+
   for v_row in select * from import_rows where batch_id = p_batch_id and match_status in ('new', 'changed') loop
     insert into expenses (
       project_id, cost_code_id, vendor_name, transaction_date, description_internal,

@@ -329,6 +329,27 @@ begin
   );
 end $$;
 
+-- Idempotency guard: re-confirming an already-confirmed batch must raise,
+-- not silently re-run the loop and duplicate the expense it already
+-- created (a double-click on a future Confirm button, or a retried
+-- request after a dropped response, would otherwise hit this).
+select assert_raises(
+  format('select confirm_import_batch(%L)', (select value from test_fixture_ids where key = 'import_batch_a')),
+  'confirm_import_batch must raise when called again on an already-confirmed batch'
+);
+
+do $$
+declare v_expense_count_after_reconfirm_attempt int;
+begin
+  select count(*) into v_expense_count_after_reconfirm_attempt from expenses
+    where import_batch_id = (select value from test_fixture_ids where key = 'import_batch_a')
+      and financial_status = 'pending';
+  perform assert_that(
+    v_expense_count_after_reconfirm_attempt = 1,
+    'a rejected re-confirm attempt must not have created a second duplicate expense'
+  );
+end $$;
+
 reset role;
 select clear_test_user();
 
