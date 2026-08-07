@@ -1,9 +1,9 @@
 # P4 — Estimating & Budgeting UI + QuickBooks Desktop Import — Complete
 
-**Status:** Complete
-**Commit range:** `906f99c`..`6b8c988` (design/plan through the final whole-branch review's last fix round; see `.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/progress.md` for the complete ledger)
-**Tag:** `p4-complete`
-**Completed:** 2026-08-07
+**Status:** Complete (including a narrowly-scoped post-closeout fix — see below)
+**Commit range:** `906f99c`..`ae4b9b9` (design/plan through the post-closeout date-canonicalization fix's review-driven follow-up; `906f99c`..`6b8c988` is the original closeout, see `.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/progress.md` for that ledger; `19b9525`..`f034504`..`ae4b9b9` is the post-closeout fix — `f034504` the initial fix, `ae4b9b9` the fixes from its independent review — reviewed per `.superpowers/sdd/p4-post-closeout-review.diff`)
+**Tag:** `p4-complete` (moved to `ae4b9b9` — the tag had never been pushed or relied upon; see "Post-closeout fix" below)
+**Completed:** 2026-08-07 (post-closeout fix: 2026-08-07)
 **Branch:** `main`
 
 ## Scope
@@ -298,6 +298,78 @@ Amount-canonicalization approach taken and why, and test output:
    `imported_by`; `confirm_import_batch()` (schema/014) now sets
    `created_by = auth.uid()` on the expenses it creates.
 
+## Post-closeout fix: date canonicalization (2026-08-07)
+
+After `p4-complete` was tagged, a narrowly-scoped follow-up fixed a real
+gap the tag had shipped with: **cross-import duplicate detection
+compared the raw, unnormalized CSV Date string against Postgres's
+canonical `YYYY-MM-DD` `expenses.transaction_date`**, so a QuickBooks
+export using `MM/DD/YYYY` (QuickBooks Desktop's own default) would never
+match an existing expense's date, even for the exact same underlying
+transaction — the cross-batch duplicate scenario the whole feature
+exists to catch. Root cause and fix, in full: the "Duplicate-against-
+existing-expense detection" entry under Known limitations, above (struck
+through and marked fixed there rather than duplicated here).
+
+Also completed in the same pass: `next` added as an explicit dependency
+in `packages/02-app-shell/package.json` (`14.2.35`, matching
+`apps/web/package.json` exactly — previously worked only via monorepo
+hoisting).
+
+**Independent review** (`.superpowers/sdd/p4-post-closeout-review.diff`,
+commit range `19b9525`..`f034504`): **Approved**, no Critical findings.
+The core reasoning — that `parseQuickBooksDate()`'s output is strictly
+ISO by construction, so Postgres's `::date` cast needed no migration
+change — was independently re-derived and confirmed, not just accepted.
+One Important and six Minor findings were raised; all were resolved in a
+same-day follow-up commit rather than deferred, since each was cheap and
+concrete:
+
+- **Important — the fix narrows the set of Date formats an import
+  accepts, undocumented.** Resolved by documenting the exact accepted
+  format set and the trade-off explicitly (Known limitations, above) —
+  extending format support itself was judged out of scope for a
+  narrowly-scoped fix with no reported real-world QuickBooks export
+  outside the documented set.
+- **Minor — `live-p4-checkpoint.mjs`'s Phase 4 still hand-built
+  `raw_data.Date` from the raw CSV string**, contradicting its own
+  comment and only passing because the hosted session's `DateStyle`
+  happens to be `ISO, MDY`. Fixed: Phase 4 now uses `row.canonicalDate`,
+  matching `stageImportBatch()`'s real contract. Re-ran the live
+  checkpoint after this change — still 27/27.
+- **Minor — no year-range validation** (`isValidCalendarDate` checked
+  month/day but not year; ISO `0000-01-01` would canonicalize
+  successfully and then fail Postgres's own `::date` cast, which rejects
+  year 0). Fixed: `parseQuickBooksCsv.ts`'s `isValidCalendarDate()` now
+  rejects `year < 1` before checking month/day.
+- **Minor — overriding an `error`-status row whose Date failed to parse
+  hits the same known limitation already documented for a malformed
+  Amount.** Documented as its own Known limitations entry, above, rather
+  than adding a runtime guard — same reasoning as the existing Amount
+  variant (fails safely and transactionally; no real-world data exists
+  yet to make this reachable).
+- **Minor — `ImportWizard` now displays the canonical date, not the
+  source file's original formatting.** Documented as a Known limitations
+  entry, above (arguably an improvement, consistent with how Amount is
+  already shown canonicalized).
+- **Minor — the implementer's report summarized rather than pasted raw
+  typecheck/build output**, and its passed-check arithmetic in prose was
+  off by a small amount (the pasted PASS/FAIL output itself was correct
+  and unaffected). Not a code issue; typecheck, the unit suite, and the
+  SQL suite were independently re-run as part of closing this fix (see
+  Tests run, above) and matched the implementer's claims exactly.
+
+Full verification suite and the live hosted-project checkpoint were
+re-run after applying the review's fixes (not just once, before review,
+as in the implementer's original pass): `npm run typecheck` (3/3 clean),
+`npx tsx apps/web/test/import_parse_unit.ts` (**34/34**, up from the
+pre-fix 26), `node scripts/db/run-sql-tests.mjs` (**20/20 files**,
+confirming no migration was introduced), and
+`npx tsx scripts/db/live-p4-checkpoint.mjs` against the real hosted
+Supabase dev project (**27/27**, up from the pre-fix 20, including the
+cross-batch ISO-vs-`MM/DD/YYYY` duplicate proof and its negative
+control).
+
 ## Known limitations
 
 - **Overriding an `error`-status import row only fixes its resolved
@@ -376,6 +448,41 @@ Amount-canonicalization approach taken and why, and test output:
   same-amount/different-date row in the same batch correctly staying
   `new` as a negative control. All 27/27 live checkpoint checks passed
   against the real hosted Supabase dev project.
+- **The date fix narrows the set of Date formats an import will accept,
+  and this is a deliberate trade, not an oversight.** Before this pass,
+  any non-empty Date cell passed through as the raw CSV string and
+  Postgres's own input parser accepted a much wider range at confirm
+  time (`08/15/26`, `Aug 15, 2026`, `2026/08/15`, `08-15-2026`, etc.,
+  under the hosted project's default `ISO, MDY` `DateStyle`). After this
+  pass, `parseQuickBooksDate()` only recognizes strict ISO
+  (`YYYY-MM-DD`) and QuickBooks Desktop's own default export convention
+  (`M/D/YYYY`/`MM/DD/YYYY`, 4-digit year) — anything else, including a
+  2-digit-year `MM/DD/YY` export (possible under some Windows regional
+  settings), now fails loud as `matchStatus: 'error'` on every affected
+  row rather than being silently accepted with format-dependent
+  semantics. Failing loud was the correct call (a silently-misread date
+  is worse than a blocked import), but if a real QuickBooks Desktop
+  install is ever found to export a Date format outside this set,
+  `parseQuickBooksDate()` is the one place to extend, following its own
+  pattern.
+- **Overriding an `error`-status row whose Date failed to parse hits the
+  same known limitation already documented above for a malformed
+  Amount**, one entry further: `overrideImportRow()` only patches
+  `__resolved_cost_code_id` and flips `match_status` to `'changed'`; it
+  does not — and cannot — repair `raw_data.Date`, which stays `null`.
+  `confirm_import_batch()` then inserts `NULL` into
+  `expenses.transaction_date` (`not null`), and the whole batch confirm
+  fails with a raw Postgres error rather than a clear application
+  message. Fails safely and transactionally (nothing partially written);
+  the same future UI improvement noted above (steer toward "Exclude"
+  for `error`-status rows) covers this case too.
+- **`ImportWizard`'s review table now displays each row's canonical
+  `YYYY-MM-DD` date, not the source file's original formatting** — a
+  QuickBooks export using `MM/DD/YYYY` will show `2026-08-15` in the
+  review UI where the source CSV said `08/15/2026`. Consistent with how
+  Amount is already shown post-canonicalization, and arguably clearer,
+  but a reviewer cross-checking row-by-row against the source file
+  should expect this. A future improvement could show both.
 - **`import_mapping_profiles` has `is_archived` but no delete-protection
   trigger**, unlike the `vendors` precedent (P2.1) it otherwise mirrors
   — a staff user's RLS grant permits physically deleting a mapping
@@ -404,11 +511,13 @@ Amount-canonicalization approach taken and why, and test output:
 - **`packages/02-app-shell` gained two more implicit-via-hoisting
   dependencies during this package** (`next` for `EstimateTable.tsx`'s
   `useRouter`, and `react-test-renderer`/`@types/react-test-renderer`
-  for the field-sync regression tests) — the `next` one was not
-  explicitly declared in `package.json` (works today via monorepo
-  hoisting, flagged by review as a Minor finding, not fixed); `react-test-renderer`
-  was explicitly declared but is itself deprecated upstream in favor of
-  `@testing-library/react`.
+  for the field-sync regression tests). ~~The `next` one was not
+  explicitly declared~~ — **fixed in the same post-closeout pass as the
+  date fix**: `next@14.2.35` (matching `apps/web/package.json`'s
+  declared version exactly) is now an explicit dependency in
+  `packages/02-app-shell/package.json`. `react-test-renderer` was
+  already explicitly declared but is itself deprecated upstream in
+  favor of `@testing-library/react`.
 
 ## Relevant files
 
