@@ -201,6 +201,15 @@ select clear_test_user();
 -- contract but left commented out with a TODO(Task 10) marker, since the
 -- function didn't exist yet; they are now reactivated and running for
 -- real against the RPC's actual body.
+--
+-- P4 final-review fix (schema/014): raw_data->>'Amount' is now an
+-- already-canonical SIGNED INTEGER NUMBER OF CENTS, never a decimal-
+-- string dollar amount — the Amount values below ('120000' etc.) reflect
+-- that contract directly, since parsing a source file's own currency
+-- formatting ("$1,200.00", "(500.00)") now happens exactly once, in
+-- packages/02-app-shell/src/imports/parseQuickBooksCsv.ts, never at the
+-- SQL layer. See the additional sub-test near the end of this section
+-- for the formatted-currency/parenthesized-negative case specifically.
 -- =====================================================================
 
 select set_test_user((select value from test_fixture_ids where key = 'admin'));
@@ -236,13 +245,16 @@ begin
   -- composite FK to cost_codes(id, project_id) — this is exactly Task
   -- 9's settled normalized raw_data shape, resolved against the real
   -- cost_code_a fixture (which belongs to project_a, matching the batch).
+  -- Amount '120000' is already-canonical cents (equivalent to a source
+  -- file reporting "$1,200.00") — confirm_import_batch() (schema/014)
+  -- casts it directly to bigint, no numeric parsing, no *100.
   insert into import_rows (batch_id, row_number, raw_data, match_status)
   values (
     v_batch_id, 1,
     jsonb_build_object(
       'Item', '5070',
       'Name', 'ABC Cabinets',
-      'Amount', '1200.00',
+      'Amount', '120000',
       'Date', '2026-08-01',
       'Memo', 'Kitchen cabinets',
       '__resolved_cost_code_id', (select value from test_fixture_ids where key = 'cost_code_a')
@@ -255,7 +267,7 @@ begin
   insert into import_rows (batch_id, row_number, raw_data, match_status)
   values (
     v_batch_id, 2,
-    '{"Item":"UNKNOWN-CODE","Name":"Mystery Vendor","Amount":"400.00","Date":"2026-08-02","Memo":"Unrecognized item"}'::jsonb,
+    '{"Item":"UNKNOWN-CODE","Name":"Mystery Vendor","Amount":"40000","Date":"2026-08-02","Memo":"Unrecognized item"}'::jsonb,
     'unmatched'
   )
   returning id into v_row_unmatched_id;
@@ -310,7 +322,14 @@ begin
   perform assert_that(
     (select amount_cents from expenses
       where id = (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new'))) = 120000,
-    'confirm_import_batch should convert raw_data->>''Amount'' (''1200.00'') to 120000 cents'
+    'confirm_import_batch should cast raw_data->>''Amount'' (already-canonical ''120000'' cents) directly to amount_cents = 120000, with no further numeric parsing'
+  );
+
+  perform assert_that(
+    (select created_by from expenses
+      where id = (select matched_expense_id from import_rows where id = (select value from test_fixture_ids where key = 'import_row_new')))
+      = (select value from test_fixture_ids where key = 'admin'),
+    'confirm_import_batch (schema/014 final-review fix) should populate the new expense''s created_by with auth.uid() of the confirming user'
   );
 
   perform assert_that(
@@ -347,6 +366,85 @@ begin
   perform assert_that(
     v_expense_count_after_reconfirm_attempt = 1,
     'a rejected re-confirm attempt must not have created a second duplicate expense'
+  );
+end $$;
+
+-- ---------------------------------------------------------------------
+-- P4 final-review fix 1 — a second batch proving confirm_import_batch()
+-- correctly posts expenses from Amount values that originated as
+-- QuickBooks-formatted currency, once canonicalized to signed integer
+-- cents upstream (parseQuickBooksCsv.ts owns that parsing; see
+-- apps/web/test/import_parse_unit.ts for direct coverage of the
+-- "$1,234.56" / "(500.00)" parsing itself). This proves the RPC's own
+-- half of the contract: it must trust and directly cast an
+-- already-canonical cents value, including a NEGATIVE one (the
+-- parenthesized-negative-credit case), with no re-parsing or sign loss.
+-- ---------------------------------------------------------------------
+
+do $$
+declare
+  v_batch2_id uuid;
+  v_row_formatted_currency_id uuid;
+  v_row_parenthesized_negative_id uuid;
+begin
+  insert into import_batches (project_id, source_filename, report_type, mapping_profile_id, row_count, imported_by)
+  values (
+    (select value from test_fixture_ids where key = 'project_a'),
+    'qb_item_detail_2026_08_formatted_currency.csv',
+    'Item Detail',
+    (select value from test_fixture_ids where key = 'import_mapping_profile_qb_standard'),
+    2,
+    (select value from test_fixture_ids where key = 'admin')
+  )
+  returning id into v_batch2_id;
+
+  -- Represents a source row of "$1,234.56" — already canonicalized
+  -- upstream to 123456 cents.
+  insert into import_rows (batch_id, row_number, raw_data, match_status)
+  values (
+    v_batch2_id, 1,
+    jsonb_build_object(
+      'Item', '5070',
+      'Name', 'Formatted Currency Vendor',
+      'Amount', '123456',
+      'Date', '2026-08-05',
+      'Memo', 'Originated as "$1,234.56" in the source file',
+      '__resolved_cost_code_id', (select value from test_fixture_ids where key = 'cost_code_a')
+    ),
+    'new'
+  )
+  returning id into v_row_formatted_currency_id;
+
+  -- Represents a source row of "(500.00)" (QuickBooks' parenthesized-
+  -- negative credit convention) — already canonicalized upstream to
+  -- -50000 cents. The sign MUST survive the RPC's direct bigint cast.
+  insert into import_rows (batch_id, row_number, raw_data, match_status)
+  values (
+    v_batch2_id, 2,
+    jsonb_build_object(
+      'Item', '5070',
+      'Name', 'Credit Memo Vendor',
+      'Amount', '-50000',
+      'Date', '2026-08-06',
+      'Memo', 'Originated as "(500.00)" in the source file',
+      '__resolved_cost_code_id', (select value from test_fixture_ids where key = 'cost_code_a')
+    ),
+    'new'
+  )
+  returning id into v_row_parenthesized_negative_id;
+
+  perform confirm_import_batch(v_batch2_id);
+
+  perform assert_that(
+    (select amount_cents from expenses
+      where id = (select matched_expense_id from import_rows where id = v_row_formatted_currency_id)) = 123456,
+    'confirm_import_batch correctly posts an expense from a formatted-currency-originated amount (canonicalized to 123456 cents upstream)'
+  );
+
+  perform assert_that(
+    (select amount_cents from expenses
+      where id = (select matched_expense_id from import_rows where id = v_row_parenthesized_negative_id)) = -50000,
+    'confirm_import_batch correctly posts a NEGATIVE amount_cents from a parenthesized-negative-originated credit (canonicalized to -50000 cents upstream), with no sign loss'
   );
 end $$;
 

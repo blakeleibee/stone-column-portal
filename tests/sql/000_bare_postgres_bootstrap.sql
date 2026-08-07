@@ -70,6 +70,21 @@ alter default privileges for role current_user in schema public
 -- ---------------------------------------------------------------------
 create schema if not exists auth;
 
+-- Real Supabase projects grant `authenticated`/`anon` USAGE on schema
+-- `auth` as part of standard provisioning -- every `security definer`
+-- helper in this schema (is_org_staff(), log_audit(), etc.) that calls
+-- auth.uid() internally has been unaffected by this bootstrap's
+-- omission of that grant until now, because a security definer
+-- function's body executes with ITS OWNER's privileges, not the
+-- calling role's. schema/014's confirm_import_batch() fix is the first
+-- `security invoker` function in this schema to call auth.uid()
+-- directly (previously only security-definer functions did) -- under
+-- `security invoker`, the call executes as the actual calling role
+-- (`authenticated` in every test here), which needs this grant to even
+-- reference anything in schema `auth`, mirroring what a real Supabase
+-- project already provisions for free.
+grant usage on schema auth to authenticated, anon;
+
 create table if not exists auth.users (
   id uuid primary key default gen_random_uuid()
 );

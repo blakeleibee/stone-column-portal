@@ -17,12 +17,19 @@
  *                                                                          override ("MISC-LABOR" -> "5030"), not a prefix
  *                                                                          match: "MISC-LABOR".slice(0,4) === "MISC", which
  *                                                                          matches no project cost code on its own.
+ *   Row 7  5010          / Formatted Currency Vendor / 2026-06-07 / "$1,234.56" -> new, amountCents === 123456
+ *                                                                          (final-review fix: currency symbol + thousands
+ *                                                                          separator must not be misparsed).
+ *   Row 8  5030          / Credit Memo Vendor        / 2026-06-08 / (500.00)    -> new, amountCents === -50000
+ *                                                                          (final-review fix: a QuickBooks parenthesized
+ *                                                                          negative must produce a NEGATIVE cents value,
+ *                                                                          not have its sign silently stripped).
  */
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { parseQuickBooksCsv, type MatchContext } from "../src/server/imports/parseQuickBooksCsv";
+import { parseQuickBooksCsv, type MatchContext } from "../../../packages/02-app-shell/src/imports/parseQuickBooksCsv";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = path.join(__dirname, "..", "..", "..", "tests", "fixtures", "quickbooks", "sample_job_cost_export.csv");
@@ -176,6 +183,28 @@ async function main() {
     const rows = parseQuickBooksCsv(csv, ctx);
     check("manual_only strategy leaves resolvedCostCodeId null despite a plausible prefix match", rows[0].resolvedCostCodeId === null);
     check("manual_only strategy row is 'unmatched', not auto-resolved to 'new'", rows[0].matchStatus === "unmatched");
+  }
+
+  console.log("\n--- Amount canonicalization: currency symbol + thousands separator (final-review fix 1) ---");
+  {
+    const rows = parseQuickBooksCsv(fixtureCsv, baseContext());
+    const row7 = rows[6];
+    check(
+      "row 7 ('$1,234.56') parses to amountCents === 123456, not NaN and not truncated at the comma",
+      row7.amountCents === 123456
+    );
+    check("row 7 is 'new' (a validly parsed, resolvable, non-duplicate row)", row7.matchStatus === "new");
+  }
+
+  console.log("\n--- Amount canonicalization: QuickBooks parenthesized negative (final-review fix 1) ---");
+  {
+    const rows = parseQuickBooksCsv(fixtureCsv, baseContext());
+    const row8 = rows[7];
+    check(
+      "row 8 ('(500.00)') parses to amountCents === -50000 — the sign must survive, not be stripped along with the parens",
+      row8.amountCents === -50000
+    );
+    check("row 8 is 'new' (a validly parsed, resolvable, non-duplicate row)", row8.matchStatus === "new");
   }
 
   console.log(`\nimport_parse_unit.ts: all ${checks} checks passed.`);

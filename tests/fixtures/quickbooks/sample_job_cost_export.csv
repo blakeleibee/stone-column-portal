@@ -5,3 +5,5 @@ Item,Name,Memo,Date,Amount
 5010,ABC Framing LLC,Rough framing labor,2026-06-01,12500.00
 5030,Bad Row Vendor,Malformed amount,2026-06-05,not-a-number
 MISC-LABOR,General Labor Co,Cleanup and general labor,2026-06-06,1500.00
+5010,Formatted Currency Vendor,Currency-symbol and thousands-separator amount,2026-06-07,"$1,234.56"
+5030,Credit Memo Vendor,QuickBooks parenthesized-negative credit,2026-06-08,(500.00)
