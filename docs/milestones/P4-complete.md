@@ -1,7 +1,7 @@
 # P4 — Estimating & Budgeting UI + QuickBooks Desktop Import — Complete
 
 **Status:** Complete
-**Commit range:** `906f99c`..`028f242` (design/plan through live checkpoint; see "Detailed execution history" for the full list)
+**Commit range:** `906f99c`..`6b8c988` (design/plan through the final whole-branch review's last fix round; see `.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/progress.md` for the complete ledger)
 **Tag:** `p4-complete`
 **Completed:** 2026-08-07
 **Branch:** `main`
@@ -84,27 +84,28 @@ tool-calling layer can call under the same session, never duplicated).
 
 ## Tests run
 
+Final state, after the whole-branch review's fix rounds, re-run clean
+from a fresh `npm ci`:
+
 ```
 npm ci
 npm run typecheck    # 3/3 workspaces clean
 npm run test         # every suite green, including two previously-
                       # orphaned unit test files (estimate_actions_unit.ts,
-                      # import_parse_unit.ts) now actually wired into the
-                      # chain for the first time (Task 12 Step 0 — they
+                      # import_parse_unit.ts, 23/23) now actually wired into
+                      # the chain for the first time (Task 12 Step 0 — they
                       # existed since Tasks 4/8 but had never run
-                      # automatically until this closeout)
+                      # automatically until this closeout), and
+                      # apps/web/test/route_smoke.ts now also covering
+                      # /admin/estimate and /admin/import (added during the
+                      # final review's fix wave, once nav-wiring made them
+                      # reachable)
 npm run build         # clean; /admin/estimate, /admin/import,
                       # /api/imports/parse all registered
-node scripts/db/run-sql-tests.mjs   # 19 SQL files (13 migrations +
-                      # 6 test suites, including the new
-                      # package_p4_estimating_qb_import_tests.sql)
-                      # applied/passed against PGlite
+node scripts/db/run-sql-tests.mjs   # 20 SQL files (14 migrations +
+                      # 6 test suites — schema/014 added during the final
+                      # review's fix wave) applied/passed against PGlite
 ```
-
-(Updated by the final-review fix wave below: `node scripts/db/run-sql-tests.mjs`
-now applies 20 SQL files — schema/014 added — and `apps/web/test/route_smoke.ts`
-now also covers `/admin/estimate`/`/admin/import`. See the final-review
-fix report for the actual re-run output.)
 
 **Live checkpoint** (`node scripts/db/live-p4-checkpoint.mjs`, new,
 committed) — run against the real hosted Supabase dev project used for
@@ -192,6 +193,49 @@ than leaving them in reports only): the Task 9/Task 10 `raw_data`
 key-shape contract, and Task 2's commented-out SECTION 4 test block
 being explicitly wired into Task 10's own required steps so it couldn't
 be forgotten.
+
+### Final whole-branch review (after all 12 tasks merged)
+
+Dispatched on the most capable available model specifically to catch
+cross-task integration issues no single task's reviewer could see.
+Found no Critical issues — every architectural constraint
+(`FINANCIAL-ARCHITECTURE.md`'s backbone, `AI-ASSISTANT-ARCHITECTURE.md`'s
+DI-seam pattern) held under inspection, and a repo-wide grep confirmed
+zero P5/P6 scope creep. It found one genuine, serious cross-task defect
+per-task review structurally could not have caught:
+
+- **`Amount` was parsed three incompatible ways across three files**
+  (the CSV parser stripped currency symbols/commas before converting to
+  cents; the confirm RPC cast the raw string straight to `numeric`,
+  which throws on `"$1,250.00"`; the reconciliation function did
+  `Number()` on the same string, silently producing `NaN` → 0). This
+  would have failed on QuickBooks Desktop's own default export format —
+  a format neither the fixture data nor the live checkpoint had
+  exercised. Fixed by canonicalizing `Amount` into signed integer cents
+  exactly once (the Route Handler), with every downstream reader using
+  that same value. A parenthesized-negative parsing bug
+  (QuickBooks' credit-amount convention) was fixed at the same time.
+
+Three more Important findings, all fixed in the same pass: the import
+Route Handler was the one mutation path without a DI-seam service
+function (extracted into `stageImportBatch()`, at the human's explicit
+choice over documenting it as an exception — this required relocating
+`parseQuickBooksCsv.ts` into `packages/02-app-shell` since packages may
+never depend on `apps/web`); `/admin/estimate` and `/admin/import` had
+no navigation entry and were unreachable from the running app; the
+import Route Handler could resolve an item to an archived cost code
+that the wizard's own dropdown would then have no option for.
+
+**The fix wave's own re-review** (per the process's one-fix-wave,
+one-scoped-re-review cap) found two further Important issues in the
+fix itself: the import review screen displaying raw integer cents
+instead of formatted dollars, and the new migration's `Amount`-format
+change having no documentation of its (narrow, currently unreachable)
+blast radius on any pre-existing staged data. Per the review process's
+adjudication rule, these were presented to the human rather than
+absorbed into an unbounded third round; the human chose one more small,
+targeted fix rather than deferring — both were resolved and verified
+clean by a final scoped re-review before this milestone was tagged.
 
 ## Unresolved decisions
 
