@@ -198,7 +198,14 @@ async function main() {
       Item: row.rawData.Item ?? null,
       Name: row.rawData.Name ?? null,
       Memo: row.rawData.Memo ?? null,
-      Date: row.rawData.Date ?? null,
+      // Date is ALWAYS the pre-parsed, canonical YYYY-MM-DD string (see
+      // parseQuickBooksCsv.ts's ParsedImportRow.canonicalDate doc
+      // comment) -- never row.rawData.Date, the raw CSV string. Mirrors
+      // the Amount treatment below; without this, this hand-built insert
+      // would only pass because the hosted session's DateStyle happens
+      // to be ISO, MDY -- exactly the dependency the post-closeout date
+      // fix exists to eliminate.
+      Date: row.canonicalDate,
       // Amount is ALWAYS the pre-parsed, canonical signed-integer-cents
       // value (see parseQuickBooksCsv.ts's ParsedImportRow.amountCents
       // doc comment) -- never row.rawData.Amount, the raw CSV string.

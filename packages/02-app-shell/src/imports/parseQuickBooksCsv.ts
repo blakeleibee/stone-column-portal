@@ -114,6 +114,7 @@ function isLeapYear(year: number): boolean {
  *  year (e.g. "02/30/2026", "04/31/2026", "02/29/2027" in a non-leap
  *  year), rather than silently normalizing a garbage date. */
 function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (year < 1) return false;
   if (month < 1 || month > 12) return false;
   if (day < 1) return false;
   const daysInMonth = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
