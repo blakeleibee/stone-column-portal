@@ -129,6 +129,39 @@ async function main() {
     );
     check("admin Financials is NOT labeled preview (real engine data)", !isLabeledAsPreview(financials.html));
 
+    console.log("\n--- /admin/estimate is reachable and nav-wired (P4 final-review fix 3) ---");
+    const estimate = await getHtml("/admin/estimate");
+    check("/admin/estimate responds 200", estimate.status === 200);
+    check("/admin/estimate is NOT labeled preview (real engine data, fixture-backed under DEMO_MODE)", !isLabeledAsPreview(estimate.html));
+    // "Estimate" appears first in the sidebar nav (which renders before
+    // <main> in DOM order), so buttonTagFor's first-match lookup finds
+    // the nav button itself, not something inside EstimateTable's own
+    // content further down the page.
+    const estimateNavTag = buttonTagFor(estimate.html, "Estimate");
+    check(
+      "/admin/estimate's nav highlights its own 'Estimate' tab (data-active=\"true\"), not 'Financials'",
+      !!estimateNavTag && estimateNavTag.includes('data-active="true"')
+    );
+    const financialsNavTagOnEstimatePage = buttonTagFor(estimate.html, "Financials");
+    check(
+      "/admin/estimate's 'Financials' nav tab is NOT the active one",
+      !!financialsNavTagOnEstimatePage && financialsNavTagOnEstimatePage.includes('data-active="false"')
+    );
+
+    console.log("\n--- /admin/import is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Unlike /admin/estimate, AdminImportPage always calls requireRole()
+    // regardless of DEMO_MODE (see its own doc comment: there is no
+    // fixture-repository equivalent for import_batches/import_rows), so
+    // under this test's DEMO_MODE=true env with no real session cookie it
+    // must redirect to /login rather than render -- this still proves the
+    // route/nav wiring exists (P4 final-review fix 3) without requiring a
+    // real authenticated Supabase session in this smoke test.
+    const importRoute = await getHtml("/admin/import");
+    check(
+      "/admin/import redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (importRoute.status === 307 || importRoute.status === 308) && (importRoute.location ?? "").endsWith("/login")
+    );
+
     console.log("\n--- Every client route responds 200, correctly labeled ---");
     const clientPreviewRoutes = ["/client/schedule", "/client/selections", "/client/messages", "/client/updates", "/client/documents"];
     for (const route of clientPreviewRoutes) {

@@ -37,7 +37,7 @@ export default async function AdminImportPage() {
 
   if (!firstProject) {
     return (
-      <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="import" isDemoMode={isDemoMode()}>
         <p style={{ padding: 24 }}>No projects yet for this organization.</p>
       </AdminChrome>
     );
@@ -49,7 +49,7 @@ export default async function AdminImportPage() {
   ]);
 
   return (
-    <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
+    <AdminChrome activeKey="import" isDemoMode={isDemoMode()}>
       <ImportWizard
         orgId={user.orgId}
         projectId={firstProject.id}

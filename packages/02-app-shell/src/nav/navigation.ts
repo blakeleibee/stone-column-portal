@@ -15,11 +15,21 @@ export interface NavItem {
 }
 
 // Global admin/staff navigation (spec section 13).
+//
+// "estimate" and "import" (P4) were added after the fact during the P4
+// final-review fix wave: both screens shipped in P4 with real routes
+// (/admin/estimate, /admin/import) but no nav entry, making them
+// unreachable from the running application except by typing the URL
+// directly. Placed adjacent to "financials" since both are
+// financial-data screens (real budget entry, and the QuickBooks import
+// wizard that feeds it).
 export const adminNav: NavItem[] = [
   { key: "overview", label: "Overview", icon: "LayoutDashboard" },
   { key: "projects", label: "Projects", icon: "Building2" },
   { key: "action-center", label: "Action Center", icon: "ListChecks" },
   { key: "financials", label: "Financials", icon: "Wallet" },
+  { key: "estimate", label: "Estimate", icon: "Calculator" },
+  { key: "import", label: "Import", icon: "FileUp" },
   { key: "conversations", label: "Conversations", icon: "MessagesSquare" },
   { key: "contacts", label: "Contacts", icon: "Users" },
   { key: "settings", label: "Settings", icon: "Settings" },

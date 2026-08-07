@@ -46,7 +46,7 @@ async function EstimatePageBody({
   }
 
   return (
-    <AdminChrome activeKey="financials" isDemoMode={demo}>
+    <AdminChrome activeKey="estimate" isDemoMode={demo}>
       <EstimateTable
         categories={categories}
         costCodes={costCodes}
@@ -79,7 +79,7 @@ export default async function AdminEstimatePage() {
 
   if (!firstProject) {
     return (
-      <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="estimate" isDemoMode={isDemoMode()}>
         <p style={{ padding: 24 }}>No projects yet for this organization.</p>
       </AdminChrome>
     );

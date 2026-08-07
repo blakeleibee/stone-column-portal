@@ -13,6 +13,8 @@ const ADMIN_PATH: Record<string, string> = {
   projects: "/admin/projects",
   "action-center": "/admin/action-center",
   financials: "/admin/financials",
+  estimate: "/admin/estimate",
+  import: "/admin/import",
   conversations: "/admin/conversations",
   contacts: "/admin/contacts",
   settings: "/admin/settings",
