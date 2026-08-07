@@ -99,6 +99,11 @@ node scripts/db/run-sql-tests.mjs   # 19 SQL files (13 migrations +
                       # applied/passed against PGlite
 ```
 
+(Updated by the final-review fix wave below: `node scripts/db/run-sql-tests.mjs`
+now applies 20 SQL files — schema/014 added — and `apps/web/test/route_smoke.ts`
+now also covers `/admin/estimate`/`/admin/import`. See the final-review
+fix report for the actual re-run output.)
+
 **Live checkpoint** (`node scripts/db/live-p4-checkpoint.mjs`, new,
 committed) — run against the real hosted Supabase dev project used for
 the pre-P4 checkpoint, exercising the exact same service functions the
@@ -192,33 +197,101 @@ None — this package's schema/UI decisions were all made explicitly
 during design (`P4-DESIGN.md`'s "Decisions made" section) and none were
 left open during implementation.
 
+## Final-review fix wave (post-completion)
+
+Before tagging `p4-complete`, a whole-branch final review across all 12
+merged tasks found five real defects that had shipped clean through
+every individual task review (each defect was invisible from within any
+single task's diff — all five were only visible once the whole package
+was read as one unit). Fixed in one pass; full detail, the exact
+Amount-canonicalization approach taken and why, and test output:
+`.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/final-review-fix-report.md`.
+
+1. **`Amount` was parsed three incompatible ways** across
+   `parseQuickBooksCsv.ts`, `confirm_import_batch()`, and
+   `getImportBatchReconciliation()` — the RPC's version threw outright
+   on QuickBooks' own common currency-formatted export values
+   (`"$1,250.00"`), and a parenthesized-negative credit (`"(500.00)"`)
+   silently lost its sign in all three. Fixed by canonicalizing Amount
+   exactly ONCE, in `parseQuickBooksCsv()`
+   (now `packages/02-app-shell/src/imports/parseQuickBooksCsv.ts`), into
+   a signed integer number of cents (`ParsedImportRow.amountCents`);
+   every writer/reader downstream (`stageImportBatch()`,
+   `confirm_import_batch()` per schema/014,
+   `getImportBatchReconciliation()`) now stores/reads that one canonical
+   value, never re-parsing a decimal string. `schema/014_import_
+   amount_canonicalization_and_audit_attribution.sql` updates the RPC
+   (a new migration, not an amendment to 013, since 013 had already been
+   applied to the hosted dev project this session).
+2. **The `/api/imports/parse` Route Handler's ~120 lines of business
+   logic had no service function** — the one mutation path in P4 that
+   didn't follow the DI-seam pattern every other task used. Extracted
+   into `stageImportBatch()`
+   (`packages/02-app-shell/src/services/importService.ts`); the Route
+   Handler is now a thin adapter (parse multipart body, authenticate,
+   call the service, return JSON). This also required moving
+   `parseQuickBooksCsv.ts` itself from `apps/web` into
+   `packages/02-app-shell` — it's pure, dependency-free logic a
+   packages-layer service function needs, and `packages/*` must never
+   depend on `apps/web` (the reverse direction).
+3. **`/admin/estimate` and `/admin/import` were unreachable from the
+   running application** — no nav entry, and both rendered with
+   `activeKey="financials"` (highlighting the wrong tab). Added real nav
+   entries (`adminNav` in `packages/02-app-shell/src/nav/navigation.ts`,
+   `ADMIN_PATH` in `apps/web/src/shell/AdminChrome.tsx`) with correct
+   `activeKey`s, and both routes to `apps/web/test/route_smoke.ts`.
+4. **The Route Handler's cost-codes query had no `is_archived` filter**,
+   so an item could auto-resolve to an archived cost code the wizard's
+   override `<select>` (fed from the repository's own
+   `is_archived = false`-filtered `getCostCodes()`) had no matching
+   `<option>` for. Fixed by adding the same filter to
+   `stageImportBatch()`'s query.
+5. **`import_batches.imported_by` and `expenses.created_by` were never
+   populated** on the import path. Fixed: the Route Handler now passes
+   its already-resolved acting user's id into `stageImportBatch()` for
+   `imported_by`; `confirm_import_batch()` (schema/014) now sets
+   `created_by = auth.uid()` on the expenses it creates.
+
 ## Known limitations
 
 - **Overriding an `error`-status import row only fixes its resolved
   cost code, not the underlying malformed Amount/Date.**
   `confirm_import_batch`'s guard only checks `match_status`, so a row
   overridden out of `error` status can still reach the RPC's
-  `(raw_data->>'Amount')::numeric` cast and fail with a raw Postgres
-  error string instead of a clear application message. Confirmed for
-  real by the live checkpoint (this is the documented, expected
-  behavior today, not a bug discovered late — Task 11's review flagged
-  it, and the live checkpoint proved it happens exactly as predicted).
-  A future improvement: steer the UI toward "Exclude" rather than
-  "Override" for `error`-status rows, or re-validate Amount/Date before
-  allowing the override.
+  `(raw_data->>'Amount')::bigint` cast (schema/014 — previously
+  `::numeric`, changed by the final-review Amount-canonicalization fix
+  above; either way, an unparseable source value fails this cast) and
+  fail with a raw Postgres error string instead of a clear application
+  message. Confirmed for real by the live checkpoint (this is the
+  documented, expected behavior today, not a bug discovered late — Task
+  11's review flagged it, and the live checkpoint proved it happens
+  exactly as predicted). A future improvement: steer the UI toward
+  "Exclude" rather than "Override" for `error`-status rows, or
+  re-validate Amount/Date before allowing the override.
 - **Duplicate-against-existing-expense detection uses the raw,
   unnormalized CSV date string**, while `expenses.transaction_date`
-  comes back from Postgres in canonical `YYYY-MM-DD`. The live
-  checkpoint used a non-ISO `MM/DD/YYYY` date successfully for the
-  *in-file* duplicate check (which compares two CSV-sourced strings
-  against each other, so format consistency within one file is enough),
-  but a full round-trip test — importing a batch, confirming it, then
-  importing a *second* file with the same transactions in a different
-  date format and confirming the second import correctly detects the
-  first import's now-posted expenses as duplicates — was not performed
-  this checkpoint. This remains a real, documented risk for QuickBooks
-  Desktop's default non-ISO export format, not yet proven safe or
-  unsafe end-to-end.
+  comes back from Postgres in canonical `YYYY-MM-DD`. This is a real,
+  confirmed-by-inspection risk for QuickBooks Desktop's default non-ISO
+  (`MM/DD/YYYY`) export format, not merely a theoretical or
+  hedged-as-untested one: `parseQuickBooksCsv()`'s duplicate key is
+  built from the CSV's own date string verbatim
+  (`` `${vendorValue}|${dateValue}|${amountCents}|${resolvedCostCodeId}` ``),
+  while `stageImportBatch()`'s `existingExpenseKeys` set is built from
+  `expenses.transaction_date` read back from Postgres — which always
+  normalizes a `date`-typed column to `YYYY-MM-DD` on the wire,
+  regardless of what format it was inserted with. A second import of the
+  same QuickBooks transactions in the same non-ISO format as the first
+  import's source file will therefore NOT match the now-`YYYY-MM-DD`
+  `transaction_date` of the already-posted expenses from the first
+  import, and will incorrectly be treated as new rather than duplicate.
+  The live checkpoint exercised a non-ISO date successfully only for the
+  *in-file* duplicate check (comparing two CSV-sourced strings against
+  each other, where format consistency within one file is enough to
+  match); the cross-import round trip described above was not performed
+  and, by inspection of the two code paths above, would fail. Not fixed
+  in the P4 final-review pass — flagged for a future package to
+  normalize both sides of the key to the same canonical date format
+  before comparing.
 - **`import_mapping_profiles` has `is_archived` but no delete-protection
   trigger**, unlike the `vendors` precedent (P2.1) it otherwise mirrors
   — a staff user's RLS grant permits physically deleting a mapping
@@ -256,18 +329,23 @@ left open during implementation.
 ## Relevant files
 
 - `schema/013_estimating_and_qb_import.sql` / `_down.sql`
+- `schema/014_import_amount_canonicalization_and_audit_attribution.sql` / `_down.sql` (final-review fix wave)
 - `supabase/migrations/20260113000000_estimating_and_qb_import.sql`
+- `supabase/migrations/20260114000000_import_amount_canonicalization_and_audit_attribution.sql` (final-review fix wave)
 - `tests/sql/package_p4_estimating_qb_import_tests.sql`
-- `packages/02-app-shell/src/services/{budget,costCode,importMapping,import}Service.ts`
+- `packages/02-app-shell/src/services/{budget,costCode,importMapping,import}Service.ts` (`importService.ts` now also exports `stageImportBatch()`, added in the final-review fix wave)
+- `packages/02-app-shell/src/imports/parseQuickBooksCsv.ts` (moved here from `apps/web/src/server/imports/` in the final-review fix wave, so a packages-layer service function can call it without `packages/*` depending on `apps/web`)
+- `packages/02-app-shell/src/nav/navigation.ts` (`adminNav` gained `estimate`/`import` entries in the final-review fix wave)
 - `packages/02-app-shell/src/components/{EstimateTable,MappingProfileForm,ImportWizard}.tsx`
 - `apps/web/app/admin/estimate/{page.tsx,actions.ts,costCodeActions.ts}`
 - `apps/web/app/admin/import/{page.tsx,mappingActions.ts,confirmActions.ts}`
-- `apps/web/app/api/imports/parse/route.ts`
-- `apps/web/src/server/imports/parseQuickBooksCsv.ts`
-- `apps/web/test/{estimate_actions_unit,import_parse_unit}.ts`
+- `apps/web/app/api/imports/parse/route.ts` (thin adapter as of the final-review fix wave)
+- `apps/web/src/shell/AdminChrome.tsx` (`ADMIN_PATH` gained `estimate`/`import` entries in the final-review fix wave)
+- `apps/web/test/{estimate_actions_unit,import_parse_unit,route_smoke}.ts`
 - `packages/02-app-shell/test/estimateTable_field_sync.tsx`
 - `tests/fixtures/quickbooks/sample_job_cost_export.csv`
 - `scripts/db/live-p4-checkpoint.mjs`
+- `.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/final-review-fix-report.md` (final-review fix wave — full detail)
 - `docs/production-build/P4-DESIGN.md` (authoritative design record)
 - `docs/production-build/FINANCIAL-ARCHITECTURE.md`, `AI-ASSISTANT-ARCHITECTURE.md` (cross-package constraints this package satisfies)
 - `docs/superpowers/plans/2026-08-06-p4-estimating-budgeting-qbimport.md` (execution plan)
