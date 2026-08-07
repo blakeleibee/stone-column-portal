@@ -1,8 +1,8 @@
 # P4 — Estimating & Budgeting UI + QuickBooks Desktop Import — Complete
 
 **Status:** Complete (including a narrowly-scoped post-closeout fix — see below)
-**Commit range:** `906f99c`..`ae4b9b9` (design/plan through the post-closeout date-canonicalization fix's review-driven follow-up; `906f99c`..`6b8c988` is the original closeout, see `.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/progress.md` for that ledger; `19b9525`..`f034504`..`ae4b9b9` is the post-closeout fix — `f034504` the initial fix, `ae4b9b9` the fixes from its independent review — reviewed per `.superpowers/sdd/p4-post-closeout-review.diff`)
-**Tag:** `p4-complete` (moved to `ae4b9b9` — the tag had never been pushed or relied upon; see "Post-closeout fix" below)
+**Commit range:** `906f99c`..`511e275` (design/plan through this doc's own closeout of the post-closeout fix; `906f99c`..`6b8c988` is the original closeout, see `.superpowers/sdd/2026-08-06-p4-estimating-budgeting-qbimport/progress.md` for that ledger; `19b9525`..`f034504`..`ae4b9b9`..`511e275` is the post-closeout fix — `f034504` the initial fix, `ae4b9b9` the fixes from its independent review, `511e275` this doc update — reviewed per `.superpowers/sdd/p4-post-closeout-review.diff`)
+**Tag:** `p4-complete` (moved to `511e275` — the tag had never been pushed or relied upon; see "Post-closeout fix" below)
 **Completed:** 2026-08-07 (post-closeout fix: 2026-08-07)
 **Branch:** `main`
 
