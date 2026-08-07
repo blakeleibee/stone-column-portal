@@ -1,26 +1,22 @@
 import { NextResponse } from "next/server";
-import { canManageProject } from "../../../../src/server/auth/can";
+import { getCurrentUser } from "../../../../src/server/auth/getCurrentUser";
+import { canViewProject } from "../../../../src/server/auth/can";
 import { createServerSupabaseClient } from "../../../../src/server/supabase/serverClient";
-import { parseQuickBooksCsv, type MatchContext, type ParsedImportRow } from "../../../../src/server/imports/parseQuickBooksCsv";
+import { stageImportBatch } from "../../../../../../packages/02-app-shell/src/services/importService";
 
 /**
  * POST /api/imports/parse — multipart form fields `file`, `projectId`,
- * `mappingProfileId`. Stages a QuickBooks Desktop job-cost CSV export
- * into a pending-review `import_batches`/`import_rows` pair by calling
- * the pure parseQuickBooksCsv (Task 8) with real, RLS-scoped project
- * data. Writes nothing to `expenses` -- that only happens on later
- * confirmation (Task 10's `confirm_import_batch` RPC).
- *
- * Hard contract with Task 10: `import_rows.raw_data` is NOT the CSV
- * row's own columns verbatim (those keys are whatever the source
- * file's headers happened to be, per the mapping profile's
- * `column_mapping`). It is always a normalized object with exactly
- * these six keys -- Item, Name, Memo, Date, Amount (the RAW string
- * values from the source columns the mapping profile points at, not
- * anything this route computes/sanitizes), and
- * __resolved_cost_code_id. confirm_import_batch reads
- * raw_data->>'Name' / 'Date' / 'Memo' / 'Amount' /
- * '__resolved_cost_code_id' verbatim, so this shape must never drift.
+ * `mappingProfileId`. Thin adapter only (P4 final-review fix): parses
+ * the multipart body into plain params, authenticates/authorizes the
+ * request (a Route-Handler-specific concern — a future AI tool-calling
+ * adapter would perform its own analogous check, per
+ * docs/production-build/AI-ASSISTANT-ARCHITECTURE.md), constructs the
+ * caller's Supabase client, and calls `stageImportBatch()`
+ * (packages/02-app-shell/src/services/importService.ts) for every actual
+ * business-logic step (loading the mapping profile, resolving cost
+ * codes, duplicate detection, parsing, and the import_batches/import_rows
+ * inserts). See that function's doc comment for the full raw_data
+ * contract with `confirm_import_batch()`.
  */
 export async function POST(request: Request) {
   let formData: FormData;
@@ -47,53 +43,18 @@ export async function POST(request: Request) {
   const supabase = await createServerSupabaseClient();
 
   // Staff/admin-only, project-scoped -- same check writes to this
-  // project's financial data already require elsewhere. Returns 404
-  // (not 403) so this route never confirms a project's existence to a
-  // caller who can't see it.
-  const allowed = await canManageProject(projectId, supabase);
-  if (!allowed) {
+  // project's financial data already require elsewhere. Resolved via
+  // getCurrentUser()/canViewProject() directly (rather than the
+  // canManageProject() convenience wrapper) so this route also has the
+  // acting user's id on hand for stageImportBatch()'s `importedBy`,
+  // without a second redundant profile lookup. Returns 404 (not 403) so
+  // this route never confirms a project's existence to a caller who
+  // can't see it.
+  const user = await getCurrentUser(supabase);
+  const allowed = !!user && (user.role === "admin" || user.role === "staff") && (await canViewProject(projectId, supabase));
+  if (!allowed || !user) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-
-  const { data: mappingProfileRow, error: mappingProfileError } = await supabase
-    .from("import_mapping_profiles")
-    .select("id, column_mapping, cost_code_match_strategy, cost_code_prefix_length, item_overrides")
-    .eq("id", mappingProfileId)
-    .maybeSingle();
-
-  if (mappingProfileError) {
-    return NextResponse.json({ error: mappingProfileError.message }, { status: 500 });
-  }
-  if (!mappingProfileRow) {
-    return NextResponse.json({ error: "Mapping profile not found." }, { status: 404 });
-  }
-
-  const { data: costCodeRows, error: costCodeError } = await supabase
-    .from("cost_codes")
-    .select("id, code")
-    .eq("project_id", projectId);
-
-  if (costCodeError) {
-    return NextResponse.json({ error: costCodeError.message }, { status: 500 });
-  }
-
-  // Duplicate-context: every non-void expense already posted for this
-  // project, keyed EXACTLY the way parseQuickBooksCsv.ts builds its own
-  // internal key (vendorValue|dateValue|amountCents|resolvedCostCodeId)
-  // so `existingExpenseKeys.has(key)` lines up.
-  const { data: expenseRows, error: expenseError } = await supabase
-    .from("expenses")
-    .select("vendor_name, transaction_date, amount_cents, cost_code_id")
-    .eq("project_id", projectId)
-    .neq("financial_status", "void");
-
-  if (expenseError) {
-    return NextResponse.json({ error: expenseError.message }, { status: 500 });
-  }
-
-  const existingExpenseKeys = new Set(
-    (expenseRows ?? []).map((e) => `${e.vendor_name}|${e.transaction_date}|${e.amount_cents}|${e.cost_code_id}`)
-  );
 
   let fileContents: string;
   try {
@@ -102,84 +63,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not read uploaded file contents." }, { status: 400 });
   }
 
-  const columnMapping = (mappingProfileRow.column_mapping ?? {}) as Record<string, string>;
-
-  const matchContext: MatchContext = {
-    mappingProfile: {
-      columnMapping,
-      costCodeMatchStrategy: mappingProfileRow.cost_code_match_strategy,
-      costCodePrefixLength: mappingProfileRow.cost_code_prefix_length,
-      itemOverrides: (mappingProfileRow.item_overrides ?? {}) as Record<string, string>,
-    },
-    projectCostCodes: costCodeRows ?? [],
-    existingExpenseKeys,
-  };
-
-  let parsedRows: ParsedImportRow[];
-  try {
-    parsedRows = parseQuickBooksCsv(fileContents, matchContext);
-  } catch (err) {
-    return NextResponse.json(
-      { error: `Could not parse the uploaded file: ${err instanceof Error ? err.message : String(err)}` },
-      { status: 400 }
-    );
-  }
-
-  const { data: batch, error: batchError } = await supabase
-    .from("import_batches")
-    .insert({
-      project_id: projectId,
-      source_filename: file.name,
-      status: "ready_for_review",
-      mapping_profile_id: mappingProfileId,
-      row_count: parsedRows.length,
-    })
-    .select("id")
-    .single();
-
-  if (batchError || !batch) {
-    return NextResponse.json({ error: batchError?.message ?? "Could not create import batch." }, { status: 500 });
-  }
-
-  // Normalize every row to the fixed Item/Name/Memo/Date/Amount +
-  // __resolved_cost_code_id shape Task 10 depends on -- pulling the RAW
-  // string value out of row.rawData via the mapping profile's own
-  // column_mapping, never row.rawData's own (arbitrary) header keys.
-  const importRowsToInsert = parsedRows.map((row) => {
-    const normalized = {
-      Item: row.rawData[columnMapping.item] ?? null,
-      Name: row.rawData[columnMapping.vendor] ?? null,
-      Memo: row.rawData[columnMapping.memo] ?? null,
-      Date: row.rawData[columnMapping.date] ?? null,
-      Amount: row.rawData[columnMapping.amount] ?? null,
-      __resolved_cost_code_id: row.resolvedCostCodeId,
-    };
-
-    return {
-      batch_id: batch.id,
-      row_number: row.rowNumber,
-      raw_data: normalized,
-      match_status: row.matchStatus,
-      error_message: row.errorMessage ?? null,
-    };
+  const result = await stageImportBatch(supabase, {
+    projectId,
+    mappingProfileId,
+    fileName: file.name,
+    fileContents,
+    importedBy: user.id,
   });
 
-  const { error: rowsError } = await supabase.from("import_rows").insert(importRowsToInsert);
-
-  if (rowsError) {
-    return NextResponse.json({ error: rowsError.message }, { status: 500 });
+  if (result.error) {
+    return NextResponse.json({ error: result.error }, { status: 500 });
   }
 
-  const rowCounts: Record<ParsedImportRow["matchStatus"], number> = {
-    new: 0,
-    changed: 0,
-    duplicate: 0,
-    unmatched: 0,
-    error: 0,
-  };
-  for (const row of parsedRows) {
-    rowCounts[row.matchStatus] += 1;
-  }
-
-  return NextResponse.json({ batchId: batch.id as string, rowCounts });
+  return NextResponse.json({ batchId: result.batchId, rowCounts: result.rowCounts });
 }

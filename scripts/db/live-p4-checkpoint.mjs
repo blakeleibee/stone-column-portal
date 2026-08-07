@@ -44,7 +44,7 @@ const require = createRequire(import.meta.url);
 const { enterOriginalBudget, adjustBudget } = require("../../packages/02-app-shell/src/services/budgetService.ts");
 const { createMappingProfile } = require("../../packages/02-app-shell/src/services/importMappingService.ts");
 const { confirmImportBatch, overrideImportRow, getImportBatchReconciliation } = require("../../packages/02-app-shell/src/services/importService.ts");
-const { parseQuickBooksCsv } = require("../../apps/web/src/server/imports/parseQuickBooksCsv.ts");
+const { parseQuickBooksCsv } = require("../../packages/02-app-shell/src/imports/parseQuickBooksCsv.ts");
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -172,13 +172,24 @@ async function main() {
     JSON.stringify(statusCounts)
   );
 
-  // ---- Phase 4: real import_batches/import_rows (mirroring Task 9's normalized shape) ----
+  // ---- Phase 4: real import_batches/import_rows (mirroring stageImportBatch()'s normalized shape) ----
   const { data: batch, error: batchErr } = await client
     .from("import_batches")
-    .insert({ project_id: project.id, source_filename: "checkpoint.csv", status: "ready_for_review", mapping_profile_id: mappingProfileId })
-    .select("id")
+    .insert({
+      project_id: project.id,
+      source_filename: "checkpoint.csv",
+      status: "ready_for_review",
+      mapping_profile_id: mappingProfileId,
+      imported_by: signUp.user.id,
+    })
+    .select("id, imported_by")
     .single();
   record("Real import_batches row created", !batchErr && !!batch, batchErr?.message);
+  record(
+    "import_batches.imported_by is populated with the acting user's id (final-review fix)",
+    batch?.imported_by === signUp.user.id,
+    `got ${batch?.imported_by}`
+  );
 
   const rowInserts = parsed.map((row) => ({
     batch_id: batch.id,
@@ -188,7 +199,14 @@ async function main() {
       Name: row.rawData.Name ?? null,
       Memo: row.rawData.Memo ?? null,
       Date: row.rawData.Date ?? null,
-      Amount: row.rawData.Amount ?? null,
+      // Amount is ALWAYS the pre-parsed, canonical signed-integer-cents
+      // value (see parseQuickBooksCsv.ts's ParsedImportRow.amountCents
+      // doc comment) -- never row.rawData.Amount, the raw CSV string.
+      // This mirrors stageImportBatch()'s exact contract with
+      // confirm_import_batch(), fixed during the P4 final-review pass
+      // (previously three call sites parsed Amount three incompatible
+      // ways; now every writer stores this one canonical value).
+      Amount: String(row.amountCents),
       __resolved_cost_code_id: row.resolvedCostCodeId,
     },
     match_status: row.matchStatus,
@@ -232,10 +250,15 @@ async function main() {
   // ---- Phase 7: posting a pending expense makes it count in actualCostCents ----
   const { data: pendingExpense } = await client
     .from("expenses")
-    .select("id, amount_cents, cost_code_id")
+    .select("id, amount_cents, cost_code_id, created_by")
     .eq("import_batch_id", batch.id)
     .limit(1)
     .single();
+  record(
+    "confirm_import_batch() populates expenses.created_by with auth.uid() (final-review fix)",
+    pendingExpense?.created_by === signUp.user.id,
+    `got ${pendingExpense?.created_by}`
+  );
   const { error: postErr } = await client
     .from("expenses")
     .update({ financial_status: "posted", posted_by: signUp.user.id, posted_at: new Date().toISOString() })
