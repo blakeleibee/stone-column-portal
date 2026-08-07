@@ -57,7 +57,9 @@ tool-calling layer can call under the same session, never duplicated).
   original/revised/actual figures editable for the first time, all
   numbers still routed through `packages/01-financial-engine`.
 - **QuickBooks Desktop CSV import**: pure parsing/matching module
-  (`apps/web/src/server/imports/parseQuickBooksCsv.ts`, prefix/exact/
+  (`packages/02-app-shell/src/imports/parseQuickBooksCsv.ts` — moved
+  here from `apps/web/src/server/imports/` by the final-review fix wave
+  below, prefix/exact/
   manual-only cost-code resolution, item-override precedence, in-file
   and against-existing-expense duplicate detection, row-level error
   handling with no thrown exceptions); a Route Handler
@@ -268,6 +270,29 @@ Amount-canonicalization approach taken and why, and test output:
   exactly as predicted). A future improvement: steer the UI toward
   "Exclude" rather than "Override" for `error`-status rows, or
   re-validate Amount/Date before allowing the override.
+- **schema/014's Amount-format change has a narrow, currently-unreachable
+  silent-corruption edge case, not fixed with a runtime guard.**
+  `import_rows.raw_data->>'Amount'` meant a raw CSV decimal-dollar
+  string (e.g. `"1200.00"`) before schema/014, and means an
+  already-computed signed-integer-cents string (e.g. `"120000"`) after.
+  A pre-migration row that was a bare integer with no decimal point
+  (e.g. `"1200"` — unusual but possible from a QuickBooks export) would,
+  if confirmed post-migration, silently cast to 1,200 cents instead of
+  $1,200.00 via `confirm_import_batch`'s `::bigint` cast — a 100x error.
+  Any old-format value with a decimal point instead fails that cast
+  loudly and safely (bigint's input syntax rejects decimal points), so
+  this is genuinely narrow. No runtime format-version detection was
+  added: this is P4's first ship (no real Stone Column usage exists
+  yet), the only known `import_rows` data anywhere is the dev
+  checkpoint's own already-confirmed test batch, and
+  `confirm_import_batch`'s idempotency guard (added during Task 10's
+  review) already blocks that specific batch from ever being
+  re-confirmed — building a detection mechanism for a risk that's
+  currently unreachable was judged not worth the added complexity. See
+  the comment directly above `confirm_import_batch` in
+  `schema/014_import_amount_canonicalization_and_audit_attribution.sql`
+  for the full note; re-validate this assumption before ever
+  resurrecting/re-staging pre-migration `import_rows` for confirmation.
 - **Duplicate-against-existing-expense detection uses the raw,
   unnormalized CSV date string**, while `expenses.transaction_date`
   comes back from Postgres in canonical `YYYY-MM-DD`. This is a real,

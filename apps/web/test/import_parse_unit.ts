@@ -1,6 +1,6 @@
 /**
  * Unit tests for the pure QuickBooks CSV parsing/matching module
- * (src/server/imports/parseQuickBooksCsv.ts). No I/O beyond reading the
+ * (packages/02-app-shell/src/imports/parseQuickBooksCsv.ts). No I/O beyond reading the
  * sample fixture CSV from disk; no database, no Next.js, no Route
  * Handler involved (that's Task 9). Follows authorization_unit.ts's
  * plain assert/console-report style.

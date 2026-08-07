@@ -23,6 +23,30 @@
 -- This function must therefore read it as exactly that -- a direct cast
 -- to bigint, no numeric parsing of a decimal string, no *100.
 --
+-- Format-transition note (re-review of the fix above): this migration
+-- changes what `import_rows.raw_data->>'Amount'` MEANS, not just how
+-- this function reads it. Before this migration, application code
+-- wrote it as the raw CSV decimal-dollar string (e.g. "1200.00");
+-- after, `parseQuickBooksCsv()`/`stageImportBatch()` write it as an
+-- already-computed SIGNED INTEGER NUMBER OF CENTS string (e.g.
+-- "120000"). Any `import_rows` row staged under the OLD format that
+-- was never confirmed before this migration shipped is now stale: if
+-- it were confirmed post-migration, this function's `::bigint` cast
+-- would either fail loudly (any old-format value containing a decimal
+-- point, e.g. "1200.00" -- bigint's input syntax rejects decimal
+-- points, so this is safe) or, narrowly, silently misinterpret a
+-- bare-integer old-format value with no decimal point (e.g. "1200",
+-- unusual but possible from a QuickBooks export) as 1,200 CENTS
+-- instead of $1,200.00 -- a silent 100x error. No runtime format-
+-- version detection was added for this: this is P4's first-ever ship
+-- (no real Stone Column usage exists yet), the only known
+-- `import_rows` data anywhere is the dev checkpoint's own
+-- already-confirmed test batch, and the idempotency guard immediately
+-- below already blocks that specific batch from ever being
+-- re-confirmed. If a future package ever needs to resurrect/re-stage
+-- old, pre-migration `import_rows` for confirmation, re-validate this
+-- assumption before trusting the `::bigint` cast blindly.
+--
 -- Fix 2 (finding 5 of the P4 final-review): the expenses row this
 -- function creates never populated created_by, leaving every
 -- QuickBooks-imported expense's audit trail silently attributing

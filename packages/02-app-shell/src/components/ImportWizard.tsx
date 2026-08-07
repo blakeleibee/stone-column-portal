@@ -77,6 +77,18 @@ const STATUS_LABELS: Record<ImportRowMatchStatus, string> = {
   excluded: "Excluded",
 };
 
+// row.rawData.Amount is stored as a signed-integer-cents string (see
+// parseQuickBooksCsv()'s doc comment) — never a decimal-dollar string.
+// A row that reached 'error' status may have an Amount that never
+// parsed cleanly in the first place (e.g. "NaN" from an unparseable
+// source value), so this must tolerate that rather than rendering it
+// or crashing formatCents on it.
+function formatRowAmount(rawAmount: string | null | undefined): string {
+  if (rawAmount == null || rawAmount.trim() === "") return "—";
+  if (!/^-?\d+$/.test(rawAmount.trim())) return "invalid";
+  return formatCents(parseInt(rawAmount, 10));
+}
+
 function groupRowsByStatus(rows: ImportRow[]): Record<ImportRowMatchStatus, ImportRow[]> {
   const grouped: Record<ImportRowMatchStatus, ImportRow[]> = {
     new: [],
@@ -341,7 +353,7 @@ export function ImportWizard({
                               <td style={{ textAlign: "left" }}>{row.rawData.Item ?? ""}</td>
                               <td style={{ textAlign: "left" }}>{row.rawData.Name ?? ""}</td>
                               <td style={{ textAlign: "left" }}>{row.rawData.Date ?? ""}</td>
-                              <td style={{ textAlign: "right" }}>{row.rawData.Amount ?? ""}</td>
+                              <td style={{ textAlign: "right" }}>{formatRowAmount(row.rawData.Amount)}</td>
                               <td style={{ textAlign: "left" }}>
                                 {canOverride ? (
                                   <select
