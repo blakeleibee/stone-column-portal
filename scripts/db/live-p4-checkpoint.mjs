@@ -43,7 +43,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { enterOriginalBudget, adjustBudget } = require("../../packages/02-app-shell/src/services/budgetService.ts");
 const { createMappingProfile } = require("../../packages/02-app-shell/src/services/importMappingService.ts");
-const { confirmImportBatch, overrideImportRow, getImportBatchReconciliation } = require("../../packages/02-app-shell/src/services/importService.ts");
+const { confirmImportBatch, overrideImportRow, getImportBatchReconciliation, stageImportBatch } = require("../../packages/02-app-shell/src/services/importService.ts");
 const { parseQuickBooksCsv } = require("../../packages/02-app-shell/src/imports/parseQuickBooksCsv.ts");
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -264,6 +264,80 @@ async function main() {
     .update({ financial_status: "posted", posted_by: signUp.user.id, posted_at: new Date().toISOString() })
     .eq("id", pendingExpense.id);
   record("Posting an imported pending expense succeeds", !postErr, postErr?.message);
+
+  // ---- Phase 8: cross-batch, cross-date-format duplicate detection
+  // (P4 post-closeout fix) ----
+  // Proves the actual bug being fixed end-to-end, against the FULL real
+  // pipeline (stageImportBatch() -> real DB reads/writes -> real
+  // confirm_import_batch() RPC), not just at the pure-parse layer: stage
+  // and confirm one batch with an ISO date (creating a real `expenses`
+  // row with a real `transaction_date`), then stage a SEPARATE batch
+  // reporting the exact same underlying transaction with its date
+  // written in QuickBooks Desktop's own default MM/DD/YYYY export
+  // format. Before the fix, stageImportBatch() built its duplicate-
+  // detection key from the raw, unnormalized CSV date string compared
+  // against Postgres's canonical YYYY-MM-DD `transaction_date`, so these
+  // would never match. parseQuickBooksCsv()'s new canonicalDate (same
+  // treatment as amountCents) fixes this. A second row in batch B, same
+  // vendor/amount but a genuinely different date, is the negative
+  // control proving the date component of the key still discriminates.
+  const crossFormatVendor = `Cross Format Checkpoint Vendor ${stamp}`;
+
+  const batchACsv = [
+    "Item,Name,Memo,Date,Amount",
+    `${costCodeA.code},${crossFormatVendor},Cross-format batch A (ISO date),2026-09-01,650.00`,
+  ].join("\n");
+
+  const stageA = await stageImportBatch(client, {
+    projectId: project.id,
+    mappingProfileId,
+    fileName: "cross-format-batch-a.csv",
+    fileContents: batchACsv,
+    importedBy: signUp.user.id,
+  });
+  record(
+    "stageImportBatch() — batch A (ISO date, real pipeline) stages its one row as 'new'",
+    !stageA.error && stageA.rowCounts?.new === 1,
+    stageA.error ?? JSON.stringify(stageA.rowCounts)
+  );
+
+  const { error: confirmAErr } = await confirmImportBatch(client, stageA.batchId);
+  record("confirmImportBatch() — batch A confirms successfully, posting a real expense", !confirmAErr, confirmAErr?.message);
+
+  const { data: batchAExpense, error: batchAExpenseErr } = await client
+    .from("expenses")
+    .select("id, transaction_date, amount_cents")
+    .eq("import_batch_id", stageA.batchId)
+    .single();
+  record(
+    "batch A's confirmed expense has a real transaction_date, canonical YYYY-MM-DD as returned by PostgREST",
+    !batchAExpenseErr && batchAExpense?.transaction_date === "2026-09-01",
+    `got ${JSON.stringify(batchAExpense)}${batchAExpenseErr ? ` / ${batchAExpenseErr.message}` : ""}`
+  );
+
+  const batchBCsv = [
+    "Item,Name,Memo,Date,Amount",
+    `${costCodeA.code},${crossFormatVendor},Cross-format batch B: MM/DD/YYYY row for the SAME date as batch A,09/01/2026,650.00`,
+    `${costCodeA.code},${crossFormatVendor},Cross-format batch B negative control: same vendor/amount but a different date,09/02/2026,650.00`,
+  ].join("\n");
+
+  const stageB = await stageImportBatch(client, {
+    projectId: project.id,
+    mappingProfileId,
+    fileName: "cross-format-batch-b.csv",
+    fileContents: batchBCsv,
+    importedBy: signUp.user.id,
+  });
+  record(
+    "stageImportBatch() — batch B (separate batch, real pipeline): the MM/DD/YYYY row for the same underlying date as batch A's real posted expense is flagged 'duplicate'",
+    !stageB.error && stageB.rowCounts?.duplicate === 1,
+    stageB.error ?? JSON.stringify(stageB.rowCounts)
+  );
+  record(
+    "stageImportBatch() — batch B negative control: same vendor/amount but a genuinely different date is 'new', not flagged a duplicate",
+    !stageB.error && stageB.rowCounts?.new === 1,
+    stageB.error ?? JSON.stringify(stageB.rowCounts)
+  );
 }
 
 async function cleanup() {

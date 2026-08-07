@@ -207,6 +207,99 @@ async function main() {
     check("row 8 is 'new' (a validly parsed, resolvable, non-duplicate row)", row8.matchStatus === "new");
   }
 
+  console.log("\n--- Date canonicalization: ISO and MM/DD/YYYY representations of the same date resolve identically, and cross-format in-file duplicates are detected (P4 post-closeout fix) ---");
+  {
+    // Two rows for the same vendor/amount/cost-code, but the date is
+    // written in DIFFERENT formats: row 1 uses ISO, row 2 uses
+    // QuickBooks Desktop's default MM/DD/YYYY export convention, for the
+    // SAME underlying calendar date (2026-07-04). Before the fix, the
+    // duplicate-detection key was built from the raw, unnormalized date
+    // string, so these two rows would never match each other even though
+    // they represent the same expense. After the fix, both canonicalize
+    // to "2026-07-04" and row 2 must be flagged 'duplicate' against row 1.
+    const csv = [
+      "Item,Name,Amount,Date",
+      "5010,Cross Format Vendor,750.00,2026-07-04",
+      "5010,Cross Format Vendor,750.00,07/04/2026",
+    ].join("\n");
+    const rows = parseQuickBooksCsv(csv, baseContext());
+    check("ISO-dated row 1 is 'new'", rows[0].matchStatus === "new");
+    check("ISO-dated row 1's canonicalDate is '2026-07-04'", rows[0].canonicalDate === "2026-07-04");
+    check(
+      "MM/DD/YYYY-dated row 2's canonicalDate matches row 1's ISO canonicalDate (same underlying date)",
+      rows[1].canonicalDate === rows[0].canonicalDate
+    );
+    check(
+      "MM/DD/YYYY-dated row 2 is flagged 'duplicate' against the ISO-dated row 1, even though the raw date strings differ",
+      rows[1].matchStatus === "duplicate"
+    );
+  }
+
+  console.log("\n--- Date canonicalization: garbage/invalid calendar dates are rejected, not silently normalized (P4 post-closeout fix) ---");
+  {
+    // "02/30/2026" has a plausible MM/DD/YYYY shape but February 30th
+    // does not exist. This must fail to parse, not silently become some
+    // nearby real date.
+    const csv = "Item,Name,Amount,Date\n5010,Bad Date Vendor,100.00,02/30/2026\n";
+    const rows = parseQuickBooksCsv(csv, baseContext());
+    check("row with date '02/30/2026' (Feb 30th does not exist) has canonicalDate === null", rows[0].canonicalDate === null);
+    check("row with an invalid calendar date is flagged 'error'", rows[0].matchStatus === "error");
+    check(
+      "the error message distinguishes a date failure from an amount failure",
+      typeof rows[0].errorMessage === "string" && rows[0].errorMessage.includes("date") && !rows[0].errorMessage.includes("amount")
+    );
+  }
+
+  console.log("\n--- Date canonicalization: month 13 / day 32 rejected outright ---");
+  {
+    const csv = [
+      "Item,Name,Amount,Date",
+      "5010,Bad Month Vendor,100.00,13/01/2026",
+      "5010,Bad Day Vendor,100.00,01/32/2026",
+    ].join("\n");
+    const rows = parseQuickBooksCsv(csv, baseContext());
+    check("date '13/01/2026' (month 13 does not exist) has canonicalDate === null and is flagged 'error'", rows[0].canonicalDate === null && rows[0].matchStatus === "error");
+    check("date '01/32/2026' (day 32 does not exist) has canonicalDate === null and is flagged 'error'", rows[1].canonicalDate === null && rows[1].matchStatus === "error");
+  }
+
+  console.log("\n--- Duplicates across separate import batches, with a date-format mismatch (the actual bug being fixed) ---");
+  {
+    // Simulates existingExpenseKeys the way stageImportBatch() really
+    // builds it: from a real `expenses` row, whose transaction_date
+    // PostgREST always returns in canonical YYYY-MM-DD, regardless of
+    // how the expense was originally written. Here that expense was
+    // posted from an EARLIER import batch whose source CSV used ISO
+    // dates (or was entered by hand) — the date is already canonical
+    // "2026-07-10" by the time it comes back from Postgres.
+    const existingExpenseKeys = new Set(["Cross Batch Vendor|2026-07-10|99900|cc-5010"]);
+
+    // Now a SECOND import batch's CSV — a different file, using
+    // QuickBooks Desktop's own default MM/DD/YYYY export format — reports
+    // the exact same underlying transaction (same vendor, same amount,
+    // same cost code, same calendar date, just written as "07/10/2026").
+    const csv = "Item,Name,Amount,Date\n5010,Cross Batch Vendor,999.00,07/10/2026\n";
+    const rows = parseQuickBooksCsv(csv, baseContext({}, existingExpenseKeys));
+    check(
+      "a second batch's MM/DD/YYYY-formatted row is flagged 'duplicate' against a prior batch's canonical-YYYY-MM-DD existingExpenseKeys entry for the same underlying date",
+      rows[0].matchStatus === "duplicate"
+    );
+  }
+
+  console.log("\n--- Negative control: same vendor/amount/cost-code on a genuinely DIFFERENT date is NOT flagged as a duplicate ---");
+  {
+    // Proves the date component of the duplicate key actually
+    // discriminates — this is not merely "duplicate detection exists",
+    // it's "duplicate detection correctly distinguishes two legitimate,
+    // separate transactions that only differ by date."
+    const existingExpenseKeys = new Set(["Repeat Vendor|2026-07-10|50000|cc-5010"]);
+    const csv = "Item,Name,Amount,Date\n5010,Repeat Vendor,500.00,07/11/2026\n";
+    const rows = parseQuickBooksCsv(csv, baseContext({}, existingExpenseKeys));
+    check(
+      "same vendor/amount/cost-code but a different date (07/11 vs 07/10) is 'new', not flagged as a duplicate",
+      rows[0].matchStatus === "new"
+    );
+  }
+
   console.log(`\nimport_parse_unit.ts: all ${checks} checks passed.`);
 }
 

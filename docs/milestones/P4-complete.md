@@ -337,30 +337,45 @@ Amount-canonicalization approach taken and why, and test output:
   `schema/014_import_amount_canonicalization_and_audit_attribution.sql`
   for the full note; re-validate this assumption before ever
   resurrecting/re-staging pre-migration `import_rows` for confirmation.
-- **Duplicate-against-existing-expense detection uses the raw,
-  unnormalized CSV date string**, while `expenses.transaction_date`
-  comes back from Postgres in canonical `YYYY-MM-DD`. This is a real,
-  confirmed-by-inspection risk for QuickBooks Desktop's default non-ISO
-  (`MM/DD/YYYY`) export format, not merely a theoretical or
-  hedged-as-untested one: `parseQuickBooksCsv()`'s duplicate key is
-  built from the CSV's own date string verbatim
-  (`` `${vendorValue}|${dateValue}|${amountCents}|${resolvedCostCodeId}` ``),
-  while `stageImportBatch()`'s `existingExpenseKeys` set is built from
-  `expenses.transaction_date` read back from Postgres — which always
-  normalizes a `date`-typed column to `YYYY-MM-DD` on the wire,
-  regardless of what format it was inserted with. A second import of the
-  same QuickBooks transactions in the same non-ISO format as the first
-  import's source file will therefore NOT match the now-`YYYY-MM-DD`
-  `transaction_date` of the already-posted expenses from the first
-  import, and will incorrectly be treated as new rather than duplicate.
-  The live checkpoint exercised a non-ISO date successfully only for the
-  *in-file* duplicate check (comparing two CSV-sourced strings against
-  each other, where format consistency within one file is enough to
-  match); the cross-import round trip described above was not performed
-  and, by inspection of the two code paths above, would fail. Not fixed
-  in the P4 final-review pass — flagged for a future package to
-  normalize both sides of the key to the same canonical date format
-  before comparing.
+- ~~Duplicate-against-existing-expense detection uses the raw,
+  unnormalized CSV date string~~ — **fixed in a post-closeout pass.**
+  `parseQuickBooksCsv.ts` now has a `parseQuickBooksDate()` function,
+  following the exact pattern already established by
+  `parseAmountToCents()`: the ONE place Date is ever parsed from a
+  source file's own formatting, recognizing strict ISO (`YYYY-MM-DD`)
+  and QuickBooks Desktop's default `MM/DD/YYYY`/`M/D/YYYY` export
+  convention, with real calendar validation (rejects month 13, day 32,
+  Feb 30th, etc. — not just a regex shape match), returning a canonical
+  `YYYY-MM-DD` string or `null`. `ParsedImportRow.canonicalDate` carries
+  this value; the duplicate-detection key construction and
+  `stageImportBatch()`'s persisted `raw_data.Date` both use it instead of
+  the raw CSV string, and a row whose date fails to parse now produces
+  `matchStatus: 'error'` with a message that distinguishes an amount
+  failure from a date failure. `confirm_import_batch()`'s
+  `(raw_data->>'Date')::date` cast in schema/014 needed no change:
+  Postgres's ISO date-input parsing is unambiguous regardless of the
+  session's `DateStyle`, verified directly against a real Postgres
+  instance (`'2026-08-15'::date` and `'08/15/2026'::date` both resolve
+  to August 15 under the default `ISO, MDY` `DateStyle`, but under `ISO,
+  DMY` the ISO-formatted literal still resolves to August 15 while the
+  slash-formatted one throws — proving only the ISO form is
+  order-independent), so no new migration was needed. Regression
+  coverage: `apps/web/test/import_parse_unit.ts` (ISO vs. `MM/DD/YYYY`
+  resolving identically, in-file cross-format duplicates, invalid
+  calendar dates rejected, a simulated cross-batch/cross-format
+  duplicate against a canonical `existingExpenseKeys` entry, and a
+  negative control proving a genuinely different date is NOT flagged a
+  duplicate). The live checkpoint
+  (`scripts/db/live-p4-checkpoint.mjs`) now proves the cross-batch
+  scenario end-to-end against the real hosted dev project: it stages and
+  confirms one batch with an ISO date (posting a real `expenses` row
+  with a real `transaction_date`), then stages a second, separate batch
+  reporting the same underlying transaction with its date written in
+  `MM/DD/YYYY` — and confirms that row is now correctly flagged
+  `duplicate` against the real posted expense, with a same-vendor/
+  same-amount/different-date row in the same batch correctly staying
+  `new` as a negative control. All 27/27 live checkpoint checks passed
+  against the real hosted Supabase dev project.
 - **`import_mapping_profiles` has `is_archived` but no delete-protection
   trigger**, unlike the `vendors` precedent (P2.1) it otherwise mirrors
   — a staff user's RLS grant permits physically deleting a mapping

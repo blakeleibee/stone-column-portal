@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "csv-parse": "^7.0.2"
+    "csv-parse": "^7.0.2",
+    "next": "14.2.35"
   },
   "devDependencies": {
     "@supabase/supabase-js": "^2.110.8",

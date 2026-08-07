@@ -41,6 +41,24 @@ export interface ImportRowRawData {
   Item: string | null;
   Name: string | null;
   Memo: string | null;
+  /**
+   * A strict ISO `YYYY-MM-DD` string. NOT the raw CSV date string. This
+   * is `stageImportBatch()`'s hard contract with `confirm_import_batch()`:
+   * `parseQuickBooksCsv()` is the ONE place Date is ever parsed from a
+   * source file's own formatting (QuickBooks Desktop's default
+   * `MM/DD/YYYY` export convention, among others); every downstream
+   * reader — including this file's own duplicate-detection key
+   * construction and `confirm_import_batch()`'s `::date` cast — gets one
+   * unambiguous canonical format, never a re-parsed or format-mismatched
+   * string. (P4 post-closeout fix: previously this field held the raw
+   * CSV date string, so a duplicate check comparing it against
+   * `expenses.transaction_date` — which PostgREST always returns in
+   * canonical `YYYY-MM-DD` — silently failed to match for any
+   * non-ISO-formatted source file, defeating cross-import duplicate
+   * detection for QuickBooks Desktop's own default export format. This
+   * was documented as a known limitation at P4 close-out and fixed in a
+   * dedicated post-closeout pass — see `docs/milestones/P4-complete.md`.)
+   */
   Date: string | null;
   /**
    * A signed integer number of cents, stored as a string (jsonb has no
@@ -276,9 +294,11 @@ export interface StageImportBatchResult {
  * NOT the CSV row's own columns verbatim (those keys are whatever the
  * source file's headers happened to be, per the mapping profile's
  * `column_mapping`). It is always a normalized object with exactly
- * these six keys — Item, Name, Memo, Date, Amount (a signed integer
- * number of cents, as a string — see `ImportRowRawData.Amount`'s doc
- * comment; NOT the raw CSV string), and __resolved_cost_code_id.
+ * these six keys — Item, Name, Memo, Date (a strict ISO `YYYY-MM-DD`
+ * string — see `ImportRowRawData.Date`'s doc comment; NOT the raw CSV
+ * string), Amount (a signed integer number of cents, as a string — see
+ * `ImportRowRawData.Amount`'s doc comment; NOT the raw CSV string), and
+ * __resolved_cost_code_id.
  * `confirm_import_batch()` reads `raw_data->>'Name'` / `'Date'` /
  * `'Memo'` / `'Amount'` / `'__resolved_cost_code_id'` verbatim, so this
  * shape must never drift.
@@ -320,8 +340,14 @@ export async function stageImportBatch(
 
   // Duplicate-context: every non-void expense already posted for this
   // project, keyed EXACTLY the way parseQuickBooksCsv.ts builds its own
-  // internal key (vendorValue|dateValue|amountCents|resolvedCostCodeId)
-  // so `existingExpenseKeys.has(key)` lines up.
+  // internal key (vendorValue|canonicalDate|amountCents|resolvedCostCodeId)
+  // so `existingExpenseKeys.has(key)` lines up. `expenses.transaction_date`
+  // comes back from PostgREST in canonical `YYYY-MM-DD` — the same format
+  // `parseQuickBooksCsv()`'s own `canonicalDate` normalizes every row's
+  // Date to (P4 post-closeout fix: previously this key compared the RAW,
+  // unnormalized CSV date string against this canonical format, so a
+  // `MM/DD/YYYY`-formatted export — QuickBooks Desktop's own default —
+  // would never match an existing expense's date here).
   const { data: expenseRows, error: expenseError } = await supabase
     .from("expenses")
     .select("vendor_name, transaction_date, amount_cents, cost_code_id")
@@ -375,14 +401,15 @@ export async function stageImportBatch(
   // __resolved_cost_code_id shape confirm_import_batch() depends on —
   // pulling the RAW string value out of row.rawData via the mapping
   // profile's own column_mapping (never row.rawData's own arbitrary
-  // header keys), except Amount, which uses parseQuickBooksCsv()'s own
-  // already-canonicalized amountCents, never the raw CSV string.
+  // header keys), except Date and Amount, which use parseQuickBooksCsv()'s
+  // own already-canonicalized canonicalDate/amountCents, never the raw
+  // CSV strings.
   const importRowsToInsert = parsedRows.map((row) => {
     const normalized = {
       Item: row.rawData[columnMapping.item] ?? null,
       Name: row.rawData[columnMapping.vendor] ?? null,
       Memo: row.rawData[columnMapping.memo] ?? null,
-      Date: row.rawData[columnMapping.date] ?? null,
+      Date: row.canonicalDate,
       Amount: String(row.amountCents),
       __resolved_cost_code_id: row.resolvedCostCodeId,
     };
