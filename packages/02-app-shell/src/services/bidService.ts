@@ -137,3 +137,87 @@ export async function reactivateVendorMember(supabase: SupabaseClient, vendorId:
   if (error) return { error: error.message };
   return {};
 }
+
+export async function recordBidSubmission(supabase: SupabaseClient, bidSubmissionId: string, amountCents: number, notes?: string) {
+  if (!Number.isInteger(amountCents) || amountCents < 0) {
+    return { error: "Amount must be a whole number of cents, zero or greater." };
+  }
+  const { error } = await supabase
+    .from("bid_submissions")
+    .update({ status: "submitted", amount_cents: amountCents, notes: notes ?? null, submitted_at: new Date().toISOString() })
+    .eq("id", bidSubmissionId)
+    .eq("status", "invited");
+  if (error) return { error: error.message };
+  return {};
+}
+
+export async function awardBid(supabase: SupabaseClient, bidSubmissionId: string) {
+  const { data, error } = await supabase.rpc("award_bid", { p_bid_submission_id: bidSubmissionId });
+  if (error) return { error: error.message };
+  return { committedCostId: data as string };
+}
+
+export interface BidQuestionRow {
+  id: string;
+  bidPackageId: string;
+  vendorId: string | null;
+  source: "staff_recorded" | "vendor_submitted";
+  recordedBy: string | null;
+  questionText: string;
+  askedAt: string;
+  answerText: string | null;
+  answeredAt: string | null;
+}
+
+/** source is always 'staff_recorded' here (P5 has no vendor session to
+ *  submit directly) and recorded_by is intentionally OMITTED from the
+ *  insert payload — the column's own `default auth.uid()` populates it
+ *  from the actual authenticated session, never a value this function
+ *  could be tricked into passing on someone else's behalf. */
+export async function askBidQuestion(supabase: SupabaseClient, bidPackageId: string, vendorId: string, questionText: string) {
+  if (!questionText.trim()) return { error: "Question text is required." };
+  const { error } = await supabase
+    .from("bid_questions")
+    .insert({ bid_package_id: bidPackageId, vendor_id: vendorId, question_text: questionText.trim(), source: "staff_recorded" });
+  if (error) return { error: error.message };
+  return {};
+}
+
+export async function answerBidQuestion(supabase: SupabaseClient, bidQuestionId: string, answerText: string) {
+  if (!answerText.trim()) return { error: "Answer text is required." };
+  const { error } = await supabase
+    .from("bid_questions")
+    .update({ answer_text: answerText.trim(), answered_at: new Date().toISOString() })
+    .eq("id", bidQuestionId);
+  if (error) return { error: error.message };
+  return {};
+}
+
+export async function listBidQuestions(supabase: SupabaseClient, bidPackageId: string): Promise<BidQuestionRow[]> {
+  const { data, error } = await supabase.from("bid_questions").select("*").eq("bid_package_id", bidPackageId).order("asked_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    bidPackageId: row.bid_package_id,
+    vendorId: row.vendor_id,
+    source: row.source,
+    recordedBy: row.recorded_by,
+    questionText: row.question_text,
+    askedAt: row.asked_at,
+    answerText: row.answer_text,
+    answeredAt: row.answered_at,
+  }));
+}
+
+export async function issueBidAddendum(supabase: SupabaseClient, bidPackageId: string, title: string, bodyText: string, revisedDueAt?: string) {
+  if (!title.trim() || !bodyText.trim()) return { error: "Title and body are required." };
+  const { error } = await supabase
+    .from("bid_addenda")
+    .insert({ bid_package_id: bidPackageId, title: title.trim(), body_text: bodyText.trim(), revised_due_at: revisedDueAt ?? null });
+  if (error) return { error: error.message };
+  if (revisedDueAt) {
+    const { error: dueDateError } = await supabase.from("bid_packages").update({ due_at: revisedDueAt }).eq("id", bidPackageId);
+    if (dueDateError) return { error: dueDateError.message };
+  }
+  return {};
+}
