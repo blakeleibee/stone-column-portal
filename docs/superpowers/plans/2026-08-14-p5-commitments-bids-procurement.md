@@ -207,15 +207,13 @@ create policy bid_packages_staff_full_access on bid_packages
   for all to authenticated
   using (is_org_staff(project_id)) with check (is_org_staff(project_id));
 
-create policy bid_packages_vendor_read on bid_packages
-  for select to authenticated
-  using (
-    is_project_vendor(project_id)
-    and exists (
-      select 1 from bid_submissions bs
-      where bs.bid_package_id = bid_packages.id and is_vendor_member(bs.vendor_id)
-    )
-  );
+-- bid_packages_vendor_read (below) references bid_submissions in its
+-- USING clause, so it cannot be created until that table exists —
+-- deferred to just after bid_submissions is created (a real ordering
+-- bug caught during Task 1's implementation, not a stylistic choice;
+-- Postgres resolves table references in a CREATE POLICY's qual
+-- expression at DDL time, so creating this policy here would fail
+-- outright with "relation bid_submissions does not exist").
 
 create trigger audit_bid_packages after insert or update on bid_packages
   for each row execute function public.log_audit();
@@ -286,6 +284,18 @@ revoke all on function public.log_audit_via_bid_package() from public;
 
 create trigger audit_bid_submissions after insert or update on bid_submissions
   for each row execute function public.log_audit_via_bid_package();
+
+-- Deferred from directly after bid_packages_staff_full_access above —
+-- this references bid_submissions, which now exists.
+create policy bid_packages_vendor_read on bid_packages
+  for select to authenticated
+  using (
+    is_project_vendor(project_id)
+    and exists (
+      select 1 from bid_submissions bs
+      where bs.bid_package_id = bid_packages.id and is_vendor_member(bs.vendor_id)
+    )
+  );
 ```
 
 - [ ] **Step 3: Append `bid_questions` (with Decision 8's provenance fields) and `bid_addenda`**
