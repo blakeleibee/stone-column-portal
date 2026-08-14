@@ -1266,6 +1266,69 @@ select assert_raises(
   'revoking with revoked_by set to someone other than the acting session must be rejected'
 );
 
+-- Task 1 review round 1 fix, tested here: inserting an ALREADY-revoked
+-- row with a forged revoked_by must be rejected too, not just an
+-- update transition. A fresh, throwaway vendor/profile pair keeps this
+-- independent of vendor_a's fixtures.
+do $$
+declare
+  v_throwaway_vendor uuid;
+  v_throwaway_user uuid := gen_random_uuid();
+begin
+  insert into vendors (org_id, name)
+  select org_id, 'Throwaway Vendor' from profiles where id = (select value from test_fixture_ids where key = 'admin')
+  returning id into v_throwaway_vendor;
+  insert into profiles (id, org_id, role, full_name, email)
+  select v_throwaway_user, org_id, 'vendor', 'Throwaway', 'throwaway@example.com'
+  from profiles where id = (select value from test_fixture_ids where key = 'admin');
+
+  perform assert_raises(
+    format(
+      'insert into vendor_members (vendor_id, profile_id, revoked_at, revoked_by) values (%L, %L, now(), %L)',
+      v_throwaway_vendor, v_throwaway_user, (select value from test_fixture_ids where key = 'org_b_admin')
+    ),
+    'inserting an already-revoked vendor_members row with a forged revoked_by must be rejected'
+  );
+end $$;
+
+-- Task 1 review round 1 fix, tested here: on an ALREADY-revoked row, an
+-- update that changes ONLY revoked_by (leaving the already-set
+-- revoked_at untouched) must still be checked, not silently skipped —
+-- this is what "silently reattributing an already-recorded revocation"
+-- means concretely. Needs its own already-revoked throwaway row, since
+-- the fixture the row this test needs (revoked_at already non-null)
+-- doesn't exist yet at this point in the file.
+do $$
+declare
+  v_throwaway_vendor_2 uuid;
+  v_throwaway_user_2 uuid := gen_random_uuid();
+begin
+  insert into vendors (org_id, name)
+  select org_id, 'Throwaway Vendor 2' from profiles where id = (select value from test_fixture_ids where key = 'admin')
+  returning id into v_throwaway_vendor_2;
+  insert into profiles (id, org_id, role, full_name, email)
+  select v_throwaway_user_2, org_id, 'vendor', 'Throwaway 2', 'throwaway2@example.com'
+  from profiles where id = (select value from test_fixture_ids where key = 'admin');
+  insert into vendor_members (vendor_id, profile_id) values (v_throwaway_vendor_2, v_throwaway_user_2);
+
+  -- Legitimate revoke first (passes the trigger, admin revoking their own action).
+  update vendor_members set revoked_at = now(), revoked_by = (select value from test_fixture_ids where key = 'admin')
+  where vendor_id = v_throwaway_vendor_2 and profile_id = v_throwaway_user_2;
+
+  insert into test_fixture_ids values ('throwaway_vendor_2', v_throwaway_vendor_2);
+  insert into test_fixture_ids values ('throwaway_user_2', v_throwaway_user_2);
+end $$;
+
+select assert_raises(
+  format(
+    'update vendor_members set revoked_by = %L where vendor_id = %L and profile_id = %L',
+    (select value from test_fixture_ids where key = 'org_b_admin'),
+    (select value from test_fixture_ids where key = 'throwaway_vendor_2'),
+    (select value from test_fixture_ids where key = 'throwaway_user_2')
+  ),
+  'reassigning revoked_by on an already-revoked row, with revoked_at left unchanged, must still be rejected'
+);
+
 -- The actual revoke, correctly attributed.
 do $$
 begin
@@ -1417,6 +1480,38 @@ select assert_raises(
 select assert_raises(
   format('update bid_questions set recorded_by = %L where id = %L', (select value from test_fixture_ids where key = 'org_b_admin'), (select value from test_fixture_ids where key = 'bid_question_a')),
   'reassigning bid_questions.recorded_by after insert must be rejected — provenance is set once'
+);
+
+-- Task 1 review round 1 fix, tested here: bid_addenda.issued_by has the
+-- identical spoofing/immutability protection as bid_questions.recorded_by.
+do $$
+declare
+  v_addendum_id uuid;
+begin
+  insert into bid_addenda (bid_package_id, title, body_text)
+  values ((select value from test_fixture_ids where key = 'bid_package_a'), 'Clarification', 'Excludes permit fees.')
+  returning id into v_addendum_id;
+  insert into test_fixture_ids values ('bid_addendum_a', v_addendum_id);
+
+  perform assert_that(
+    (select issued_by from bid_addenda where id = v_addendum_id) = (select value from test_fixture_ids where key = 'admin'),
+    'a plain staff insert defaults issued_by to auth.uid() on the ordinary case'
+  );
+end $$;
+
+select assert_raises(
+  format(
+    $sql$insert into bid_addenda (bid_package_id, title, body_text, issued_by)
+         values (%L, 'Spoofed addendum', 'test', %L)$sql$,
+    (select value from test_fixture_ids where key = 'bid_package_a'),
+    (select value from test_fixture_ids where key = 'org_b_admin')
+  ),
+  'inserting bid_addenda with issued_by explicitly set to a DIFFERENT user must be rejected'
+);
+
+select assert_raises(
+  format('update bid_addenda set issued_by = %L where id = %L', (select value from test_fixture_ids where key = 'org_b_admin'), (select value from test_fixture_ids where key = 'bid_addendum_a')),
+  'reassigning bid_addenda.issued_by after insert must be rejected'
 );
 
 reset role;
@@ -1699,6 +1794,22 @@ begin
   -- latest row.
   perform assert_that((select template_version from issued_documents where id = v_doc_v1) = '1', 'superseding a document does not alter the superseded row''s own template_version');
 end $$;
+
+-- Task 1 review round 1 fix, tested here: a direct insert into
+-- issued_documents that BYPASSES issue_document() entirely, with a
+-- forged issued_by, must be rejected — not merely undetected until an
+-- update. Uses material_order_a again (a fresh, distinct document_number
+-- avoids the type/source/version unique constraint colliding with v1/v2
+-- above).
+select assert_raises(
+  format(
+    $sql$insert into issued_documents (document_type, source_id, document_number, version, template_version, issued_by, canonical_data)
+         values ('purchase_order', %L, 'PO-FORGED', 99, '1', %L, '{}'::jsonb)$sql$,
+    (select value from test_fixture_ids where key = 'material_order_a'),
+    (select value from test_fixture_ids where key = 'org_b_admin')
+  ),
+  'a direct insert into issued_documents with issued_by forged to a different user must be rejected, even bypassing issue_document() entirely'
+);
 
 -- Immutability: a direct update to canonical_data must be rejected.
 select assert_raises(

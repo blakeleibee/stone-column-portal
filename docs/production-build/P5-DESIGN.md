@@ -855,6 +855,17 @@ changes:
     producing their own distinct audit row.
 16. Real Postgres re-run of `committed_forecast_hardening_tests.sql`
     "in context" — unchanged from Revision 1.
+17. **Added after Task 1's review round, not in this list's original
+    pass**: direct-spoofing-attempt tests for the three actor-provenance
+    fields found to be unenforced — `bid_addenda.issued_by` (insert
+    with a forged value rejected; post-insert reassignment rejected),
+    `issued_documents.issued_by` (a direct insert bypassing
+    `issue_document()` entirely, with a forged value, rejected), and
+    `vendor_members.revoked_by` (inserting an already-revoked row with
+    a forged value rejected; an update touching only `revoked_by` on an
+    already-revoked row, leaving `revoked_at` unchanged, rejected).
+    These exercise the fixes described in Decisions 3, 4, and 8's
+    review-round corrections above.
 
 New files added to `scripts/db/run-sql-tests.mjs`'s `FILES` array as
 before. `apps/web` test additions: `procurement_totals_unit.ts`
