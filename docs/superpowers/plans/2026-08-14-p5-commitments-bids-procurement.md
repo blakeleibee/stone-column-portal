@@ -42,7 +42,7 @@
 - Create: `supabase/migrations/20260814000000_commitments_bids_procurement.sql` (mirror)
 
 **Interfaces:**
-- Produces: types `bid_package_status`, `bid_submission_status`, `material_order_status`, `issued_document_type`; tables `vendor_members`, `bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `issued_documents`; functions `is_vendor_member(uuid) returns boolean` (requires active/non-revoked membership), `award_bid(uuid) returns uuid`, `commit_material_order(uuid) returns table(cost_code_id uuid, committed_cost_id uuid)`, `issue_document(issued_document_type, uuid, text, text, jsonb) returns uuid` (now takes `p_template_version`); trigger functions `enforce_vendor_member_org_match()`, `enforce_vendor_member_identity_and_revocation()`, `log_audit_via_bid_package()`, `log_audit_via_material_order()`, `enforce_line_item_project_matches_order()`, `enforce_material_order_line_item_frozen_after_commit()`, `enforce_bid_question_recorded_by_self()`, `enforce_bid_addendum_issued_by_self()`, `enforce_issued_document_immutability()`, `log_audit_via_issued_document()`.
+- Produces: types `bid_package_status`, `bid_submission_status`, `material_order_status`, `issued_document_type`; tables `vendor_members`, `bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `issued_documents`; functions `is_vendor_member(uuid) returns boolean` (requires active/non-revoked membership), `award_bid(uuid) returns uuid`, `commit_material_order(uuid) returns table(cost_code_id uuid, committed_cost_id uuid)`, `issue_document(issued_document_type, uuid, text, text, jsonb) returns uuid` (now takes `p_template_version`); trigger functions `enforce_vendor_member_org_match()`, `enforce_vendor_member_identity_and_revocation()`, `log_audit_via_bid_package()`, `log_audit_via_material_order()`, `enforce_line_item_project_matches_order()`, `enforce_material_order_line_item_frozen_after_commit()`, `enforce_bid_question_recorded_by_self()`, `enforce_bid_addendum_issued_by_self()`, `enforce_issued_document_immutability()`, `log_audit_via_issued_document()`; RLS-recursion-breaking helpers `get_bid_package_project_id(uuid) returns uuid` and `is_invited_vendor_for_bid_package(uuid) returns boolean`.
 
 - [ ] **Step 1: Write `schema/015_commitments_bids_procurement.sql` — vendor identity, including revocation (Revision 3 hardening)**
 
@@ -221,6 +221,30 @@ create policy bid_packages_staff_full_access on bid_packages
   for all to authenticated
   using (is_org_staff(project_id)) with check (is_org_staff(project_id));
 
+-- Task 2 review finding, fixed in Task 1's deliverable: bid_packages and
+-- bid_submissions' RLS policies originally referenced each other
+-- directly (a plain subquery in each policy's own USING clause, not
+-- wrapped in a security-definer function) — bid_packages_vendor_read
+-- queried bid_submissions, and bid_submissions_staff_full_access queried
+-- bid_packages. Postgres detects this as "infinite recursion detected
+-- in policy" at plan time, for ANY querying role, not just vendors —
+-- this broke ALL access to both tables, including staff's own admin UI,
+-- the moment RLS was enabled. This SECURITY DEFINER helper (mirroring
+-- the existing is_project_vendor()/is_vendor_member()/is_org_staff()
+-- pattern already used elsewhere in this same migration) resolves
+-- bid_packages.project_id WITHOUT re-triggering bid_packages' own RLS,
+-- breaking the cycle at its bid_submissions-side back-edge. Reused by
+-- every policy on a child table that needs "which project does this
+-- bid_package belong to" (bid_submissions, bid_questions, bid_addenda).
+create or replace function public.get_bid_package_project_id(p_bid_package_id uuid) returns uuid
+language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select project_id from public.bid_packages where id = p_bid_package_id;
+$$;
+revoke all on function public.get_bid_package_project_id(uuid) from public;
+grant execute on function public.get_bid_package_project_id(uuid) to authenticated;
+
 -- bid_packages_vendor_read (below) references bid_submissions in its
 -- USING clause, so it cannot be created until that table exists —
 -- deferred to just after bid_submissions is created (a real ordering
@@ -261,8 +285,8 @@ alter table bid_submissions enable row level security;
 
 create policy bid_submissions_staff_full_access on bid_submissions
   for all to authenticated
-  using (is_org_staff((select project_id from bid_packages where id = bid_submissions.bid_package_id)))
-  with check (is_org_staff((select project_id from bid_packages where id = bid_submissions.bid_package_id)));
+  using (is_org_staff(get_bid_package_project_id(bid_submissions.bid_package_id)))
+  with check (is_org_staff(get_bid_package_project_id(bid_submissions.bid_package_id)));
 
 create policy bid_submissions_vendor_read on bid_submissions
   for select to authenticated
@@ -300,16 +324,27 @@ create trigger audit_bid_submissions after insert or update on bid_submissions
   for each row execute function public.log_audit_via_bid_package();
 
 -- Deferred from directly after bid_packages_staff_full_access above —
--- this references bid_submissions, which now exists.
+-- this references bid_submissions, which now exists. Wrapped in a
+-- SECURITY DEFINER helper for the same reason get_bid_package_project_id()
+-- exists above: this is the forward edge of the same cycle that helper's
+-- comment describes, and wrapping both edges (not just the one that was
+-- strictly necessary to break the cycle) is defense against a future
+-- migration re-introducing recursion from this side instead.
+create or replace function public.is_invited_vendor_for_bid_package(p_bid_package_id uuid) returns boolean
+language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.bid_submissions bs
+    where bs.bid_package_id = p_bid_package_id and is_vendor_member(bs.vendor_id)
+  );
+$$;
+revoke all on function public.is_invited_vendor_for_bid_package(uuid) from public;
+grant execute on function public.is_invited_vendor_for_bid_package(uuid) to authenticated;
+
 create policy bid_packages_vendor_read on bid_packages
   for select to authenticated
-  using (
-    is_project_vendor(project_id)
-    and exists (
-      select 1 from bid_submissions bs
-      where bs.bid_package_id = bid_packages.id and is_vendor_member(bs.vendor_id)
-    )
-  );
+  using (is_project_vendor(project_id) and is_invited_vendor_for_bid_package(bid_packages.id));
 ```
 
 - [ ] **Step 3: Append `bid_questions` (with Decision 8's provenance fields) and `bid_addenda`**
@@ -343,8 +378,8 @@ alter table bid_questions enable row level security;
 
 create policy bid_questions_staff_full_access on bid_questions
   for all to authenticated
-  using (is_org_staff((select project_id from bid_packages where id = bid_questions.bid_package_id)))
-  with check (is_org_staff((select project_id from bid_packages where id = bid_questions.bid_package_id)));
+  using (is_org_staff(get_bid_package_project_id(bid_questions.bid_package_id)))
+  with check (is_org_staff(get_bid_package_project_id(bid_questions.bid_package_id)));
 
 create policy bid_questions_vendor_read on bid_questions
   for select to authenticated
@@ -431,8 +466,8 @@ alter table bid_addenda enable row level security;
 
 create policy bid_addenda_staff_full_access on bid_addenda
   for all to authenticated
-  using (is_org_staff((select project_id from bid_packages where id = bid_addenda.bid_package_id)))
-  with check (is_org_staff((select project_id from bid_packages where id = bid_addenda.bid_package_id)));
+  using (is_org_staff(get_bid_package_project_id(bid_addenda.bid_package_id)))
+  with check (is_org_staff(get_bid_package_project_id(bid_addenda.bid_package_id)));
 
 create policy bid_addenda_vendor_read on bid_addenda
   for select to authenticated
@@ -685,13 +720,13 @@ create policy issued_documents_staff_full_access on issued_documents
   using (
     case document_type
       when 'purchase_order' then is_org_staff((select project_id from material_orders where id = issued_documents.source_id))
-      when 'subcontract' then is_org_staff((select project_id from bid_packages where id = issued_documents.source_id))
+      when 'subcontract' then is_org_staff(get_bid_package_project_id(issued_documents.source_id))
     end
   )
   with check (
     case document_type
       when 'purchase_order' then is_org_staff((select project_id from material_orders where id = issued_documents.source_id))
-      when 'subcontract' then is_org_staff((select project_id from bid_packages where id = issued_documents.source_id))
+      when 'subcontract' then is_org_staff(get_bid_package_project_id(issued_documents.source_id))
     end
   );
 
@@ -977,6 +1012,11 @@ drop type if exists bid_submission_status;
 drop trigger if exists audit_bid_packages on bid_packages;
 drop table if exists bid_packages;
 drop type if exists bid_package_status;
+-- Safe here: every policy referencing these two RLS-recursion-breaking
+-- helpers (on bid_packages, bid_submissions, bid_questions, bid_addenda,
+-- issued_documents) was already dropped along with its own table above.
+drop function if exists public.is_invited_vendor_for_bid_package(uuid);
+drop function if exists public.get_bid_package_project_id(uuid);
 
 drop policy if exists audit_log_vendor_members_staff_select on audit_log;
 drop trigger if exists audit_vendor_members on vendor_members;

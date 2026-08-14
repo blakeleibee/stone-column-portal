@@ -623,11 +623,29 @@ narrative map of what the migration contains, not a second copy of it:
 
 ## RLS policies
 
+**A real recursion bug, found only once Task 2 actually executed the
+RLS tests against a live database — no amount of reading the SQL caught
+it — and fixed in Task 1's deliverable:** `bid_packages_vendor_read`
+and `bid_submissions_staff_full_access` originally referenced each
+other via plain (non-security-definer) cross-table subqueries.
+Postgres detects this as "infinite recursion detected in policy" at
+plan time, for *any* querying role — this broke all access to both
+tables, staff included, not just the vendor path. Two new
+`SECURITY DEFINER` helpers, `get_bid_package_project_id(uuid)` and
+`is_invited_vendor_for_bid_package(uuid)` — the same pattern
+`is_project_vendor()`/`is_vendor_member()`/`is_org_staff()` already
+use elsewhere in this schema — resolve each cross-table check without
+re-triggering the other table's RLS, breaking the cycle. Every policy
+below that needs "which project does this bid_package belong to" now
+goes through `get_bid_package_project_id()` rather than inlining its
+own subquery, for consistency and to close off any future re-
+introduction of the same class of bug from a different angle.
+
 Staff: full access on every new table, `is_org_staff(project_id)`
 (resolved directly for `bid_packages`/`material_orders`, through the
-parent for the child tables, and through a `document_type`-conditional
-lookup for `issued_documents`), matching every existing project-scoped
-financial table.
+parent for the child tables via `get_bid_package_project_id()`, and
+through a `document_type`-conditional lookup for `issued_documents`),
+matching every existing project-scoped financial table.
 
 Vendor (first real consumer of `is_project_vendor()` *and* the new
 `is_vendor_member()`):
