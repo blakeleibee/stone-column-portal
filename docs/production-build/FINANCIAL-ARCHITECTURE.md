@@ -135,7 +135,7 @@ in the same commit that introduces it, never invented ad hoc:**
 | `manual` | `expenses` | Hand-entered by staff | 001 (existing default) |
 | `quickbooks_import` | `expenses` | Confirmed from an `import_batches` row | P4 |
 | `bid_award` | `committed_costs` | Created from an awarded `bid_submissions` row | P5 |
-| `material_order` | `committed_costs` | Created from a committed `material_orders` row (`commit_material_order()`) | P5 |
+| `material_order` | `committed_costs` | Created from a committed `material_orders` row (`commit_material_order()`) — **one order may produce multiple rows sharing the same `source_id`, one per distinct cost code among its line items**, the same multi-row-per-event shape `change_order` (below) already uses; `source_id` was never a promise of exactly one row | P5 |
 | `change_order` | `budget_ledger` | Approved change order | P7 (slot already reserved, per `PRODUCTION-ROADMAP.md`'s P7 section) |
 | `selection_overage` | `budget_ledger` | Approved selection over allowance | P8 |
 | `vendor_invoice` | `expenses` | Confirmed from a vendor-submitted `vendor_invoices` row | P11 |

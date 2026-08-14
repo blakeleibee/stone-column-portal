@@ -2,7 +2,14 @@
 
 **Status:** Design only. Not yet implemented. Awaiting review/approval
 before `docs/superpowers/plans/2026-08-14-p5-commitments-bids-procurement.md`
-is executed. Full scope reference: `docs/production-build/PRODUCTION-ROADMAP.md`
+is executed. **Revision 2** (this version) responds to explicit owner
+review of Revision 1: material orders now allocate cost at the line
+level, vendor identity is a real many-to-many membership rather than a
+single column, PO/subcontract issuance now produces an immutable
+versioned snapshot, and staff-recorded bid Q&A carries explicit
+author/source provenance. Revision 1's text is not preserved inline —
+see git history on this file for the prior version if needed. Full
+scope reference: `docs/production-build/PRODUCTION-ROADMAP.md`
 §"Package P5"; governing cross-package constraint:
 `docs/production-build/FINANCIAL-ARCHITECTURE.md` (the permanent-backbone
 rule this design follows, and the money-flow diagram/`source_type`
@@ -29,14 +36,18 @@ P4's own framing of itself relative to `budget_ledger`.
 currently called by **zero** RLS policies anywhere in the schema — its
 own migration header says explicitly that future packages (named as
 P5) call it in their own new policies. **P5 is the first package to
-actually consume this helper.**
+actually consume this helper**, alongside a new, narrower
+`is_vendor_member()` helper this revision adds (Decision 3) for
+"which specific vendor business does this authenticated user
+represent."
 
 ## Scope
 
 Real `committed_costs` UI (list, create, supersede — wired to the
 existing RPC through a real screen for the first time); PM-facing bid
-package create/publish/receive/compare/award; PO/subcontract PDF
-generation; procurement/material orders with per-line receiving and
+package create/publish/receive/compare/award; PO/subcontract issuance
+with an immutable versioned document record; procurement/material
+orders with line-level cost-code allocation, per-line receiving, and
 backorder tracking. Per `PRODUCTION-ROADMAP.md`: **no vendor-facing UI
 in this package** (P11) — vendor identity/RLS is extended here so P11
 doesn't have to touch a security boundary under time pressure, but no
@@ -44,115 +55,321 @@ vendor ever logs into anything P5 ships.
 
 ## Decisions made in this design (flagged explicitly, per project convention)
 
-1. **A `bid_package` and a `material_order` are each scoped to exactly
-   one `(cost_code_id, project_id)`, not a multi-cost-code line-item
-   spread.** `FINANCIAL-ARCHITECTURE.md`'s own table list for P5 names
-   exactly six tables — `bid_packages`, `bid_submissions`,
-   `bid_questions`, `bid_addenda`, `material_orders`,
-   `material_order_line_items` — with no `bid_package_line_items` or
-   equivalent. A per-trade bid package (framing, electrical, drywall)
-   mapping to one cost code matches how Stone Column actually bids
-   subcontractor work and lets every new table use the exact same
-   composite-FK pattern as the rest of the backbone with zero new
-   shape. **Trade-off, stated plainly:** a bid or material order whose
-   real-world scope genuinely spans two cost codes (e.g., a sitework
-   package covering both grading and utilities) must be split into two
-   bid packages/orders, one per code. This is the same trade-off
-   `change_orders` (P7) resolves the opposite way (one change order,
-   multiple `budget_ledger` rows) — flagged here because P5 deliberately
-   does not follow that shape, and an owner who wants multi-code bid
-   packages should say so now, before the schema ships, not after.
+1. **A `bid_package` is scoped to exactly one `(cost_code_id,
+   project_id)`.** Unchanged from Revision 1, confirmed on review. A
+   per-trade bid package (framing, electrical, drywall) mapping to one
+   cost code matches how Stone Column actually bids subcontractor
+   work. **Trade-off, stated plainly:** a bid whose real-world scope
+   genuinely spans two cost codes must be split into two bid packages.
+   This does *not* apply to material orders — see Decision 2, which
+   revises Revision 1's identical treatment of `material_orders` after
+   owner review.
 
-2. **`vendors` gets one new nullable column, `profile_id uuid
-   references profiles(id)`.** This is a real, load-bearing gap I
-   found during research, not a stylistic choice: `vendors` (schema/012,
-   org-scoped business-contact records — name, email, phone) has **no
-   column linking it to `profiles`/`project_members`** (the actual
-   login/session identity `is_project_vendor()` checks). Without this
-   link, "a vendor can read their own bid_submissions" cannot be
-   expressed as an RLS policy at all — there is no way to go from
-   `auth.uid()` to "which `vendors.id` is this." Nullable because P5
-   ships no vendor invitation flow (that's P11) — every `vendors` row
-   stays `profile_id = null` in practice until P11 actually invites a
-   vendor to log in, but the column and the policies that use it are
-   correct and tested now, so P11 only has to populate the column, not
-   design new RLS. This is additive-only (schema/012 is not edited in
-   place) and does not redefine vendor identity — it only makes the
-   identity P3/P7 already established addressable from the `vendors`
-   table for the first time.
+2. **`material_orders` carries an *optional* `cost_code_id` as a
+   convenience default; every `material_order_line_items` row carries
+   its own *required* `cost_code_id`, and that line-level value is
+   what `commit_material_order()`, receiving, and backorder
+   reconciliation all actually use.** Revision 1 treated material
+   orders the same as bid packages (one cost code per order) and an
+   owner review correctly rejected that: a single material delivery
+   routinely covers several trades in one shipment (e.g., one lumber
+   order covering both framing and exterior-trim cost codes), and
+   forcing staff to split every such order into N separate orders just
+   to satisfy the schema would be real friction for no schema benefit
+   — unlike a bid package, a material order was never conceptually
+   single-trade. Concretely:
+   - `material_orders.cost_code_id` is now nullable. The UI uses it
+     only to pre-fill new line items' cost code field; nothing in the
+     database or the commit/reconciliation path reads it as
+     authoritative.
+   - `material_order_line_items` gains `project_id` (denormalized,
+     required) and `cost_code_id` (required), with the same composite
+     `foreign key (cost_code_id, project_id) references
+     cost_codes(id, project_id)` the rest of the backbone uses, plus a
+     new trigger, `enforce_line_item_project_matches_order()`,
+     rejecting a line item whose `project_id` doesn't match its parent
+     order's — this is DB-enforced, not merely trusted from the
+     service layer that inserts it, matching this project's general
+     posture of not relying on application code alone for an
+     invariant the database can guarantee directly.
+   - `commit_material_order()` now **groups line items by
+     `cost_code_id` and inserts one `committed_costs` row per distinct
+     cost code**, all sharing `source_id = material_orders.id` — the
+     exact same "one event, several backbone rows, shared `source_id`"
+     shape `FINANCIAL-ARCHITECTURE.md` already documents for change
+     orders touching multiple cost codes (§"How money flows," step 6).
+     The RPC's return type changes from `returns uuid` to `returns
+     setof uuid` accordingly.
+   - Receiving/backorder tracking was already per-line-item in
+     Revision 1 and needed no change here — it was already the
+     correct granularity; only the cost-code allocation was wrong.
 
-3. **No file storage/PDF persistence in P5 — PO/subcontract PDFs are
-   generated on demand and downloaded, not saved as a `documents`
-   row.** The roadmap's "PDF generation for PO/subcontract documents"
-   scope line doesn't require persistence, and `documents` (schema/010)
-   has no generic `source_type`/`source_id` linkage columns today —
-   adding them would mean altering a table P5 doesn't otherwise own,
-   for a need P5 can satisfy without it. Likewise, a vendor's submitted
-   bid (received by phone/email, since there's no vendor portal yet) is
-   recorded as text/amount on `bid_submissions`, not an uploaded file.
-   **Alternative considered:** add nullable `source_type text`/
-   `source_id uuid` to `documents` now, so generated POs and received
-   bid files have somewhere to live from day one. Deferred, not
-   rejected — flagged here so P9 (real Documents UI) or P11 (vendor
-   uploads) can pick it up deliberately instead of two packages each
-   inventing their own attachment mechanism independently.
+3. **Vendor identity is a real many-to-many membership junction,
+   `vendor_members`, not a single `vendors.profile_id` column** —
+   replacing Revision 1's Decision 2 entirely, per explicit owner
+   correction. A `vendors` row is a *business* (Acme Framing); more
+   than one authenticated person can legitimately represent that
+   business (the owner, an estimator, a foreman who logs in from the
+   truck) — a single nullable FK column could only ever link one.
+   ```sql
+   create table vendor_members (
+     id          uuid primary key default uuid_generate_v4(),
+     vendor_id   uuid not null references vendors(id) on delete cascade,
+     profile_id  uuid not null references profiles(id) on delete cascade,
+     is_primary  boolean not null default false,
+     created_at  timestamptz not null default now(),
+     constraint vendor_members_unique_pair unique (vendor_id, profile_id)
+   );
+   ```
+   **Isolation is enforced at four distinct layers, each independently
+   testable, per the explicit requirement that this be database-
+   enforced, not just RLS-shaped:**
+   - **Org isolation** — a new `before insert or update` trigger,
+     `enforce_vendor_member_org_match()`, rejects linking a profile to
+     a vendor when `profiles.org_id <> vendors.org_id`. This is a hard
+     constraint, not an RLS filter — even a bug in a future policy
+     could never let a cross-org link exist as a row in the first
+     place.
+   - **Project isolation** — unchanged mechanism from Revision 1: the
+     existing `is_project_vendor(project_id)` (schema/007,
+     `project_members`-backed) still gates whether a user is a vendor
+     *on a given project at all*; `vendor_members` only answers "which
+     `vendors.id` do they represent," a orthogonal question.
+   - **Vendor isolation (cross-vendor)** — a new helper,
+     `is_vendor_member(p_vendor_id uuid)` (`security definer`, same
+     shape as `is_project_client`/`is_project_vendor`), replaces every
+     place Revision 1 inlined `vendors.profile_id = auth.uid()`. Two
+     people both linked to the *same* `vendors.id` correctly see the
+     same data (the actual "multiple people, one business"
+     requirement); a person linked to a *different* vendor sees
+     nothing, exactly as before.
+   - **No delete, ever** — `vendor_members_no_delete` (same
+     `reject_delete()` trigger every other permanent-record table in
+     this schema uses), so a later audit-log row referencing a
+     membership can never point at a vanished row. A membership that
+     needs to end is out of P5's scope (no UI exists to end one yet);
+     when P11 needs that, it adds an `is_active` flag or equivalent,
+     not a hard delete.
+   RLS: `vendor_members_staff_full_access` (org-staff of the vendor's
+   own org); `vendor_members_self_read` (a member reads their own
+   membership rows — harmless, and lets a future vendor session know
+   which business(es) they represent). Audit via
+   `log_audit_no_project()` (org-scoped, no `project_id`, same as
+   `vendors` itself) plus the matching `audit_log` SELECT policy
+   `audit_log_vendor_members_staff_select`, following the exact
+   precedent `vendors` itself set in schema/012 for tables without a
+   `project_id` column.
+   **Forward-compatibility for P11:** when a real vendor invitation
+   flow ships, it inserts a `vendor_members` row (never repurposes an
+   existing one) — the schema already supports one business having any
+   number of logins from day one, so P11 adds a UI, not a migration.
 
-4. **A new `committed_costs.source_type` value, `material_order`, is
-   registered** in `FINANCIAL-ARCHITECTURE.md`'s registry table in the
-   same commit as this design. The document's own money-flow diagram
-   lists `material_orders` as one of the three P5 mechanisms feeding
-   `committed_costs` (alongside `bid_packages`/`bid_submissions`), but
-   its `source_type` registry table only pre-reserved `bid_award` for
-   P5 — this is a real gap between the diagram and the registry, not a
-   deliberate omission, closed here per the registry's own stated rule
-   ("any package introducing a new financial event type adds its row
-   here in the same commit that introduces it").
+4. **Issuing a PO or subcontract creates an immutable, versioned
+   snapshot row — `issued_documents` — even though the rendered PDF
+   bytes themselves are still never stored.** Revision 1's "no
+   persistence at all" (its old Decision 3) is corrected per explicit
+   owner instruction: *generating* a PDF (a preview, before anything
+   is finalized) stays ephemeral exactly as before, but *issuing* one
+   — the act of actually sending a PO or subcontract to a vendor — is
+   a real business event that must be reproducible later byte-for-byte,
+   not just "whatever the database happens to say today."
+   ```sql
+   create type issued_document_type as enum ('purchase_order', 'subcontract');
 
-5. **A bid package supports exactly one award.** Awarding a
-   `bid_submissions` row sets that row's status to `awarded`, the
-   parent `bid_packages` row to `awarded`, and every sibling
-   `bid_submissions` row on the same package to `declined`,
-   automatically, in the same RPC. **Alternative considered:** splitting
-   one package's scope across multiple vendors (e.g., half the drywall
-   to one sub, half to another). Rejected for P5 as unnecessary
-   complexity for the common case (Decision 1 already means a
-   multi-vendor scope would normally be two bid packages against two
-   cost codes); an owner who actually splits awards within a single
-   trade regularly should flag it now rather than after the schema is
-   fixed.
+   create table issued_documents (
+     id               uuid primary key default uuid_generate_v4(),
+     document_type    issued_document_type not null,
+     source_id        uuid not null, -- material_orders.id or bid_packages.id
+     document_number  text not null,
+     version          integer not null default 1,
+     issued_at        timestamptz not null default now(),
+     issued_by        uuid references profiles(id),
+     canonical_data   jsonb not null,
+     superseded_at    timestamptz,
+     superseded_by_id uuid references issued_documents(id),
+     created_at       timestamptz not null default now(),
+     constraint issued_documents_type_source_version_unique unique (document_type, source_id, version)
+   );
+   ```
+   `canonical_data` is a JSON snapshot of every field the PDF template
+   needs (project/vendor identity, line items with their cost codes,
+   totals, terms) — metadata only, the same "never a blob" philosophy
+   `documents` (schema/010) already established, just structured JSON
+   instead of a `storage_key` pointer, since there is no binary to
+   point at. A new RPC, `issue_document()`, models the exact
+   claim-old/insert-new/link pattern `supersede_committed_cost()`
+   already established: it looks up the current non-superseded version
+   for that `(document_type, source_id)`, inserts a new row at
+   `version + 1` (or `1` if none exists), and marks the prior row
+   superseded — **"later changes create revisions"** in schema terms.
+   `issued_by` is set to `auth.uid()` *inside* the RPC, never accepted
+   as a caller-supplied parameter — the same anti-impersonation
+   reasoning as Decision 8 below, applied here so an issuance record
+   can never be forged to claim a different issuer.
+   A new trigger, `enforce_issued_document_immutability()`, rejects any
+   `update` that changes `canonical_data`/`document_number`/`version`/
+   `document_type`/`source_id`/`issued_at`/`issued_by` — the only
+   fields ever allowed to change post-insert are
+   `superseded_at`/`superseded_by_id`, set exactly once by
+   `issue_document()`'s own next call. No delete, ever, same reasoning
+   as `vendor_members`.
+   **The PDF route's behavior changes accordingly** (see "Server-side
+   operations" below): once an `issued_documents` row exists, the PDF
+   route renders from its frozen `canonical_data`, not live database
+   state — this is what makes "reproduce the exact issued document"
+   true. Before anything is issued, the route still renders a live
+   preview, watermarked "DRAFT — NOT ISSUED," so staff can review
+   before committing to an official issuance.
+   **One honest caveat, not glossed over** (matching
+   `FINANCIAL-ARCHITECTURE.md`'s own convention for stating these
+   plainly): byte-for-byte reproducibility from a snapshot assumes the
+   PDF *template* code itself doesn't change in a way that alters
+   layout for old data. `canonical_data` freezes the *inputs*; it does
+   not freeze the *renderer*. If `MaterialOrderPdf.tsx`/
+   `SubcontractPdf.tsx` are ever restyled, a re-render of an old
+   snapshot will reflect the new styling, not the original document's
+   appearance. This is judged acceptable for P5 (the actual dollar
+   amounts and terms in `canonical_data` are what must never drift,
+   and they don't) but is flagged here explicitly rather than silently
+   assumed — a future package that needs true pixel-identical
+   archival reproduction would need to store the rendered bytes too,
+   which this design deliberately still does not do.
 
-6. **`material_order_line_items` carries its own `received_quantity`,
-   not just an order-level status.** The roadmap explicitly calls for
-   a "backordered material" Action Center event and audit signal, which
-   requires knowing *which line* is short, not just that "the order" is
-   incomplete — an order with 8 line items where 1 is on backorder is a
-   materially different state than the whole order being delayed.
-   Mirrors `expenses`' existing philosophy of tracking state at the
-   most granular row that actually changes, not a coarser parent.
+5. **A new `committed_costs.source_type` value, `material_order`,
+   remains registered** in `FINANCIAL-ARCHITECTURE.md`'s registry
+   table, updated in this revision to note explicitly: **one
+   `material_orders` row may now produce *multiple*
+   `committed_costs` rows** (one per distinct cost code among its line
+   items, per Decision 2), all sharing the same `source_id`. This is
+   the same multi-row-per-event shape the registry already documents
+   for `change_order` (P7) — noted here so P7 doesn't have to
+   rediscover that `source_id` was never a promise of "exactly one
+   row."
 
-7. **`bid_questions` and `bid_addenda` are staff-authored records in
-   P5, not an interactive vendor Q&A thread.** Per the roadmap's own
-   exclusion ("vendor data is referenced... but never displayed to a
-   vendor session in this package"), P5 has no vendor session to
-   receive a question from directly — staff logs a question a vendor
-   asked by phone/email and staff's own answer. The schema shape
-   (`bid_package_id`, `vendor_id`, question/answer text, timestamps) is
-   designed so P11 can later let a vendor insert their own
-   `bid_questions` row directly, under the same RLS policy, with zero
-   schema change — only a new UI.
+6. **A bid package supports exactly one award.** Unchanged from
+   Revision 1, confirmed on review. Awarding a `bid_submissions` row
+   sets that row's status to `awarded`, the parent `bid_packages` row
+   to `awarded`, and every sibling `bid_submissions` row on the same
+   package to `declined`, automatically, in the same RPC.
 
-8. **New dependency: `@react-pdf/renderer`** for PO/subcontract PDF
-   generation. No PDF library is named anywhere in
-   `TARGET-ARCHITECTURE.md` today — this is a genuine new-dependency
-   choice, same category as P4's `csv-parse` decision. Chosen over
-   `puppeteer` (spins a full headless Chrome — a poor fit for Vercel's
-   serverless function limits, per `TARGET-ARCHITECTURE.md`'s
-   deployment target) and over `pdf-lib` (lower-level manual
-   coordinate-based layout, more code for the same result). Renders
-   the PO/subcontract document as plain React components server-side
-   inside the Route Handler, streamed back as `application/pdf` — no
-   client-side rendering, matching §5.1's "genuine business logic runs
-   server-side" rule already applied to P4's CSV parsing.
+7. **`material_order_line_items` carries its own `received_quantity`
+   and `backordered` flag, not just an order-level status.** Unchanged
+   from Revision 1, confirmed on review — still correct at the line
+   level even though cost-code allocation (Decision 2) also moved to
+   the line level; these are two independent reasons to track state
+   per line, not per order.
+
+8. **Staff-recorded bid Q&A carries explicit, structurally-enforced
+   provenance so a staff-entered record can never be mistaken for a
+   vendor's own words.** Per explicit owner instruction, `bid_questions`
+   gains two fields Revision 1 didn't have:
+   ```sql
+   create table bid_questions (
+     id             uuid primary key default uuid_generate_v4(),
+     bid_package_id uuid not null references bid_packages(id) on delete cascade,
+     vendor_id      uuid references vendors(id),
+     source         text not null default 'staff_recorded'
+       check (source in ('staff_recorded', 'vendor_submitted')),
+     recorded_by    uuid references profiles(id) default auth.uid(),
+     question_text  text not null,
+     asked_at       timestamptz not null default now(),
+     answer_text    text,
+     answered_by    uuid references profiles(id),
+     answered_at    timestamptz,
+     visible_to_all_vendors boolean not null default true,
+     constraint bid_questions_answer_requires_answered_at
+       check (answer_text is null or answered_at is not null),
+     constraint bid_questions_staff_recorded_requires_recorder
+       check (source <> 'staff_recorded' or recorded_by is not null)
+   );
+   ```
+   `source` is a closed enum, not free text — every row is
+   structurally either `'staff_recorded'` (P5's only path: `recorded_by`
+   is mandatory, and the RLS insert policy for this path is staff-only)
+   or `'vendor_submitted'` (unused until P11, when a vendor's own RLS
+   insert policy sets it and leaves `recorded_by` null — a vendor's own
+   `auth.uid()` is implicit in that row via the *same* `is_vendor_member()`
+   check already governing read access, not a separate impersonation
+   surface). `recorded_by default auth.uid()` means the service layer
+   never has to (and cannot be trusted to) pass "who is recording
+   this" as a parameter — it is always the actual authenticated
+   session's own id, evaluated server-side at insert time, the same
+   anti-spoofing reasoning `issue_document()` uses for `issued_by`
+   (Decision 4), just expressed as a column default here since this is
+   a plain insert rather than an RPC. `asked_at` records when the vendor reportedly asked (per
+   staff, possibly by phone yesterday); the row's own `created_at`
+   (implicit, not separately named) records when it was actually
+   entered — keeping "what the vendor said" and "when this became a
+   system record" honestly distinct rather than conflated into one
+   timestamp. `bid_addenda` needed no equivalent change — an addendum
+   is inherently staff-issued by design (a vendor never issues one),
+   so it already carried `issued_by` with no impersonation risk to
+   begin with.
+
+9. **New dependency: `@react-pdf/renderer`, used only inside a
+   server-side Node.js Route Handler, pinned to an exact version (no
+   caret range) rather than following `csv-parse`'s `^7.0.2` precedent.**
+   Confirmed compatible: this repo runs Next.js `14.2.35` /
+   React `18.3.1` (`apps/web/package.json`), and `@react-pdf/renderer`
+   3.x targets React 16.8+/18 — no version conflict. **Runtime is
+   Node.js, explicitly, not the default left implicit:** both new
+   Route Handlers set `export const runtime = "nodejs";` at the module
+   level — App Router route segment config — rather than relying on
+   "Node is the default today," since `@react-pdf/renderer` uses
+   Node-only APIs and would fail outright under the Edge runtime; an
+   explicit declaration survives a future Next.js default change that
+   an implicit assumption would not. Chosen over `puppeteer` (spins a
+   full headless Chrome — incompatible with this constraint and a poor
+   fit for Vercel's serverless function limits per
+   `TARGET-ARCHITECTURE.md`'s deployment target) and over `pdf-lib`
+   (lower-level manual coordinate-based layout for the same result).
+   **Exact-pin rationale, distinct from `csv-parse`'s looser range:**
+   Decision 4's reproducibility guarantee depends on the renderer
+   producing the same output from the same `canonical_data` — a caret
+   range could silently pull in a minor/patch release that changes
+   layout between two issuances of the same document type, undermining
+   the very guarantee Decision 4 exists to provide. `csv-parse` has no
+   such reproducibility requirement riding on it, so its looser pin is
+   unaffected and not being revisited here.
+   **Authorization and rendering-failure paths are explicitly tested**
+   (not just the happy path, per instruction) — both routes: (a) an
+   unauthenticated request triggers `requireAuthenticatedUser`'s
+   existing `redirect("/login")` (Route Handlers support this,
+   verified against Next.js 14's documented behavior — `redirect()`
+   throws a framework-recognized signal that produces a real HTTP
+   redirect from a Route Handler, not just a Server Component); (b) an
+   authenticated request with the wrong role must **not** leak a raw
+   500 — `requireRole`'s `AuthorizationError` is caught explicitly
+   inside the route and converted to a `403` JSON response, since an
+   uncaught throw in a Route Handler (unlike a Server Component) has
+   no framework error boundary to land in gracefully; (c) a request
+   for a non-existent `id` returns `404`; (d) a `renderToBuffer` call
+   that throws (malformed/unexpected `canonical_data` shape) is caught
+   and converted to a safe, generic `500` — no stack trace or internal
+   detail in the response body.
+
+10. **`material_order_line_items` becomes structurally frozen once its
+    parent order leaves `draft`, except for `received_quantity`/
+    `backordered`.** This closes a real gap in Revision 1: that
+    version's acceptance criteria *claimed* "a committed order's line
+    items become as frozen as a posted expense's fields," but no
+    trigger actually enforced it — an oversight caught while revising
+    the design for Decision 2, not something the owner asked for
+    directly, but necessary once material orders can produce multiple
+    `committed_costs` rows (an unenforced post-commit edit would now
+    silently desynchronize potentially several backbone rows at once,
+    not just one). A new trigger,
+    `enforce_material_order_line_item_frozen_after_commit()`, covers
+    all three operations: blocks `insert` of a new line item once the
+    parent order's `status <> 'draft'`; blocks `update` of
+    `description`/`quantity`/`unit`/`unit_price_cents`/`cost_code_id`/
+    `project_id`/`material_order_id` once `status <> 'draft'` (
+    `received_quantity`/`backordered` remain freely updatable — that's
+    the entire point of receiving, which only happens *after* an order
+    is placed); blocks `delete` once `status <> 'draft'`. Style matches
+    `enforce_expense_state_transition`'s precedent exactly: a specific,
+    row-identifying exception message naming what changed and why it's
+    rejected.
 
 ## Schema/migration changes
 
@@ -160,325 +377,124 @@ One new migration, `schema/015_commitments_bids_procurement.sql` (+
 down), following P2.1/P4's precedent of bundling one package's full
 schema surface into a single file. Mirrored in `supabase/migrations/`
 per existing practice (both directories updated in the same commit).
+Full SQL for every table/trigger/RPC above lives in the implementation
+plan (Task 1) rather than duplicated here — this section is the
+narrative map of what the migration contains, not a second copy of it:
 
-**Vendor identity extension:**
-```sql
-alter table vendors
-  add column profile_id uuid references profiles(id);
-```
-(No RLS change to `vendors` itself — `vendors_staff_only` already
-covers this column; it's not a new access grant, matching P4's own
-"a new constraint is not a new access grant" reasoning for
-`budget_ledger`.)
-
-**`bid_packages`:**
-```sql
-create type bid_package_status as enum ('draft', 'published', 'awarded', 'cancelled');
-
-create table bid_packages (
-  id                uuid primary key default uuid_generate_v4(),
-  project_id        uuid not null references projects(id) on delete cascade,
-  cost_code_id      uuid not null,
-  title             text not null,
-  scope_description text,
-  due_at            timestamptz,
-  status            bid_package_status not null default 'draft',
-  created_by        uuid references profiles(id),
-  created_at        timestamptz not null default now(),
-
-  constraint bid_packages_cost_code_project_fk
-    foreign key (cost_code_id, project_id) references cost_codes(id, project_id)
-);
-```
-
-**`bid_submissions`** (also the invitee record — see Decision-adjacent
-note below: a `'invited'` row is how a vendor is invited to a package,
-before they've responded):
-```sql
-create type bid_submission_status as enum ('invited', 'submitted', 'awarded', 'declined', 'withdrawn');
-
-create table bid_submissions (
-  id             uuid primary key default uuid_generate_v4(),
-  bid_package_id uuid not null references bid_packages(id) on delete cascade,
-  vendor_id      uuid not null references vendors(id),
-  status         bid_submission_status not null default 'invited',
-  amount_cents   bigint,
-  notes          text,
-  submitted_at   timestamptz,
-  created_by     uuid references profiles(id),
-  created_at     timestamptz not null default now(),
-
-  constraint bid_submissions_one_per_vendor_per_package unique (bid_package_id, vendor_id),
-  constraint bid_submissions_amount_set_when_submitted
-    check (status = 'invited' or amount_cents is not null),
-  constraint bid_submissions_amount_nonnegative check (amount_cents is null or amount_cents >= 0)
-);
-```
-`unique (bid_package_id, vendor_id)` is what makes "invited, then later
-updated to submitted" a real workflow rather than two disconnected
-rows — the same vendor's row is updated in place from `invited` to
-`submitted` (pre-response fields are not yet financial data, so this is
-not a violation of the ledger's append-only philosophy; the append-only
-rule binds `committed_costs`/`budget_ledger`, which this table feeds
-*into* via `award_bid()`, not this staging table itself).
-
-**`bid_questions`:**
-```sql
-create table bid_questions (
-  id             uuid primary key default uuid_generate_v4(),
-  bid_package_id uuid not null references bid_packages(id) on delete cascade,
-  vendor_id      uuid references vendors(id),
-  question_text  text not null,
-  answer_text    text,
-  asked_at       timestamptz not null default now(),
-  answered_by    uuid references profiles(id),
-  answered_at    timestamptz,
-  visible_to_all_vendors boolean not null default true,
-
-  constraint bid_questions_answer_requires_answered_at
-    check (answer_text is null or answered_at is not null)
-);
-```
-
-**`bid_addenda`:**
-```sql
-create table bid_addenda (
-  id             uuid primary key default uuid_generate_v4(),
-  bid_package_id uuid not null references bid_packages(id) on delete cascade,
-  title          text not null,
-  body_text      text not null,
-  revised_due_at timestamptz,
-  issued_by      uuid references profiles(id),
-  issued_at      timestamptz not null default now()
-);
-```
-
-**`material_orders`:**
-```sql
-create type material_order_status as enum ('draft', 'ordered', 'partially_received', 'received', 'cancelled');
-
-create table material_orders (
-  id                   uuid primary key default uuid_generate_v4(),
-  project_id           uuid not null references projects(id) on delete cascade,
-  cost_code_id         uuid not null,
-  vendor_id            uuid references vendors(id),
-  order_number         text,
-  status               material_order_status not null default 'draft',
-  ordered_at           timestamptz,
-  expected_delivery_at timestamptz,
-  notes                text,
-  created_by           uuid references profiles(id),
-  created_at           timestamptz not null default now(),
-
-  constraint material_orders_cost_code_project_fk
-    foreign key (cost_code_id, project_id) references cost_codes(id, project_id)
-);
-```
-
-**`material_order_line_items`:**
-```sql
-create table material_order_line_items (
-  id                  uuid primary key default uuid_generate_v4(),
-  material_order_id   uuid not null references material_orders(id) on delete cascade,
-  description         text not null,
-  quantity             numeric not null,
-  unit                text,
-  unit_price_cents    bigint not null,
-  received_quantity   numeric not null default 0,
-  backordered         boolean not null default false,
-  created_at          timestamptz not null default now(),
-
-  constraint material_order_line_items_quantity_positive check (quantity > 0),
-  constraint material_order_line_items_unit_price_nonnegative check (unit_price_cents >= 0),
-  constraint material_order_line_items_received_nonnegative check (received_quantity >= 0),
-  constraint material_order_line_items_received_not_over check (received_quantity <= quantity)
-);
-```
-Line total (`quantity * unit_price_cents`) is computed in the service
-layer/view, never stored — same "derive, don't duplicate" rule
-`revisedEstimateCents` already follows in the financial engine.
-
-**Award/commit RPCs** (both `security invoker`, same reasoning as
-`supersede_committed_cost` — the caller already has direct RLS access
-to every table touched; the RPC exists purely for transactional
-atomicity across multiple statements):
-
-```sql
-create or replace function public.award_bid(p_bid_submission_id uuid)
-returns uuid
-language plpgsql security invoker set search_path = public, pg_temp
-as $$
-declare
-  v_submission bid_submissions%rowtype;
-  v_package bid_packages%rowtype;
-  v_committed_cost_id uuid;
-begin
-  select * into v_submission from bid_submissions where id = p_bid_submission_id for update;
-  if not found then
-    raise exception 'Bid submission % not found', p_bid_submission_id;
-  end if;
-  if v_submission.status <> 'submitted' then
-    raise exception 'Bid submission % must be in status ''submitted'' to award (currently %)',
-      p_bid_submission_id, v_submission.status;
-  end if;
-
-  select * into v_package from bid_packages where id = v_submission.bid_package_id for update;
-
-  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, source_type, source_id)
-  select bp.project_id, bp.cost_code_id, v.name, v_submission.amount_cents, 'bid_award', v_submission.id
-  from bid_packages bp join vendors v on v.id = v_submission.vendor_id
-  where bp.id = v_package.id
-  returning id into v_committed_cost_id;
-
-  update bid_submissions set status = 'awarded' where id = v_submission.id;
-  update bid_submissions set status = 'declined'
-    where bid_package_id = v_package.id and id <> v_submission.id and status = 'submitted';
-  update bid_packages set status = 'awarded' where id = v_package.id;
-
-  return v_committed_cost_id;
-end;
-$$;
-
-revoke all on function public.award_bid(uuid) from public;
-grant execute on function public.award_bid(uuid) to authenticated;
-```
-
-```sql
-create or replace function public.commit_material_order(p_material_order_id uuid)
-returns uuid
-language plpgsql security invoker set search_path = public, pg_temp
-as $$
-declare
-  v_order material_orders%rowtype;
-  v_total bigint;
-  v_vendor_name text;
-  v_committed_cost_id uuid;
-begin
-  select * into v_order from material_orders where id = p_material_order_id for update;
-  if not found then
-    raise exception 'Material order % not found', p_material_order_id;
-  end if;
-  if v_order.status <> 'draft' then
-    raise exception 'Material order % must be in status ''draft'' to commit (currently %)',
-      p_material_order_id, v_order.status;
-  end if;
-
-  select coalesce(sum(quantity * unit_price_cents), 0) into v_total
-  from material_order_line_items where material_order_id = v_order.id;
-  if v_total = 0 then
-    raise exception 'Material order % has no line items to commit', p_material_order_id;
-  end if;
-
-  select name into v_vendor_name from vendors where id = v_order.vendor_id;
-
-  insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, source_type, source_id)
-  values (v_order.project_id, v_order.cost_code_id, v_vendor_name, v_total, 'material_order', v_order.id)
-  returning id into v_committed_cost_id;
-
-  update material_orders set status = 'ordered', ordered_at = now() where id = v_order.id;
-
-  return v_committed_cost_id;
-end;
-$$;
-
-revoke all on function public.commit_material_order(uuid) from public;
-grant execute on function public.commit_material_order(uuid) to authenticated;
-```
-
-Both RPCs deliberately never call `supersede_committed_cost()`
-themselves — they create the *first* `committed_costs` row for a given
-award/order. A later amount change (price increase after backorder,
-renegotiated bid) goes through the existing `supersede_committed_cost()`
-RPC exactly as any other commitment revision would, so P5 adds zero new
-"how does a commitment change" concept.
-
-**Audit triggers**, modeled on `log_audit_self_scoped`/
-`log_audit_no_project` (schema/006) exactly as P4 modeled
-`log_audit_via_batch()` on the same pair:
-- `audit_bid_packages`, `audit_material_orders` — project-scoped
-  tables, standard `log_audit()` (the existing generic trigger already
-  used by `documents`/`committed_costs`, which resolves `project_id`
-  directly since both tables carry it).
-- `audit_bid_submissions`, `audit_bid_questions`, `audit_bid_addenda`,
-  `audit_material_order_line_items` — no direct `project_id` column
-  (only a parent-table FK) — new trigger function
-  `log_audit_via_bid_package()` (resolves `project_id` through
-  `bid_packages`) and `log_audit_via_material_order()` (resolves
-  through `material_orders`), each modeled on P4's
-  `log_audit_via_batch()` precedent.
+- `vendor_members` (Decision 3) + `enforce_vendor_member_org_match()`
+  + `is_vendor_member()` + `vendor_members_no_delete` + RLS + audit.
+- `bid_packages` (Decision 1) + RLS (staff full access;
+  `bid_packages_vendor_read` now via `is_vendor_member()`, not
+  `vendors.profile_id`) + audit.
+- `bid_submissions` (unchanged shape from Revision 1) + RLS (vendor
+  read/update now via `is_vendor_member()`) + audit via
+  `log_audit_via_bid_package()`.
+- `bid_questions` (Decision 8: `source`, `recorded_by` added) + RLS
+  (vendor read/insert via `is_vendor_member()`) + audit.
+- `bid_addenda` (unchanged shape) + RLS (vendor read via
+  `is_vendor_member()`) + audit.
+- `material_orders` (Decision 2: `cost_code_id` now nullable) + RLS
+  (staff-only, no vendor policy, unchanged) + audit.
+- `material_order_line_items` (Decision 2: `project_id`/`cost_code_id`
+  added, composite FK, `enforce_line_item_project_matches_order()`;
+  Decision 10: `enforce_material_order_line_item_frozen_after_commit()`)
+  + RLS (staff-only) + audit via `log_audit_via_material_order()`.
+- `issued_documents` (Decision 4) + `enforce_issued_document_immutability()`
+  + `issued_documents_no_delete` + RLS (staff-only, resolved through
+  `material_orders`/`bid_packages` depending on `document_type`) +
+  audit via `log_audit_via_issued_document()`.
+- RPCs: `award_bid()` (unchanged from Revision 1), `commit_material_order()`
+  (Decision 2: now `returns setof uuid`, groups by cost code),
+  `issue_document()` (Decision 4).
 
 ## RLS policies
 
 Staff: full access on every new table, `is_org_staff(project_id)`
 (resolved directly for `bid_packages`/`material_orders`, through the
-parent for the four child tables), matching every existing
-project-scoped financial table.
+parent for the child tables, and through a `document_type`-conditional
+lookup for `issued_documents`), matching every existing project-scoped
+financial table.
 
-Vendor (new — first real consumer of `is_project_vendor()`):
+Vendor (first real consumer of `is_project_vendor()` *and* the new
+`is_vendor_member()`):
 - `bid_packages_vendor_read`: a vendor may `select` a bid package only
-  if a `bid_submissions` row exists linking their `vendors.id` (via
-  `vendors.profile_id = auth.uid()`) to that package — **not** blanket
-  `is_project_vendor(project_id)` access, since (per Decision 1's
-  reasoning) not every vendor on a project is invited to every bid
-  package.
-- `bid_submissions_vendor_read`/`_vendor_update`: a vendor may
-  `select`/`update` (submit an amount, never change `vendor_id` or
-  `bid_package_id`) only their own row (`vendors.profile_id =
-  auth.uid()`).
+  if a `bid_submissions` row exists linking a vendor they're a member
+  of (`is_vendor_member(bs.vendor_id)`) to that package — **not**
+  blanket `is_project_vendor(project_id)` access, since not every
+  vendor on a project is invited to every bid package.
+- `bid_submissions_vendor_read`/`_vendor_update`: `is_vendor_member(vendor_id)`.
 - `bid_questions_vendor_read`/`_vendor_insert`: read where
-  `visible_to_all_vendors` or `vendor_id` is their own; insert only
-  with their own `vendor_id`, on a package they're invited to.
+  `visible_to_all_vendors` or `vendor_id` is a vendor they're a member
+  of; insert only with `source='vendor_submitted'` (P11, dormant in
+  P5) and their own `vendor_id`, on a package they're invited to.
 - `bid_addenda_vendor_read`: read addenda for a package they're
   invited to.
-- **No vendor policy on `material_orders`/`material_order_line_items`**
-  — procurement is purely internal (staff ordering from a vendor as a
-  supplier, not a vendor bidding), matching `vendors` itself having no
-  vendor-session policy.
+- **No vendor policy on `material_orders`/`material_order_line_items`/
+  `issued_documents`** — procurement and issuance are purely internal.
 
-Every vendor policy gets the roadmap's mandated pair of tests: "Vendor
-A on Project 1 sees nothing on Project 2" and "Vendor A sees nothing
-belonging to Vendor B on the same project/package" — per
-`PRODUCTION-ROADMAP.md`'s vendor-RLS-sequencing rule item 5.
+Every vendor policy gets the roadmap's mandated pair of tests, now
+explicitly including the "two members, one vendor" case: "Vendor A on
+Project 1 sees nothing on Project 2," "Vendor A sees nothing belonging
+to Vendor B on the same project," and (new, per Decision 3) "a second
+authenticated person linked to the *same* `vendors.id` as Vendor A
+sees exactly what Vendor A sees."
 
 ## Server-side operations
 
 Per `TARGET-ARCHITECTURE.md` §5.1/§5.2 and the P4-established
-service/Server-Action split: new
-`packages/02-app-shell/src/services/bidService.ts` and
-`procurementService.ts`, each function taking the caller's own
-`SupabaseClient` first, called by a thin Server Action under
-`apps/web/app/admin/...`.
+service/Server-Action split: `packages/02-app-shell/src/services/bidService.ts`,
+`procurementService.ts`, and a new `documentIssuanceService.ts`
+(Decision 4), each function taking the caller's own `SupabaseClient`
+first, called by a thin Server Action under `apps/web/app/admin/...`.
 
-- `createBidPackage(supabase, projectId, costCodeId, title, scopeDescription?, dueAt?)`,
-  `publishBidPackage(supabase, bidPackageId)` (draft → published),
-  `inviteVendor(supabase, bidPackageId, vendorId)` (inserts the
-  `'invited'` `bid_submissions` row) — `bidService.ts`.
-- `recordBidSubmission(supabase, bidSubmissionId, amountCents, notes?)`
-  (staff records what a vendor quoted by phone/email; sets
-  `status='submitted'`, `submitted_at=now()`) — `bidService.ts`. Plain
-  RLS-gated `.update()`.
-- `awardBid(supabase, bidSubmissionId)` — thin wrapper calling the
-  `award_bid()` RPC — `bidService.ts`.
-- `askBidQuestion` / `answerBidQuestion` / `issueBidAddendum` —
-  `bidService.ts`, plain RLS-gated inserts.
-- `createMaterialOrder(supabase, projectId, costCodeId, vendorId?, orderNumber?, notes?)`,
-  `addMaterialOrderLineItem(supabase, orderId, description, quantity, unit, unitPriceCents)`,
-  `commitMaterialOrder(supabase, orderId)` (thin wrapper over
-  `commit_material_order()`), `recordReceivedQuantity(supabase,
-  lineItemId, receivedQuantity, markBackordered?)` (updates
-  `received_quantity`/`backordered`, then recomputes and persists the
-  parent order's `status` — `received` when every line's
-  `received_quantity = quantity`, `partially_received` when some but
-  not all lines are fully received, unchanged otherwise) —
-  `procurementService.ts`.
-- **PO/subcontract PDF Route Handler** (`GET
+- Bid package/submission/question/addendum functions: unchanged from
+  Revision 1 (`createBidPackage`, `publishBidPackage`, `inviteVendor`,
+  `recordBidSubmission`, `awardBid`, `askBidQuestion` — inserts with
+  `source='staff_recorded'` explicitly; `recorded_by` is left unset in
+  the insert payload and populated by the column's own
+  `default auth.uid()` per Decision 8, never passed as a parameter —
+  `answerBidQuestion`, `issueBidAddendum`).
+- `createMaterialOrder(supabase, projectId, defaultCostCodeId?, vendorId?, orderNumber?, notes?)`
+  — `defaultCostCodeId` is optional and only pre-fills the UI's
+  line-item form (Decision 2); it is never read by `commitMaterialOrder`.
+- `addMaterialOrderLineItem(supabase, orderId, costCodeId, description, quantity, unit, unitPriceCents)`
+  — `costCodeId` is now a required parameter, not inherited implicitly.
+- `commitMaterialOrder(supabase, orderId)` — thin wrapper over
+  `commit_material_order()`; now returns `{ committedCostIds: string[] }`
+  (plural), reflecting the RPC's `setof uuid` return.
+- `recordReceivedQuantity(supabase, lineItemId, receivedQuantity, markBackordered?)`
+  — unchanged from Revision 1.
+- **`documentIssuanceService.ts`** (new, Decision 4):
+  `issuePurchaseOrder(supabase, materialOrderId, documentNumber?)` —
+  builds `canonical_data` from `getMaterialOrderDetail` (project meta,
+  vendor name, every line item with its own cost code/quantity/price),
+  defaults `documentNumber` to the order's `order_number` if the
+  caller doesn't supply one, calls `issue_document('purchase_order', ...)`.
+  `issueSubcontract(supabase, bidPackageId, documentNumber?)` —
+  validates the package's status is `awarded` first (returns `{error}`
+  otherwise — issuing a subcontract for a bid that was never awarded
+  is a service-layer validation, not just a UI affordance), builds
+  `canonical_data` from `getBidPackageDetail` plus the awarded
+  submission, calls `issue_document('subcontract', ...)`.
+  `getLatestIssuedDocument(supabase, documentType, sourceId)` /
+  `getIssuedDocumentVersion(supabase, documentType, sourceId, version)`
+  — read functions the PDF routes call to render a frozen snapshot
+  instead of live data once one exists.
+- **PO/subcontract PDF Route Handlers** (`GET
   /api/procurement/material-orders/[id]/pdf` and `GET
-  /api/bids/[bidPackageId]/subcontract-pdf`, new): server-rendered PDF
-  (reuses whatever PDF library `TARGET-ARCHITECTURE.md` already
-  names for this purpose — if none is named yet, this is a genuine
-  library choice the implementation plan flags as a new dependency,
-  same as P4 flagged `csv-parse`), generated on request from live data,
-  streamed back — not persisted (Decision 3).
+  /api/bids/[bidPackageId]/subcontract-pdf`; both `export const runtime
+  = "nodejs"`, Decision 9): if an `issued_documents` row exists for
+  this source (optionally a specific `?version=`), renders
+  `@react-pdf/renderer` output from its frozen `canonical_data`;
+  otherwise renders a live preview from current data, watermarked
+  "DRAFT — NOT ISSUED." Explicit `AuthorizationError`→403 handling and
+  `renderToBuffer`-failure→500 handling per Decision 9's test
+  requirements — no case is left to fall through to a framework
+  default. Never persists the rendered bytes (Decision 4's own
+  "PDF bytes are still never stored" clause).
+- **`issuePurchaseOrder`/`issueSubcontract` Server Actions** (new,
+  thin wrappers) — the explicit staff action that actually calls
+  `issue_document()`, distinct from merely viewing a preview.
 
 ## UI screens
 
@@ -488,160 +504,174 @@ belong to the prototype reference, not this real-data package),
 operating on "the first project" per the existing limitation P4 also
 inherited and did not fix.
 
-- **`/admin/commitments`** (new route): list of `committed_costs` for
-  the project, grouped by cost code, each row showing status/vendor/
-  amount/source, with a "Supersede" action (opens a small form: new
-  amount + optional new vendor, calls the existing
-  `supersede_committed_cost()` RPC through a new thin Server Action —
-  this RPC has existed since schema/003 and is wired to real UI here
-  for the first time, exactly as the roadmap's acceptance criteria
-  requires).
-- **`/admin/bids`** (new route): bid package list; create-package form;
-  package detail view showing invited vendors/submissions
-  side-by-side for comparison, question/answer log, addenda list, and
-  an "Award" button per submission (only enabled when `status =
-  'submitted'`).
-- **`/admin/procurement`** (new route): material order list; create-
-  order form with line-item entry; order detail view with per-line
-  "Record Received" action and a backorder indicator; "Commit" button
-  (only enabled in `draft` status, calls `commitMaterialOrder`).
+- **`/admin/commitments`**: unchanged in shape from Revision 1 — list
+  of `committed_costs`, "Supersede" action wired to the existing
+  `supersede_committed_cost()` RPC. Now may show several rows sharing
+  the same `source_id` for one material order (Decision 2) — the
+  screen groups by `source_id` when `source_type='material_order'` so
+  staff can see "these N rows are one order" rather than N
+  unrelated-looking entries.
+- **`/admin/bids`**: unchanged core shape from Revision 1
+  (create/publish/invite/compare/award), plus an "Issue Subcontract"
+  action once a submission is `awarded`, and Q&A entries now display
+  their `source`/`recorded_by` explicitly (Decision 8) so staff always
+  see "recorded by [staff name], per a phone call," never text that
+  could be mistaken for the vendor's own submission.
+- **`/admin/procurement`**: line-item entry now includes a required
+  per-line cost-code selector (pre-filled from the order's optional
+  default, per Decision 2), an "Issue PO" action once committed, and
+  the detail view shows a per-cost-code subtotal breakdown alongside
+  the order total, since a single order may now span several cost
+  codes. Full wiring/state/test specification for this screen and
+  `/admin/bids` is in the implementation plan's Tasks 6 and 9
+  (expanded to explicit-spec form per instruction, not inlined here).
 - **Fixture behavior:** unaffected — all three are new routes with no
   fixture equivalent to retire, matching P4's own note about
   `/admin/estimate`/`/admin/import`.
 
 ## Audit events
 
-Every insert/update on all six new tables (per the audit triggers
-above — this closes the same kind of gap P4 closed for
+Every insert/update on all seven new tables (`vendor_members` added in
+this revision) — this closes the same kind of gap P4 closed for
 `import_batches`/`import_rows`, applied here from day one instead of
-retrofitted).
+retrofitted. `issued_documents` additionally: every issuance and every
+revision is independently audit-visible (an `issue_document()` call
+produces both an `insert` audit row for the new version and an
+`update` audit row for the prior version's `superseded_at` — both are
+real, distinct, staff-readable events, not collapsed into one).
 
 ## Action Center events
 
-Per `PRODUCTION-ROADMAP.md`'s P5 line item:
+Per `PRODUCTION-ROADMAP.md`'s P5 line item (unchanged from Revision 1):
 - **Unapproved changes past expected timeframe**: a `bid_packages` row
   in `published` status past its `due_at` with no `awarded` submission,
   or a `material_orders` row in `draft` past some staff-configured
-  staleness window — surfaced the same way existing Action Center
-  events are computed (read-only query, no new event-storage table;
-  matches how other packages' Action Center items are described as
-  computed-on-read in the roadmap).
+  staleness window.
 - **Backordered material**: any `material_order_line_items` row with
-  `backordered = true` and the parent order not yet `received`.
+  `backordered = true` and the parent order not yet `received`. Now
+  also carries that line's `cost_code_id` in the query result (Decision
+  2), so a future real Action Center screen can group backorders by
+  trade, not just by order.
 
 ## Tests
 
-`tests/sql/package_p5_commitments_bids_procurement_tests.sql` (new),
-following `package_p4_estimating_qb_import_tests.sql`'s exact
-structure and reusing its `set_test_user`/`assert_that`/
-`assert_raises`/`test_fixture_ids`/`org_b_admin` fixtures, **plus** a
-new vendor-session fixture (a `profiles` row with `role` allowing
-`project_members.member_role = 'vendor'`, linked via the new
-`vendors.profile_id` column) since this is the first test suite to
-actually exercise `is_project_vendor()` through a real policy:
+`tests/sql/package_p5_commitments_bids_procurement_tests.sql`, same
+structural precedent as Revision 1, expanded for this revision's
+changes:
 
 1. `bid_packages`/`material_orders` composite-FK + staff RLS +
-   cross-org isolation (same shape as every prior package's section 1).
-2. **Vendor RLS, both required axes** (roadmap rule item 5): "Vendor A
-   on Project 1 sees nothing on Project 2" and "Vendor A sees nothing
-   belonging to Vendor B on the same project" — run against
-   `bid_packages`, `bid_submissions`, and `bid_questions`.
-3. `bid_submissions_one_per_vendor_per_package` rejects a second invite
-   of the same vendor to the same package; accepts the first.
-4. `bid_submissions_amount_set_when_submitted` rejects setting
-   `status='submitted'` with `amount_cents is null`; accepts a proper
-   submission.
-5. `award_bid()`: happy path (submitted → awarded, sibling submissions
-   → declined, package → awarded, one `committed_costs` row created
-   with `source_type='bid_award'`); rejects awarding a submission not
-   in `'submitted'` status.
-6. `commit_material_order()`: happy path (draft → ordered, one
-   `committed_costs` row with `source_type='material_order'`, amount =
-   sum of line items); rejects committing an order with zero line
-   items; rejects committing a non-`draft` order.
-7. `material_order_line_items_received_not_over` rejects
-   `received_quantity > quantity`.
-8. Audit visibility: an insert to each of the six new tables produces
-   a real, staff-readable `audit_log` row (same bar P4 set).
-9. Real Postgres re-run of `committed_forecast_hardening_tests.sql`
-   "in context" (per the roadmap's own P5 test line) — confirms
-   `supersede_committed_cost()` still behaves correctly once real
-   `award_bid()`/`commit_material_order()` writes exist alongside it,
-   not just in isolation.
+   cross-org isolation.
+2. **Vendor RLS, all three required cases**: cross-project, cross-vendor,
+   and (new) "two members of the same vendor see the same data" —
+   using `vendor_members` + `is_vendor_member()` instead of Revision
+   1's `vendors.profile_id`.
+3. `enforce_vendor_member_org_match()` rejects linking a profile from
+   org B to a vendor owned by org A.
+4. `bid_submissions_one_per_vendor_per_package` /
+   `bid_submissions_amount_set_when_submitted` — unchanged from
+   Revision 1.
+5. `award_bid()` happy path + reject-non-submitted — unchanged.
+6. **`commit_material_order()` with line items spanning two different
+   cost codes** — happy path now asserts *two* `committed_costs` rows
+   are created, correctly summed per cost code, both sharing
+   `source_id`; rejects zero line items; rejects a non-`draft` order.
+7. `enforce_line_item_project_matches_order()` rejects a line item
+   whose `project_id` doesn't match its order's.
+8. `enforce_material_order_line_item_frozen_after_commit()`: rejects
+   inserting/updating/deleting a committed-fields change on a line
+   item once the order isn't `draft`; confirms `received_quantity`/
+   `backordered` updates are still accepted post-commit.
+9. `material_order_line_items_received_not_over` — unchanged.
+10. `bid_questions_staff_recorded_requires_recorder` rejects a
+    `source='staff_recorded'` row with `recorded_by is null`.
+11. `issue_document()`: first issuance creates version 1; a second
+    call for the same source creates version 2 and marks version 1
+    superseded (`superseded_by_id` pointing at the new row);
+    `enforce_issued_document_immutability()` rejects a direct `update`
+    to `canonical_data` on an existing row.
+12. `issued_documents` staff-only RLS + cross-org isolation, for both
+    `document_type` values (proves the conditional
+    `material_orders`-vs-`bid_packages` lookup resolves correctly for
+    each).
+13. Audit visibility across all seven new tables (same bar P4 set).
+14. Real Postgres re-run of `committed_forecast_hardening_tests.sql`
+    "in context" — unchanged from Revision 1.
 
-New files added to `scripts/db/run-sql-tests.mjs`'s `FILES` array (the
-migration and its test file), positioned after
-`schema/014_import_amount_canonicalization_and_audit_attribution.sql`
-and `tests/sql/package_p4_estimating_qb_import_tests.sql` respectively.
-
-`apps/web` test: a new `apps/web/test/procurement_totals_unit.ts`
-covering the line-item total/received-status derivation logic in
-isolation (matches quantity, over-partial, exact-match-closes-order,
-zero-line-items cases) — fast, no server, same style as
-`import_parse_unit.ts`.
+New files added to `scripts/db/run-sql-tests.mjs`'s `FILES` array as
+before. `apps/web` test additions: `procurement_totals_unit.ts`
+(unchanged scope) plus PDF-route authorization/failure-path tests
+(Decision 9) under whichever existing Route Handler test convention
+this repo uses (check for precedent before inventing a new one — see
+implementation plan Task 10).
 
 ## CI requirements
 
-Extends the existing `test:db` job with the new migration/test file —
-no new CI job needed, same ephemeral-PGlite job P1 set up and P4
-reused. `procurement_totals_unit.ts` added to whichever `npm run test`
-step already runs `import_parse_unit.ts`.
+Unchanged from Revision 1: extends the existing `test:db` job, no new
+CI job needed.
 
 ## Deployment requirements
 
-None new — same Vercel/Supabase projects as P1–P4. Migration 015 gets
-applied to and end-to-end-tested against the real hosted dev Supabase
-project, exactly as 001–014 were, before this package is considered
-complete.
+Unchanged from Revision 1: same Vercel/Supabase projects, migration
+015 applied and end-to-end-tested against the real hosted dev project
+before completion.
 
 ## Acceptance criteria
 
 1. A commitment can be created (via `award_bid()` or
-   `commit_material_order()`), superseded (via the existing
-   `supersede_committed_cost()`, now wired to real UI), and its lineage
-   remains correct and queryable — through the UI, not just direct SQL
-   (roadmap's own stated acceptance bar).
+   `commit_material_order()`), superseded, and its lineage remains
+   correct and queryable through the UI.
 2. A bid package with two vendor submissions, awarding one, leaves the
-   other `declined` and produces exactly one `committed_costs` row —
-   proven by an actual award through the UI.
-3. A material order's committed amount equals the live sum of its line
-   items at commit time, and later line-item price/quantity edits
-   (there are none post-commit — Decision-consistent: a committed
-   order's line items become as frozen as a posted expense's fields,
-   enforced the same "raise a clear exception" way as
-   `enforce_expense_state_transition`) never silently change the
-   already-committed number.
-4. A vendor test session (using the new `vendors.profile_id` link) can
-   read only their own invited bid packages/submissions — proven by
-   both required isolation-test axes, not just the single-axis version.
-5. A material order with one backordered line item surfaces as a
+   other `declined` and produces exactly one `committed_costs` row.
+3. **A material order with line items across two cost codes, once
+   committed, produces exactly two `committed_costs` rows — one per
+   cost code, correctly summed, sharing `source_id` — proven through
+   the UI, not just direct SQL.**
+4. **A material order line item's cost code, quantity, description,
+   and unit price can never be edited or deleted once its parent
+   order leaves `draft` — proven by an actual attempted edit through
+   the service layer being rejected by the database, not merely
+   absent from the UI — while `received_quantity`/`backordered`
+   remain editable at any post-commit status.**
+5. **Two different authenticated test sessions, both linked via
+   `vendor_members` to the same `vendors.id`, can each read that
+   vendor's own invited bid packages/submissions; a third session
+   linked to a different vendor reads none of it — proven by all three
+   required isolation axes, not just the original two.**
+6. **Issuing a PO twice for the same material order (once, then again
+   after a change) produces two `issued_documents` rows, version 1
+   marked superseded by version 2, and the PDF route serving version 1
+   explicitly (`?version=1`) still renders the original numbers even
+   after the order's live data has changed.**
+7. A material order with one backordered line item surfaces as a
    distinct Action Center event, separate from the order's own overall
    status.
-6. Every new table's writes produce a real, staff-readable `audit_log`
-   row — proven by an actual query, matching P4's own bar.
-7. `npm ci`/`typecheck`/`test`/`build` all pass from a clean install,
-   migration 015 applies cleanly to the real hosted dev project
-   alongside 001–014.
+8. Every new table's writes produce a real, staff-readable `audit_log`
+   row.
+9. **The PO/subcontract PDF routes return 403 (not 500) for an
+   authenticated non-staff session, 404 for a nonexistent id, and a
+   safe generic 500 (no internal detail) for a forced rendering
+   failure — proven by actual requests, not code review.**
+10. `npm ci`/`typecheck`/`test`/`build` all pass from a clean install,
+    migration 015 applies cleanly to the real hosted dev project
+    alongside 001–014.
 
 ## Dependencies
 
 P3 (vendor RLS foundation, via P1's consolidation), P4 (budget to
-commit against — `committed_costs` needs cost codes and a budget
-context to be meaningful even though it doesn't FK to `budget_ledger`
-directly).
+commit against).
 
 ## Explicit exclusions
 
-No vendor-facing UI (P11) — every vendor policy added here is
-correct and tested but has no real session to exercise it with until
-P11 populates `vendors.profile_id` through an actual invitation flow.
-No draws/invoices/payments (P6/P6b) — a committed cost is not billed
-in this package. No change orders (P7) — a commitment amount change
-after award goes through `supersede_committed_cost()`, the same path
-any other commitment revision uses; a *scope* change significant
-enough to need client approval is P7's concern, not P5's. No document/
-file persistence for generated POs or vendor-submitted bid files
-(Decision 3) — deferred to P9/P11 as a deliberate, flagged choice, not
-a silent gap. No change to `AdminFinancialsScreen`'s existing rollup —
-`committed_costs` already flows into it (P1); P5 only gives it real
-rows to render for the first time.
+No vendor-facing UI (P11) — every vendor policy added here is correct
+and tested but has no real session to exercise it with until P11
+actually links `vendor_members` rows through a real invitation flow.
+No draws/invoices/payments (P6/P6b). No change orders (P7) — a
+commitment amount change after award goes through
+`supersede_committed_cost()`. No persisted PDF *bytes* for generated
+POs or vendor-submitted bid files (Decision 4's own explicit "the
+rendered bytes are still never stored" clause) — only the canonical
+data snapshot is persisted, deliberately, not the rendered document
+itself; re-rendering depends on template stability (Decision 4's
+caveat). No mechanism to end a `vendor_members` link (no delete, no
+deactivation flag) — out of scope until P11 has a reason to need one.
+No change to `AdminFinancialsScreen`'s existing rollup.
