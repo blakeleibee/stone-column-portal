@@ -23,6 +23,8 @@ drop table if exists material_orders;
 drop type if exists material_order_status;
 
 drop trigger if exists audit_bid_addenda on bid_addenda;
+drop trigger if exists bid_addenda_issued_by_self on bid_addenda;
+drop function if exists public.enforce_bid_addendum_issued_by_self();
 drop table if exists bid_addenda;
 
 drop trigger if exists audit_bid_questions on bid_questions;

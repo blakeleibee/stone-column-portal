@@ -58,13 +58,21 @@ language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
+  if tg_op = 'INSERT' then
+    if new.revoked_at is not null and new.revoked_by is distinct from auth.uid() then
+      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when inserting an already-revoked row — got % (row %).',
+        auth.uid(), new.revoked_by, new.id;
+    end if;
+    return new;
+  end if;
+
   if new.vendor_id is distinct from old.vendor_id or new.profile_id is distinct from old.profile_id then
     raise exception 'vendor_members.vendor_id/profile_id are immutable after insert (row %) — revoke and reactivate the existing membership instead of reassigning it.', old.id;
   end if;
 
-  if new.revoked_at is distinct from old.revoked_at then
+  if new.revoked_by is distinct from old.revoked_by or new.revoked_at is distinct from old.revoked_at then
     if new.revoked_at is not null and new.revoked_by is distinct from auth.uid() then
-      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when revoking — got %.', auth.uid(), new.revoked_by;
+      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when revoking — got % (row %).', auth.uid(), new.revoked_by, old.id;
     end if;
     if new.revoked_at is null then
       new.revoked_by := null;
@@ -76,7 +84,7 @@ end;
 $$;
 
 create trigger vendor_members_identity_and_revocation
-  before update on vendor_members
+  before insert or update on vendor_members
   for each row execute function public.enforce_vendor_member_identity_and_revocation();
 
 -- Revision 3: filters to ACTIVE membership. Every RLS policy in this
@@ -328,8 +336,10 @@ create trigger audit_bid_questions after insert or update on bid_questions
   for each row execute function public.log_audit_via_bid_package();
 
 -- ---------------------------------------------------------------------
--- Bid addenda: inherently staff-issued — no impersonation risk, no
--- source/recorded_by fields needed (issued_by already exists).
+-- Bid addenda: inherently staff-issued, no source/recorded_by enum
+-- needed (only one possible author role) — but issued_by is still just
+-- as spoofable via a direct table write as bid_questions.recorded_by
+-- was. Same trigger-based fix as bid_questions.
 -- ---------------------------------------------------------------------
 create table bid_addenda (
   id             uuid primary key default uuid_generate_v4(),
@@ -356,6 +366,30 @@ create policy bid_addenda_vendor_read on bid_addenda
       where bs.bid_package_id = bid_addenda.bid_package_id and is_vendor_member(bs.vendor_id)
     )
   );
+
+create or replace function public.enforce_bid_addendum_issued_by_self() returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.issued_by is distinct from auth.uid() then
+      raise exception 'bid_addenda.issued_by must equal the inserting session''s own auth.uid() (%) — got %.',
+        auth.uid(), new.issued_by;
+    end if;
+    return new;
+  end if;
+
+  if new.issued_by is distinct from old.issued_by then
+    raise exception 'bid_addenda.issued_by is immutable after insert (row %) — provenance is set once, never reassigned.', old.id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bid_addenda_issued_by_self
+  before insert or update on bid_addenda
+  for each row execute function public.enforce_bid_addendum_issued_by_self();
 
 create trigger audit_bid_addenda after insert or update on bid_addenda
   for each row execute function public.log_audit_via_bid_package();
@@ -582,6 +616,14 @@ language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
+  if tg_op = 'INSERT' then
+    if new.issued_by is distinct from auth.uid() then
+      raise exception 'issued_documents.issued_by must equal the inserting session''s own auth.uid() (%) — got %. Issue documents through issue_document(), which sets this automatically.',
+        auth.uid(), new.issued_by;
+    end if;
+    return new;
+  end if;
+
   if new.canonical_data is distinct from old.canonical_data
     or new.document_number is distinct from old.document_number
     or new.version is distinct from old.version
@@ -597,7 +639,7 @@ begin
 end;
 $$;
 
-create trigger issued_documents_immutable before update on issued_documents
+create trigger issued_documents_immutable before insert or update on issued_documents
   for each row execute function public.enforce_issued_document_immutability();
 
 create trigger issued_documents_no_delete before delete on issued_documents
