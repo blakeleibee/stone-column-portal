@@ -1,14 +1,45 @@
 # P5 — Commitments, Bids (PM-side), Procurement & Material Orders — Design Record
 
-**Status:** Design only. Not yet implemented. Awaiting review/approval
-before `docs/superpowers/plans/2026-08-14-p5-commitments-bids-procurement.md`
-is executed. **Revision 2** (this version) responds to explicit owner
-review of Revision 1: material orders now allocate cost at the line
-level, vendor identity is a real many-to-many membership rather than a
-single column, PO/subcontract issuance now produces an immutable
-versioned snapshot, and staff-recorded bid Q&A carries explicit
-author/source provenance. Revision 1's text is not preserved inline —
-see git history on this file for the prior version if needed. Full
+**Status:** Design approved in direction; this revision is a targeted
+hardening pass before implementation begins.
+`docs/superpowers/plans/2026-08-14-p5-commitments-bids-procurement.md`
+is executed immediately after this revision lands. **Revision 3** (this
+version) closes five specific gaps identified in owner review of
+Revision 2, triaged honestly below rather than treated as uniformly
+"new work" — two were genuine, unenforced gaps; one was a real security
+hole (a DB default is not a boundary); one was already fully enforced
+and needed only explicit documentation, not a schema change; one
+reframes an existing caveat rather than solving a problem P5 was never
+going to solve:
+
+1. **Genuinely new:** `vendor_members` had no way to revoke access
+   without deleting history. Added `revoked_at`/`revoked_by` plus a
+   trigger, and `is_vendor_member()` now filters on active status.
+2. **Genuinely new:** `commit_material_order()` returned bare,
+   unordered UUIDs — a caller had no reliable way to know which
+   `committed_costs` row belonged to which cost code without a second
+   query. Now returns `table(cost_code_id, committed_cost_id)` directly.
+3. **Already fully enforced, not changed:** the post-commit freeze
+   (Decision 10) already protected exactly the right fields and left
+   exactly the right fields mutable. This revision only makes the
+   field list explicit and states it as a table — see Decision 10.
+4. **A real gap, now fixed:** `bid_questions.recorded_by default
+   auth.uid()` is a *default*, not a *constraint* — nothing stopped an
+   explicit insert payload from overriding it. Added a trigger that
+   rejects any value other than the inserting session's own
+   `auth.uid()`, and makes the field immutable after insert.
+5. **Genuinely new, and a scope clarification:** `issued_documents`
+   now records `template_version`; a small per-template renderer
+   registry keyed by that version is the mechanism that keeps old
+   snapshots renderable after a template changes. P5's reproduction
+   guarantee is explicitly redefined as **content/layout-equivalent**,
+   not byte-identical — true byte-identical archival would require
+   persisting the rendered file itself, which remains out of scope
+   until a package that actually needs it (the owner named P9) does
+   that. Revision 2's "byte-for-byte" language is corrected throughout.
+
+Revision 2's own text is not preserved inline — see git history on
+this file for prior versions if needed. Full
 scope reference: `docs/production-build/PRODUCTION-ROADMAP.md`
 §"Package P5"; governing cross-package constraint:
 `docs/production-build/FINANCIAL-ARCHITECTURE.md` (the permanent-backbone
@@ -98,8 +129,14 @@ vendor ever logs into anything P5 ships.
      exact same "one event, several backbone rows, shared `source_id`"
      shape `FINANCIAL-ARCHITECTURE.md` already documents for change
      orders touching multiple cost codes (§"How money flows," step 6).
-     The RPC's return type changes from `returns uuid` to `returns
-     setof uuid` accordingly.
+     The RPC's return type changes from `returns uuid` to **`returns
+     table(cost_code_id uuid, committed_cost_id uuid)`** — not the
+     unordered `returns setof uuid` this design originally specified.
+     A bare `setof uuid` would force every caller to run a second query
+     just to learn which `committed_costs` row belongs to which cost
+     code; returning the mapping directly makes that association a
+     guaranteed part of the RPC's contract, not something the caller
+     has to reconstruct and hope stays correctly ordered.
    - Receiving/backorder tracking was already per-line-item in
      Revision 1 and needed no change here — it was already the
      correct granularity; only the cost-code allocation was wrong.
@@ -117,11 +154,29 @@ vendor ever logs into anything P5 ships.
      vendor_id   uuid not null references vendors(id) on delete cascade,
      profile_id  uuid not null references profiles(id) on delete cascade,
      is_primary  boolean not null default false,
+     revoked_at  timestamptz,
+     revoked_by  uuid references profiles(id),
      created_at  timestamptz not null default now(),
      constraint vendor_members_unique_pair unique (vendor_id, profile_id)
    );
    ```
-   **Isolation is enforced at four distinct layers, each independently
+   **Revocation, added this revision — a real gap, not a stylistic
+   choice:** Revision 2 shipped `vendor_members_no_delete` (correctly —
+   membership history must never vanish) but had **no way to revoke
+   access at all**, meaning a departed employee's login would remain a
+   valid vendor session indefinitely. `revoked_at`/`revoked_by`
+   (`null` = active, matching this schema's established idiom —
+   `committed_costs.superseded_at`, `bid_questions.answered_at` — of a
+   nullable timestamp meaning "hasn't happened yet," not a second,
+   independently-driftable boolean) fix this without touching the
+   "never delete" posture: a membership row's full lifecycle stays
+   permanently queryable, it just carries a revoked state instead of
+   ceasing to exist. Re-adding a previously-revoked person clears
+   `revoked_at`/`revoked_by` on the *same* row (`vendor_members_unique_pair`
+   would otherwise block a second insert for that `(vendor_id,
+   profile_id)` pair) — one continuous history per person-per-vendor,
+   not a new disconnected row per re-invitation.
+   **Isolation is enforced at five distinct layers, each independently
    testable, per the explicit requirement that this be database-
    enforced, not just RLS-shaped:**
    - **Org isolation** — a new `before insert or update` trigger,
@@ -143,17 +198,47 @@ vendor ever logs into anything P5 ships.
      same data (the actual "multiple people, one business"
      requirement); a person linked to a *different* vendor sees
      nothing, exactly as before.
+   - **Active-membership isolation, added this revision** —
+     `is_vendor_member()`'s body now filters `and revoked_at is null`.
+     Every policy in this design calls this one helper rather than
+     inlining the join, so this single change is what makes "all
+     membership helpers must require active membership" true across
+     every vendor-facing policy in P5 at once, not something each
+     policy has to separately remember — a revoked person loses access
+     to every table the moment their row is revoked, with zero
+     per-policy changes needed anywhere else in this migration.
+   - **Identity/attribution immutability, added this revision** — a
+     new trigger, `enforce_vendor_member_identity_and_revocation()`,
+     (a) rejects any `update` that changes `vendor_id`/`profile_id`
+     after insert (a membership link's identity is fixed at creation;
+     revoke-and-recreate is the only way to "move" one, and recreate
+     here means reactivating the existing unique row, not inserting a
+     new one), and (b) requires `revoked_by = auth.uid()` at the exact
+     moment `revoked_at` transitions from `null` to non-null — the
+     same anti-spoofing principle Decision 8 applies to
+     `bid_questions.recorded_by`, applied here proactively rather than
+     waiting for a second review round to catch the identical class of
+     gap. Reactivation (`revoked_at` cleared back to `null`) clears
+     `revoked_by` too, so a stale attribution never lingers on an
+     active row.
    - **No delete, ever** — `vendor_members_no_delete` (same
      `reject_delete()` trigger every other permanent-record table in
      this schema uses), so a later audit-log row referencing a
-     membership can never point at a vanished row. A membership that
-     needs to end is out of P5's scope (no UI exists to end one yet);
-     when P11 needs that, it adds an `is_active` flag or equivalent,
-     not a hard delete.
+     membership can never point at a vanished row. Revocation (above)
+     is now the actual mechanism for "this person no longer has
+     access," making the delete prohibition load-bearing rather than
+     merely aspirational — before this revision, "no delete" combined
+     with "no revoke" meant a departed person's access could
+     realistically never be turned off.
    RLS: `vendor_members_staff_full_access` (org-staff of the vendor's
-   own org); `vendor_members_self_read` (a member reads their own
-   membership rows — harmless, and lets a future vendor session know
-   which business(es) they represent). Audit via
+   own org — this is also the mutation path for revoking/reactivating:
+   a plain, RLS-gated `update` setting `revoked_at`/`revoked_by`, not a
+   dedicated RPC, since it's a single-row change with no cross-table
+   atomicity need); `vendor_members_self_read` (a member reads their
+   own membership rows, including a revoked one — seeing "you were
+   revoked" is useful, and this policy governs visibility of the
+   historical record, not active-session authorization, so it
+   deliberately does *not* filter on `revoked_at`). Audit via
    `log_audit_no_project()` (org-scoped, no `project_id`, same as
    `vendors` itself) plus the matching `audit_log` SELECT policy
    `audit_log_vendor_members_staff_select`, following the exact
@@ -161,8 +246,10 @@ vendor ever logs into anything P5 ships.
    `project_id` column.
    **Forward-compatibility for P11:** when a real vendor invitation
    flow ships, it inserts a `vendor_members` row (never repurposes an
-   existing one) — the schema already supports one business having any
-   number of logins from day one, so P11 adds a UI, not a migration.
+   existing one, except to reactivate a previously-revoked pairing for
+   the same person/vendor) — the schema already supports one business
+   having any number of logins, added or revoked, from day one, so P11
+   adds a UI, not a migration.
 
 4. **Issuing a PO or subcontract creates an immutable, versioned
    snapshot row — `issued_documents` — even though the rendered PDF
@@ -171,8 +258,19 @@ vendor ever logs into anything P5 ships.
    owner instruction: *generating* a PDF (a preview, before anything
    is finalized) stays ephemeral exactly as before, but *issuing* one
    — the act of actually sending a PO or subcontract to a vendor — is
-   a real business event that must be reproducible later byte-for-byte,
-   not just "whatever the database happens to say today."
+   a real business event whose data must be reproducible later, not
+   just "whatever the database happens to say today."
+   **P5's reproducibility guarantee, defined precisely this revision**
+   (replacing Revision 2's looser "byte-for-byte" language, which
+   overstated what this design actually delivers): **content/layout-
+   equivalent reproduction** — the same `canonical_data`, rendered
+   through the *same template version* that produced the original,
+   yields the same numbers, line items, and document structure. This
+   is explicitly **not** pixel-identical/byte-identical reproduction
+   of the originally-rendered file, which would require persisting the
+   rendered bytes themselves — out of scope for P5, deferred to
+   whichever future package actually needs a true archival copy (P9,
+   per direction).
    ```sql
    create type issued_document_type as enum ('purchase_order', 'subcontract');
 
@@ -182,6 +280,7 @@ vendor ever logs into anything P5 ships.
      source_id        uuid not null, -- material_orders.id or bid_packages.id
      document_number  text not null,
      version          integer not null default 1,
+     template_version text not null,
      issued_at        timestamptz not null default now(),
      issued_by        uuid references profiles(id),
      canonical_data   jsonb not null,
@@ -206,34 +305,62 @@ vendor ever logs into anything P5 ships.
    as a caller-supplied parameter — the same anti-impersonation
    reasoning as Decision 8 below, applied here so an issuance record
    can never be forged to claim a different issuer.
+   **`template_version`, added this revision, is what actually makes
+   "historical template versions remain renderable" a mechanism rather
+   than a hope.** Each PDF template module (`MaterialOrderPdf.tsx`/
+   `SubcontractPdf.tsx`) exports its own current version string (e.g.
+   `MATERIAL_ORDER_PDF_TEMPLATE_VERSION = "1"`); `documentIssuanceService.ts`
+   passes it to `issue_document()` at issuance time, and it is frozen
+   into the row alongside `canonical_data`, protected by the same
+   immutability trigger. The PDF route resolves which component to
+   render through a small registry keyed by that exact string (e.g.
+   `MATERIAL_ORDER_PDF_RENDERERS: Record<string, Component>`), not by
+   always calling "whatever the current template file exports." The
+   convention going forward: a template change that would alter
+   layout/structure for existing data bumps the version string and
+   *adds* a new registry entry rather than replacing the old
+   component — the old renderer stays in the codebase and in the
+   registry, so a snapshot issued under version `"1"` keeps rendering
+   through version `"1"`'s own component indefinitely, even after
+   version `"2"` becomes current. P5 ships exactly one template
+   version each for POs and subcontracts, so this mechanism has only
+   one entry to prove today — but the dispatch-by-version-string
+   design, and an explicit test for the "unrecognized template_version"
+   failure path (Task 10), are what make the *claim* "historical
+   versions remain renderable" backed by an actual code path now,
+   rather than deferred to whenever a second version first ships.
    A new trigger, `enforce_issued_document_immutability()`, rejects any
    `update` that changes `canonical_data`/`document_number`/`version`/
-   `document_type`/`source_id`/`issued_at`/`issued_by` — the only
-   fields ever allowed to change post-insert are
+   `template_version`/`document_type`/`source_id`/`issued_at`/`issued_by`
+   — the only fields ever allowed to change post-insert are
    `superseded_at`/`superseded_by_id`, set exactly once by
    `issue_document()`'s own next call. No delete, ever, same reasoning
    as `vendor_members`.
    **The PDF route's behavior changes accordingly** (see "Server-side
    operations" below): once an `issued_documents` row exists, the PDF
-   route renders from its frozen `canonical_data`, not live database
-   state — this is what makes "reproduce the exact issued document"
-   true. Before anything is issued, the route still renders a live
-   preview, watermarked "DRAFT — NOT ISSUED," so staff can review
-   before committing to an official issuance.
-   **One honest caveat, not glossed over** (matching
-   `FINANCIAL-ARCHITECTURE.md`'s own convention for stating these
-   plainly): byte-for-byte reproducibility from a snapshot assumes the
-   PDF *template* code itself doesn't change in a way that alters
-   layout for old data. `canonical_data` freezes the *inputs*; it does
-   not freeze the *renderer*. If `MaterialOrderPdf.tsx`/
-   `SubcontractPdf.tsx` are ever restyled, a re-render of an old
-   snapshot will reflect the new styling, not the original document's
-   appearance. This is judged acceptable for P5 (the actual dollar
-   amounts and terms in `canonical_data` are what must never drift,
-   and they don't) but is flagged here explicitly rather than silently
-   assumed — a future package that needs true pixel-identical
-   archival reproduction would need to store the rendered bytes too,
-   which this design deliberately still does not do.
+   route renders from its frozen `canonical_data` through its frozen
+   `template_version`'s own renderer, not live database state or the
+   current template file — this is what makes content/layout-
+   equivalent reproduction true in practice, not just in principle.
+   Before anything is issued, the route still renders a live preview
+   through the *current* template version, watermarked "DRAFT — NOT
+   ISSUED," so staff can review before committing to an official
+   issuance.
+   **One honest caveat, kept from Revision 2 but now scoped correctly**
+   (matching `FINANCIAL-ARCHITECTURE.md`'s own convention for stating
+   these plainly): `canonical_data` plus `template_version` together
+   freeze everything this design guarantees — the *content and layout*
+   of the issued document. They do not freeze incidental rendering
+   details a future `@react-pdf/renderer` version upgrade could
+   theoretically shift (font substitution, sub-pixel spacing) without
+   bumping `template_version`, since those are renderer-library
+   concerns, not template-code concerns. This residual gap is
+   accepted for P5 specifically because the reproducibility bar this
+   revision sets is content/layout-equivalence, not byte-identity — a
+   future package targeting true byte-identical archival would need to
+   also pin/version the renderer library per snapshot (or simply store
+   the rendered bytes, the more direct fix, per this decision's own
+   opening paragraph), neither of which P5 does.
 
 5. **A new `committed_costs.source_type` value, `material_order`,
    remains registered** in `FINANCIAL-ARCHITECTURE.md`'s registry
@@ -290,13 +417,53 @@ vendor ever logs into anything P5 ships.
    insert policy sets it and leaves `recorded_by` null — a vendor's own
    `auth.uid()` is implicit in that row via the *same* `is_vendor_member()`
    check already governing read access, not a separate impersonation
-   surface). `recorded_by default auth.uid()` means the service layer
-   never has to (and cannot be trusted to) pass "who is recording
-   this" as a parameter — it is always the actual authenticated
-   session's own id, evaluated server-side at insert time, the same
-   anti-spoofing reasoning `issue_document()` uses for `issued_by`
-   (Decision 4), just expressed as a column default here since this is
-   a plain insert rather than an RPC. `asked_at` records when the vendor reportedly asked (per
+   surface).
+   **A real gap, closed this revision:** Revision 2 relied on
+   `recorded_by default auth.uid()` alone to establish provenance —
+   but a *default* only fills in a value the caller omits; it does
+   **not** stop a caller from explicitly supplying a different
+   `recorded_by` in the same insert payload. That is a default, not a
+   boundary — the distinction the owner's review correctly called out.
+   A new trigger, `enforce_bid_question_recorded_by_self()`, closes
+   this at the database itself:
+   ```sql
+   create or replace function public.enforce_bid_question_recorded_by_self() returns trigger
+   language plpgsql
+   set search_path = public, pg_temp
+   as $$
+   begin
+     if tg_op = 'INSERT' then
+       if new.source = 'staff_recorded' and new.recorded_by is distinct from auth.uid() then
+         raise exception 'bid_questions.recorded_by must equal the inserting session''s own auth.uid() (%) for staff_recorded rows — got %.',
+           auth.uid(), new.recorded_by;
+       end if;
+       if new.source = 'vendor_submitted' and new.recorded_by is not null then
+         raise exception 'bid_questions.recorded_by must be null for vendor_submitted rows — a vendor-submitted question has no staff recorder.';
+       end if;
+       return new;
+     end if;
+     -- UPDATE: provenance is set once at insert, never reassigned — an
+     -- answer changes answer_text/answered_by/answered_at, never who
+     -- originally asked/recorded the question.
+     if new.recorded_by is distinct from old.recorded_by or new.source is distinct from old.source then
+       raise exception 'bid_questions.recorded_by/source are immutable after insert (row %) — provenance is set once, never reassigned.', old.id;
+     end if;
+     return new;
+   end;
+   $$;
+   ```
+   The column default is kept (it is still the convenient common case —
+   an ordinary insert that omits `recorded_by` gets the correct value
+   automatically) but the trigger, not the default, is what actually
+   makes impersonation impossible: even a caller that explicitly tries
+   to set `recorded_by` to someone else's id is rejected, at the
+   database boundary, regardless of what the service layer does or
+   fails to do. `issued_by` on `issued_documents` (Decision 4) never
+   had this gap in the first place — it is set *inside* the RPC body
+   with no caller-facing parameter to spoof at all, which is actually a
+   stronger pattern than a column default; `bid_questions` uses a
+   trigger instead because it is a plain table insert, not an RPC, so
+   there is no RPC body to hide the assignment inside. `asked_at` records when the vendor reportedly asked (per
    staff, possibly by phone yesterday); the row's own `created_at`
    (implicit, not separately named) records when it was actually
    entered — keeping "what the vendor said" and "when this became a
@@ -358,15 +525,35 @@ vendor ever logs into anything P5 ships.
     directly, but necessary once material orders can produce multiple
     `committed_costs` rows (an unenforced post-commit edit would now
     silently desynchronize potentially several backbone rows at once,
-    not just one). A new trigger,
+    not just one).
+    **Confirmed on this revision's review: already fully enforced
+    exactly as specified — no schema change made here.** The owner's
+    hardening instruction asked that the freeze "protect financial
+    identity and amounts without blocking permitted receipt/backorder
+    tracking" and asked for the exact mutable-field list to be stated.
+    Both are already true of the Revision 2 trigger; this entry now
+    states the list explicitly rather than leaving it implicit in
+    prose, so there is no ambiguity to re-derive later:
+
+    | Field | Mutable once `status <> 'draft'`? | Why |
+    |---|---|---|
+    | `id` | No (never, at any status) | Primary key |
+    | `material_order_id` | No | Identity — which order this line belongs to |
+    | `project_id` | No | Identity — backbone FK correctness |
+    | `cost_code_id` | No | **Financial identity** — which `committed_costs` row this line's dollars already landed in |
+    | `quantity` | No | **Amount input** — already summed into a frozen `committed_costs.amount_cents` |
+    | `unit_price_cents` | No | **Amount input** — same reason as `quantity` |
+    | `description` | No | Frozen alongside the above for one consistent record of what was actually ordered at commit time |
+    | `unit` | No | Same reasoning as `description` |
+    | `received_quantity` | **Yes, always** | The entire point of receiving — only meaningful *after* an order is placed |
+    | `backordered` | **Yes, always** | Same reasoning as `received_quantity` |
+
+    A new trigger,
     `enforce_material_order_line_item_frozen_after_commit()`, covers
     all three operations: blocks `insert` of a new line item once the
-    parent order's `status <> 'draft'`; blocks `update` of
-    `description`/`quantity`/`unit`/`unit_price_cents`/`cost_code_id`/
-    `project_id`/`material_order_id` once `status <> 'draft'` (
-    `received_quantity`/`backordered` remain freely updatable — that's
-    the entire point of receiving, which only happens *after* an order
-    is placed); blocks `delete` once `status <> 'draft'`. Style matches
+    parent order's `status <> 'draft'`; blocks `update` of any row in
+    the "No" column above once `status <> 'draft'`; blocks `delete`
+    once `status <> 'draft'`. Style matches
     `enforce_expense_state_transition`'s precedent exactly: a specific,
     row-identifying exception message naming what changed and why it's
     rejected.
@@ -381,15 +568,19 @@ Full SQL for every table/trigger/RPC above lives in the implementation
 plan (Task 1) rather than duplicated here — this section is the
 narrative map of what the migration contains, not a second copy of it:
 
-- `vendor_members` (Decision 3) + `enforce_vendor_member_org_match()`
-  + `is_vendor_member()` + `vendor_members_no_delete` + RLS + audit.
+- `vendor_members` (Decision 3: `revoked_at`/`revoked_by` added this
+  revision) + `enforce_vendor_member_org_match()` +
+  `enforce_vendor_member_identity_and_revocation()` + `is_vendor_member()`
+  (now filters `revoked_at is null`) + `vendor_members_no_delete` + RLS
+  + audit.
 - `bid_packages` (Decision 1) + RLS (staff full access;
   `bid_packages_vendor_read` now via `is_vendor_member()`, not
   `vendors.profile_id`) + audit.
 - `bid_submissions` (unchanged shape from Revision 1) + RLS (vendor
   read/update now via `is_vendor_member()`) + audit via
   `log_audit_via_bid_package()`.
-- `bid_questions` (Decision 8: `source`, `recorded_by` added) + RLS
+- `bid_questions` (Decision 8: `source`, `recorded_by` added, plus
+  `enforce_bid_question_recorded_by_self()` added this revision) + RLS
   (vendor read/insert via `is_vendor_member()`) + audit.
 - `bid_addenda` (unchanged shape) + RLS (vendor read via
   `is_vendor_member()`) + audit.
@@ -399,13 +590,16 @@ narrative map of what the migration contains, not a second copy of it:
   added, composite FK, `enforce_line_item_project_matches_order()`;
   Decision 10: `enforce_material_order_line_item_frozen_after_commit()`)
   + RLS (staff-only) + audit via `log_audit_via_material_order()`.
-- `issued_documents` (Decision 4) + `enforce_issued_document_immutability()`
+- `issued_documents` (Decision 4: `template_version` added this
+  revision) + `enforce_issued_document_immutability()`
   + `issued_documents_no_delete` + RLS (staff-only, resolved through
   `material_orders`/`bid_packages` depending on `document_type`) +
   audit via `log_audit_via_issued_document()`.
 - RPCs: `award_bid()` (unchanged from Revision 1), `commit_material_order()`
-  (Decision 2: now `returns setof uuid`, groups by cost code),
-  `issue_document()` (Decision 4).
+  (Decision 2: `returns table(cost_code_id uuid, committed_cost_id uuid)`,
+  groups by cost code — not the unordered `returns setof uuid` this
+  design specified before this revision), `issue_document()` (Decision
+  4, now also takes `p_template_version text`).
 
 ## RLS policies
 
@@ -432,12 +626,21 @@ Vendor (first real consumer of `is_project_vendor()` *and* the new
 - **No vendor policy on `material_orders`/`material_order_line_items`/
   `issued_documents`** — procurement and issuance are purely internal.
 
+Every one of the five bullets above resolves vendor identity through
+`is_vendor_member()` and nothing else — meaning **every one of them
+automatically requires active (non-revoked) membership** the moment
+that helper does (Decision 3), with zero per-policy edits. This is the
+concrete proof that "all membership helpers must require active
+membership" holds across the whole vendor surface, not just in
+isolation.
+
 Every vendor policy gets the roadmap's mandated pair of tests, now
 explicitly including the "two members, one vendor" case: "Vendor A on
 Project 1 sees nothing on Project 2," "Vendor A sees nothing belonging
 to Vendor B on the same project," and (new, per Decision 3) "a second
 authenticated person linked to the *same* `vendors.id` as Vendor A
-sees exactly what Vendor A sees."
+sees exactly what Vendor A sees" — plus, added this revision, "a
+revoked member loses access immediately; reactivating restores it."
 
 ## Server-side operations
 
@@ -460,8 +663,11 @@ first, called by a thin Server Action under `apps/web/app/admin/...`.
 - `addMaterialOrderLineItem(supabase, orderId, costCodeId, description, quantity, unit, unitPriceCents)`
   — `costCodeId` is now a required parameter, not inherited implicitly.
 - `commitMaterialOrder(supabase, orderId)` — thin wrapper over
-  `commit_material_order()`; now returns `{ committedCostIds: string[] }`
-  (plural), reflecting the RPC's `setof uuid` return.
+  `commit_material_order()`; returns
+  `{ committedCosts: { costCodeId: string; committedCostId: string }[] }`
+  — the cost-code-to-commitment mapping directly, per Decision 2's
+  revised RPC signature, not a bare array of ids the caller would have
+  to re-associate itself.
 - `recordReceivedQuantity(supabase, lineItemId, receivedQuantity, markBackordered?)`
   — unchanged from Revision 1.
 - **`documentIssuanceService.ts`** (new, Decision 4):
@@ -469,29 +675,40 @@ first, called by a thin Server Action under `apps/web/app/admin/...`.
   builds `canonical_data` from `getMaterialOrderDetail` (project meta,
   vendor name, every line item with its own cost code/quantity/price),
   defaults `documentNumber` to the order's `order_number` if the
-  caller doesn't supply one, calls `issue_document('purchase_order', ...)`.
+  caller doesn't supply one, passes the PDF template module's own
+  exported `MATERIAL_ORDER_PDF_TEMPLATE_VERSION` constant, calls
+  `issue_document('purchase_order', ..., templateVersion, ...)`.
   `issueSubcontract(supabase, bidPackageId, documentNumber?)` —
   validates the package's status is `awarded` first (returns `{error}`
   otherwise — issuing a subcontract for a bid that was never awarded
   is a service-layer validation, not just a UI affordance), builds
   `canonical_data` from `getBidPackageDetail` plus the awarded
-  submission, calls `issue_document('subcontract', ...)`.
+  submission, passes `SUBCONTRACT_PDF_TEMPLATE_VERSION`, calls
+  `issue_document('subcontract', ...)`.
   `getLatestIssuedDocument(supabase, documentType, sourceId)` /
   `getIssuedDocumentVersion(supabase, documentType, sourceId, version)`
   — read functions the PDF routes call to render a frozen snapshot
-  instead of live data once one exists.
+  (including its `templateVersion`) instead of live data once one
+  exists.
 - **PO/subcontract PDF Route Handlers** (`GET
   /api/procurement/material-orders/[id]/pdf` and `GET
   /api/bids/[bidPackageId]/subcontract-pdf`; both `export const runtime
   = "nodejs"`, Decision 9): if an `issued_documents` row exists for
-  this source (optionally a specific `?version=`), renders
-  `@react-pdf/renderer` output from its frozen `canonical_data`;
-  otherwise renders a live preview from current data, watermarked
-  "DRAFT — NOT ISSUED." Explicit `AuthorizationError`→403 handling and
-  `renderToBuffer`-failure→500 handling per Decision 9's test
-  requirements — no case is left to fall through to a framework
-  default. Never persists the rendered bytes (Decision 4's own
-  "PDF bytes are still never stored" clause).
+  this source (optionally a specific `?version=`), resolves the
+  correct renderer component from a small `template_version`-keyed
+  registry (Decision 4) and renders `@react-pdf/renderer` output from
+  the snapshot's frozen `canonical_data` through that specific
+  renderer; otherwise renders a live preview through the *current*
+  template version, watermarked "DRAFT — NOT ISSUED." An unrecognized
+  `template_version` (a data-integrity case that should never occur in
+  practice, but is defensively tested per Decision 4) returns a safe
+  500, the same as any other rendering failure. Explicit
+  `AuthorizationError`→403 handling and `renderToBuffer`-failure→500
+  handling per Decision 9's test requirements — no case is left to
+  fall through to a framework default. Never persists the rendered
+  bytes (Decision 4's own "PDF bytes are still never stored" clause;
+  the reproducibility this provides is content/layout-equivalent, not
+  byte-identical, per Decision 4's redefinition this revision).
 - **`issuePurchaseOrder`/`issueSubcontract` Server Actions** (new,
   thin wrappers) — the explicit staff action that actually calls
   `issue_document()`, distinct from merely viewing a preview.
@@ -562,47 +779,71 @@ changes:
 1. `bid_packages`/`material_orders` composite-FK + staff RLS +
    cross-org isolation.
 2. **Vendor RLS, all three required cases**: cross-project, cross-vendor,
-   and (new) "two members of the same vendor see the same data" —
-   using `vendor_members` + `is_vendor_member()` instead of Revision
-   1's `vendors.profile_id`.
+   and "two members of the same vendor see the same data" — using
+   `vendor_members` + `is_vendor_member()` instead of Revision 1's
+   `vendors.profile_id`.
 3. `enforce_vendor_member_org_match()` rejects linking a profile from
    org B to a vendor owned by org A.
-4. `bid_submissions_one_per_vendor_per_package` /
+4. **Revocation, added this revision**: an active member reads
+   normally; revoking (`revoked_at`/`revoked_by` set) removes their
+   access on the *next* request, proven by re-running the same read
+   assertions from test 2 as the now-revoked session and confirming
+   zero rows; reactivating (`revoked_at` cleared) restores access,
+   proven the same way. `enforce_vendor_member_identity_and_revocation()`
+   rejects (a) changing `vendor_id`/`profile_id` post-insert, (b)
+   setting `revoked_by` to anything other than the acting session's own
+   `auth.uid()` at the moment of revocation.
+5. `bid_submissions_one_per_vendor_per_package` /
    `bid_submissions_amount_set_when_submitted` — unchanged from
    Revision 1.
-5. `award_bid()` happy path + reject-non-submitted — unchanged.
-6. **`commit_material_order()` with line items spanning two different
-   cost codes** — happy path now asserts *two* `committed_costs` rows
-   are created, correctly summed per cost code, both sharing
-   `source_id`; rejects zero line items; rejects a non-`draft` order.
-7. `enforce_line_item_project_matches_order()` rejects a line item
+6. `award_bid()` happy path + reject-non-submitted — unchanged.
+7. **`commit_material_order()` with line items spanning two different
+   cost codes** — happy path now asserts the RPC's returned
+   `(cost_code_id, committed_cost_id)` rows correctly pair each cost
+   code with its own `committed_costs` row (not merely that "two rows
+   exist," per Decision 2's revised return shape), each summed only
+   from that cost code's own line items; rejects zero line items;
+   rejects a non-`draft` order.
+8. `enforce_line_item_project_matches_order()` rejects a line item
    whose `project_id` doesn't match its order's.
-8. `enforce_material_order_line_item_frozen_after_commit()`: rejects
-   inserting/updating/deleting a committed-fields change on a line
-   item once the order isn't `draft`; confirms `received_quantity`/
-   `backordered` updates are still accepted post-commit.
-9. `material_order_line_items_received_not_over` — unchanged.
-10. `bid_questions_staff_recorded_requires_recorder` rejects a
+9. `enforce_material_order_line_item_frozen_after_commit()`: rejects
+   inserting/updating/deleting any field in Decision 10's "No" column
+   once the order isn't `draft`; confirms `received_quantity`/
+   `backordered` (the "Yes" column) remain updatable post-commit at
+   every subsequent status, not just once.
+10. `material_order_line_items_received_not_over` — unchanged.
+11. `bid_questions_staff_recorded_requires_recorder` rejects a
     `source='staff_recorded'` row with `recorded_by is null`.
-11. `issue_document()`: first issuance creates version 1; a second
-    call for the same source creates version 2 and marks version 1
-    superseded (`superseded_by_id` pointing at the new row);
+12. **`enforce_bid_question_recorded_by_self()`, added this revision**:
+    an insert attempting to set `recorded_by` to a *different* user's
+    id (not merely omitting it) is rejected — the actual spoofing case
+    the column default alone could never catch; a subsequent `update`
+    attempting to reassign `recorded_by`/`source` on an existing row is
+    also rejected.
+13. `issue_document()`: first issuance creates version 1 with the
+    caller-supplied `template_version` recorded; a second call for the
+    same source creates version 2 and marks version 1 superseded
+    (`superseded_by_id` pointing at the new row);
     `enforce_issued_document_immutability()` rejects a direct `update`
-    to `canonical_data` on an existing row.
-12. `issued_documents` staff-only RLS + cross-org isolation, for both
+    to `canonical_data` **or `template_version`** on an existing row.
+14. `issued_documents` staff-only RLS + cross-org isolation, for both
     `document_type` values (proves the conditional
     `material_orders`-vs-`bid_packages` lookup resolves correctly for
     each).
-13. Audit visibility across all seven new tables (same bar P4 set).
-14. Real Postgres re-run of `committed_forecast_hardening_tests.sql`
+15. Audit visibility across all seven new tables (same bar P4 set),
+    including `vendor_members`' revoke/reactivate updates each
+    producing their own distinct audit row.
+16. Real Postgres re-run of `committed_forecast_hardening_tests.sql`
     "in context" — unchanged from Revision 1.
 
 New files added to `scripts/db/run-sql-tests.mjs`'s `FILES` array as
 before. `apps/web` test additions: `procurement_totals_unit.ts`
 (unchanged scope) plus PDF-route authorization/failure-path tests
-(Decision 9) under whichever existing Route Handler test convention
-this repo uses (check for precedent before inventing a new one — see
-implementation plan Task 10).
+(Decision 9), now also including an unrecognized-`template_version`
+case (Decision 4 — the registry-dispatch fallback returning a safe
+500, not a crash), under whichever existing Route Handler test
+convention this repo uses (check for precedent before inventing a new
+one — see implementation plan Task 10).
 
 ## CI requirements
 
@@ -623,35 +864,51 @@ before completion.
 2. A bid package with two vendor submissions, awarding one, leaves the
    other `declined` and produces exactly one `committed_costs` row.
 3. **A material order with line items across two cost codes, once
-   committed, produces exactly two `committed_costs` rows — one per
-   cost code, correctly summed, sharing `source_id` — proven through
-   the UI, not just direct SQL.**
+   committed, produces exactly two `committed_costs` rows correctly
+   paired to their originating cost codes via the RPC's own returned
+   mapping — not merely "two rows exist" — proven through the UI, not
+   just direct SQL.**
 4. **A material order line item's cost code, quantity, description,
    and unit price can never be edited or deleted once its parent
    order leaves `draft` — proven by an actual attempted edit through
    the service layer being rejected by the database, not merely
    absent from the UI — while `received_quantity`/`backordered`
-   remain editable at any post-commit status.**
+   remain editable at any post-commit status. Decision 10's field
+   table is the authoritative list; this criterion is proven against
+   every row in it, not a sample.**
 5. **Two different authenticated test sessions, both linked via
    `vendor_members` to the same `vendors.id`, can each read that
    vendor's own invited bid packages/submissions; a third session
    linked to a different vendor reads none of it — proven by all three
    required isolation axes, not just the original two.**
-6. **Issuing a PO twice for the same material order (once, then again
+6. **Revoking one of those two sessions' `vendor_members` row removes
+   its access immediately (proven by re-running its own read
+   assertions from criterion 5 and confirming zero rows), while the
+   other, still-active session is unaffected; reactivating restores
+   access — proven by an actual revoke/reactivate cycle, not code
+   review.**
+7. **Issuing a PO twice for the same material order (once, then again
    after a change) produces two `issued_documents` rows, version 1
    marked superseded by version 2, and the PDF route serving version 1
-   explicitly (`?version=1`) still renders the original numbers even
-   after the order's live data has changed.**
-7. A material order with one backordered line item surfaces as a
+   explicitly (`?version=1`) still renders through version 1's own
+   `template_version` — content/layout-equivalent to what was
+   originally issued — even after the order's live data and/or the
+   current template file has since changed.**
+8. **An insert into `bid_questions` that explicitly supplies a
+   `recorded_by` value other than the inserting session's own
+   `auth.uid()` is rejected by the database — proven by an actual
+   attempted spoof, not by confirming the column default alone.**
+9. A material order with one backordered line item surfaces as a
    distinct Action Center event, separate from the order's own overall
    status.
-8. Every new table's writes produce a real, staff-readable `audit_log`
-   row.
-9. **The PO/subcontract PDF routes return 403 (not 500) for an
-   authenticated non-staff session, 404 for a nonexistent id, and a
-   safe generic 500 (no internal detail) for a forced rendering
-   failure — proven by actual requests, not code review.**
-10. `npm ci`/`typecheck`/`test`/`build` all pass from a clean install,
+10. Every new table's writes produce a real, staff-readable `audit_log`
+    row.
+11. **The PO/subcontract PDF routes return 403 (not 500) for an
+    authenticated non-staff session, 404 for a nonexistent id, a safe
+    generic 500 (no internal detail) for a forced rendering failure,
+    and a safe generic 500 for an unrecognized `template_version` —
+    proven by actual requests, not code review.**
+12. `npm ci`/`typecheck`/`test`/`build` all pass from a clean install,
     migration 015 applies cleanly to the real hosted dev project
     alongside 001–014.
 
@@ -670,8 +927,14 @@ commitment amount change after award goes through
 `supersede_committed_cost()`. No persisted PDF *bytes* for generated
 POs or vendor-submitted bid files (Decision 4's own explicit "the
 rendered bytes are still never stored" clause) — only the canonical
-data snapshot is persisted, deliberately, not the rendered document
-itself; re-rendering depends on template stability (Decision 4's
-caveat). No mechanism to end a `vendor_members` link (no delete, no
-deactivation flag) — out of scope until P11 has a reason to need one.
-No change to `AdminFinancialsScreen`'s existing rollup.
+data snapshot plus its `template_version` is persisted, deliberately,
+not the rendered document itself; P5's reproducibility guarantee is
+content/layout-equivalent, not byte-identical (Decision 4) — true
+byte-identical archival is deferred to whichever future package
+persists the rendered file itself. No admin UI to revoke/reactivate a
+`vendor_members` link in P5 — the schema, RLS, and a callable service
+function all support it correctly (Decision 3) and are tested at the
+SQL level, but no screen in this package exposes the action; the first
+package with a real reason to expose it in a UI (plausibly P11,
+alongside its invitation flow) wires the screen, not a migration. No
+change to `AdminFinancialsScreen`'s existing rollup.

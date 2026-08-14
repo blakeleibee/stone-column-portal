@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Revision 2** of this plan, matching `docs/production-build/P5-DESIGN.md` Revision 2. Supersedes Revision 1 in place (not preserved inline — see git history). Changes from Revision 1: material orders allocate cost at the line level, not the order level; vendor identity is a `vendor_members` junction, not a `vendors.profile_id` column; issuing a PO/subcontract creates an immutable versioned `issued_documents` snapshot; staff-recorded bid Q&A carries explicit author/source provenance; Tasks 6 and 9 are now functional specifications (data flow, auth, states, mutations, tests) rather than inlined component code, per explicit instruction.
+**Revision 3** of this plan, matching `docs/production-build/P5-DESIGN.md` Revision 3 — approved in direction; this revision is a targeted hardening pass, not a redesign. Five changes from Revision 2, each landing in Task 1's schema and rippling into the tasks noted: (1) `vendor_members` gains `revoked_at`/`revoked_by` plus an identity/revocation-immutability trigger, and `is_vendor_member()` now requires active (non-revoked) membership — Tasks 1, 2, 4. (2) `commit_material_order()` now returns `table(cost_code_id, committed_cost_id)`, not a bare `setof uuid` — Tasks 1, 2, 8, 9. (3) The post-commit line-item freeze (Decision 10) was already fully correct in Revision 2 — confirmed, not changed; this plan now states its exact field list rather than leaving it implicit. (4) `bid_questions.recorded_by` is now enforced at the database boundary by a trigger, not merely a column default that a caller could override — Tasks 1, 2. (5) `issued_documents` gains `template_version`, rendered through a per-template version registry so historical snapshots stay renderable after a template changes; P5's reproduction guarantee is redefined as content/layout-equivalent, not byte-identical (deferred to a future package that persists rendered bytes) — Tasks 1, 2, 8, 10. Revision 2's text is not preserved inline — see git history.
 
 **Goal:** Activate the existing, schema-hardened-but-never-used `committed_costs` table for real writes for the first time, and add the vendor-quote/procurement mechanism (`bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `vendor_members`, `issued_documents`) that feeds it — without creating any new, disconnected financial table.
 
@@ -10,7 +10,7 @@
 
 **Tech Stack:** Next.js 14.2.35 App Router (Server Actions + Route Handlers, Node.js runtime explicitly declared for PDF routes), React 18.3.1, Supabase Postgres/RLS, `packages/01-financial-engine` (pure TS), `@react-pdf/renderer` (new dependency, exact-pinned, server-side only).
 
-**Design record (read first, authoritative for every "why"):** `docs/production-build/P5-DESIGN.md` (Revision 2).
+**Design record (read first, authoritative for every "why"):** `docs/production-build/P5-DESIGN.md` (Revision 3).
 
 ## Global Constraints
 
@@ -21,8 +21,11 @@
 - Every mutation runs through the caller's own JWT-bearing Supabase client (RLS-scoped) via a Server Action — never a client-side browser call to Supabase, never the service-role client. (TARGET-ARCHITECTURE.md §5.2)
 - Business logic (validation + the write) lives in a plain service function under `packages/02-app-shell/src/services/`; the Server Action that calls it is a thin adapter only.
 - A material order's authoritative cost-code allocation lives on its line items, never on the order itself — `material_orders.cost_code_id` is a UI convenience default only, read by nothing that touches money. (P5-DESIGN.md Decision 2)
-- Vendor identity for any new RLS policy is resolved via `is_vendor_member(vendor_id)`, never by inlining a direct column comparison — this is the one helper every vendor-facing policy in this plan must call. (P5-DESIGN.md Decision 3)
-- Any value that identifies *who did something* on a server-enforced record (`issued_by`, `recorded_by`) is derived from the authenticated session server-side (an RPC's internal `auth.uid()`, or a column `default auth.uid()`) — never accepted as a client-suppliable parameter. (P5-DESIGN.md Decisions 4, 8)
+- Vendor identity for any new RLS policy is resolved via `is_vendor_member(vendor_id)`, never by inlining a direct column comparison — this is the one helper every vendor-facing policy in this plan must call, and it requires active (non-revoked) membership by construction. (P5-DESIGN.md Decision 3)
+- A **default is not a boundary.** Any value that identifies *who did something* on a server-enforced record (`issued_by`, `recorded_by`, `revoked_by`) must be unspoofable at the database itself — either an RPC's internal `auth.uid()` with no caller-facing parameter at all, or (for plain table inserts/updates, where an RPC body isn't available to hide the assignment inside) a trigger that rejects any value other than the acting session's own `auth.uid()`. A column `default auth.uid()` alone is convenience, not enforcement, and must never be the only mechanism. (P5-DESIGN.md Decisions 3, 4, 8)
+- `commit_material_order()` returns the cost-code-to-commitment mapping directly (`table(cost_code_id, committed_cost_id)`) — never a bare array of ids a caller would have to re-associate itself. (P5-DESIGN.md Decision 2)
+- The post-commit line-item freeze protects exactly `material_order_id`/`project_id`/`cost_code_id`/`quantity`/`unit_price_cents`/`description`/`unit`; `received_quantity`/`backordered` remain mutable at every post-commit status. (P5-DESIGN.md Decision 10's field table — authoritative, do not add or drop a field from either list without updating that table.)
+- A PDF template's rendering logic, once a real `issued_documents` snapshot references its `template_version`, is never edited in place in a way that changes its output — a breaking template change adds a new version to the registry and keeps the old one. P5's reproducibility guarantee is content/layout-equivalent, not byte-identical. (P5-DESIGN.md Decision 4)
 - `@react-pdf/renderer` is imported only inside a Route Handler/service file that runs under `export const runtime = "nodejs"` — never in a client component, never under the Edge runtime. (P5-DESIGN.md Decision 9)
 - `npm run typecheck` / `npm run test` / `npm run build` must pass after every task.
 - No vendor-facing UI (P11 scope) — every vendor RLS policy is built and tested here but no page in this plan is ever rendered to a vendor session.
@@ -39,27 +42,31 @@
 - Create: `supabase/migrations/20260814000000_commitments_bids_procurement.sql` (mirror)
 
 **Interfaces:**
-- Produces: types `bid_package_status`, `bid_submission_status`, `material_order_status`, `issued_document_type`; tables `vendor_members`, `bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `issued_documents`; functions `is_vendor_member(uuid) returns boolean`, `award_bid(uuid) returns uuid`, `commit_material_order(uuid) returns setof uuid`, `issue_document(issued_document_type, uuid, text, jsonb) returns uuid`; trigger functions `enforce_vendor_member_org_match()`, `log_audit_via_bid_package()`, `log_audit_via_material_order()`, `enforce_line_item_project_matches_order()`, `enforce_material_order_line_item_frozen_after_commit()`, `enforce_issued_document_immutability()`, `log_audit_via_issued_document()`.
+- Produces: types `bid_package_status`, `bid_submission_status`, `material_order_status`, `issued_document_type`; tables `vendor_members`, `bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `issued_documents`; functions `is_vendor_member(uuid) returns boolean` (requires active/non-revoked membership), `award_bid(uuid) returns uuid`, `commit_material_order(uuid) returns table(cost_code_id uuid, committed_cost_id uuid)`, `issue_document(issued_document_type, uuid, text, text, jsonb) returns uuid` (now takes `p_template_version`); trigger functions `enforce_vendor_member_org_match()`, `enforce_vendor_member_identity_and_revocation()`, `log_audit_via_bid_package()`, `log_audit_via_material_order()`, `enforce_line_item_project_matches_order()`, `enforce_material_order_line_item_frozen_after_commit()`, `enforce_bid_question_recorded_by_self()`, `enforce_issued_document_immutability()`, `log_audit_via_issued_document()`.
 
-- [ ] **Step 1: Write `schema/015_commitments_bids_procurement.sql` — vendor identity**
+- [ ] **Step 1: Write `schema/015_commitments_bids_procurement.sql` — vendor identity, including revocation (Revision 3 hardening)**
 
 ```sql
 -- =====================================================================
 -- Stone Column Portal — Migration 015: commitments, bids (PM-side),
 -- procurement & material orders. See docs/production-build/P5-DESIGN.md
--- (Revision 2) for full rationale.
+-- (Revision 3) for full rationale.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
 -- Vendor identity: a many-to-many junction, not a single column, so
 -- more than one authenticated person can represent one vendor business.
--- Every isolation axis is DB-enforced, not just RLS-shaped.
+-- Every isolation axis is DB-enforced, not just RLS-shaped. revoked_at/
+-- revoked_by (Revision 3) support ending a membership WITHOUT deleting
+-- its history — vendor_members_no_delete below still applies.
 -- ---------------------------------------------------------------------
 create table vendor_members (
   id          uuid primary key default uuid_generate_v4(),
   vendor_id   uuid not null references vendors(id) on delete cascade,
   profile_id  uuid not null references profiles(id) on delete cascade,
   is_primary  boolean not null default false,
+  revoked_at  timestamptz,
+  revoked_by  uuid references profiles(id),
   created_at  timestamptz not null default now(),
 
   constraint vendor_members_unique_pair unique (vendor_id, profile_id)
@@ -88,13 +95,51 @@ $$;
 create trigger vendor_members_org_match before insert or update on vendor_members
   for each row execute function public.enforce_vendor_member_org_match();
 
+-- Revision 3: (a) vendor_id/profile_id are immutable after insert — a
+-- membership's identity never changes, only its active/revoked state;
+-- (b) revoked_by must equal the ACTING session's own auth.uid() at the
+-- moment of revocation — the same anti-spoofing rule Decision 8 applies
+-- to bid_questions.recorded_by, applied here too; (c) reactivating
+-- (revoked_at cleared) also clears revoked_by, so no stale attribution
+-- lingers on an active row.
+create or replace function public.enforce_vendor_member_identity_and_revocation() returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if new.vendor_id is distinct from old.vendor_id or new.profile_id is distinct from old.profile_id then
+    raise exception 'vendor_members.vendor_id/profile_id are immutable after insert (row %) — revoke and reactivate the existing membership instead of reassigning it.', old.id;
+  end if;
+
+  if new.revoked_at is distinct from old.revoked_at then
+    if new.revoked_at is not null and new.revoked_by is distinct from auth.uid() then
+      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when revoking — got %.', auth.uid(), new.revoked_by;
+    end if;
+    if new.revoked_at is null then
+      new.revoked_by := null;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create trigger vendor_members_identity_and_revocation
+  before update on vendor_members
+  for each row execute function public.enforce_vendor_member_identity_and_revocation();
+
+-- Revision 3: filters to ACTIVE membership. Every RLS policy in this
+-- migration that needs "which vendor does this user represent" calls
+-- this one function — so this single filter change is what makes
+-- "all membership helpers must require active membership" true across
+-- every policy at once, with zero other edits required.
 create or replace function public.is_vendor_member(p_vendor_id uuid) returns boolean
 language sql stable security definer
 set search_path = public, pg_temp
 as $$
   select exists (
     select 1 from public.vendor_members
-    where vendor_id = p_vendor_id and profile_id = auth.uid()
+    where vendor_id = p_vendor_id and profile_id = auth.uid() and revoked_at is null
   );
 $$;
 revoke all on function public.is_vendor_member(uuid) from public;
@@ -105,6 +150,10 @@ create policy vendor_members_staff_full_access on vendor_members
   using (is_org_staff_for_org((select org_id from vendors where id = vendor_members.vendor_id)))
   with check (is_org_staff_for_org((select org_id from vendors where id = vendor_members.vendor_id)));
 
+-- Deliberately does NOT filter on revoked_at — this governs visibility
+-- of the historical record ("can I see my own membership rows, even a
+-- revoked one"), not active-session authorization (that's what
+-- is_vendor_member() gates, everywhere else).
 create policy vendor_members_self_read on vendor_members
   for select to authenticated
   using (profile_id = auth.uid());
@@ -296,6 +345,41 @@ create policy bid_questions_vendor_insert on bid_questions
       where bs.bid_package_id = bid_questions.bid_package_id and bs.vendor_id = bid_questions.vendor_id
     )
   );
+
+-- Revision 3 hardening: recorded_by's column default alone is NOT a
+-- boundary — a caller could still explicitly supply a different value
+-- in the insert payload, overriding the default entirely. This trigger
+-- is the actual enforcement; the default is kept only for convenience
+-- on the ordinary case (an insert that omits recorded_by).
+create or replace function public.enforce_bid_question_recorded_by_self() returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.source = 'staff_recorded' and new.recorded_by is distinct from auth.uid() then
+      raise exception 'bid_questions.recorded_by must equal the inserting session''s own auth.uid() (%) for staff_recorded rows — got %.',
+        auth.uid(), new.recorded_by;
+    end if;
+    if new.source = 'vendor_submitted' and new.recorded_by is not null then
+      raise exception 'bid_questions.recorded_by must be null for vendor_submitted rows — a vendor-submitted question has no staff recorder.';
+    end if;
+    return new;
+  end if;
+
+  -- UPDATE: provenance is set once at insert, never reassigned — an
+  -- answer changes answer_text/answered_by/answered_at, never who
+  -- originally asked/recorded the question.
+  if new.recorded_by is distinct from old.recorded_by or new.source is distinct from old.source then
+    raise exception 'bid_questions.recorded_by/source are immutable after insert (row %) — provenance is set once, never reassigned.', old.id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bid_questions_recorded_by_self
+  before insert or update on bid_questions
+  for each row execute function public.enforce_bid_question_recorded_by_self();
 
 create trigger audit_bid_questions after insert or update on bid_questions
   for each row execute function public.log_audit_via_bid_package();
@@ -506,7 +590,7 @@ create trigger audit_material_order_line_items after insert or update on materia
   for each row execute function public.log_audit_via_material_order();
 ```
 
-- [ ] **Step 5: Append `issued_documents` (Decision 4)**
+- [ ] **Step 5: Append `issued_documents` (Decision 4, `template_version` added this revision)**
 
 ```sql
 -- ---------------------------------------------------------------------
@@ -514,6 +598,13 @@ create trigger audit_material_order_line_items after insert or update on materia
 -- a PO/subcontract is actually issued (not on every preview render).
 -- canonical_data is metadata (JSON), never the rendered PDF bytes —
 -- same "never a blob" philosophy as documents (schema/010).
+-- template_version (Revision 3) records which PDF template rendering
+-- logic produced canonical_data, so the PDF route can dispatch to the
+-- CORRECT historical renderer instead of whatever the template file
+-- currently says — this is the mechanism behind "historical template
+-- versions remain renderable." Reproduction guaranteed here is
+-- content/layout-equivalent, not byte-identical (P5-DESIGN.md
+-- Decision 4) — the rendered file itself is still never stored.
 -- ---------------------------------------------------------------------
 create type issued_document_type as enum ('purchase_order', 'subcontract');
 
@@ -523,6 +614,7 @@ create table issued_documents (
   source_id        uuid not null, -- material_orders.id or bid_packages.id, per document_type
   document_number  text not null,
   version          integer not null default 1,
+  template_version text not null,
   issued_at        timestamptz not null default now(),
   issued_by        uuid references profiles(id),
   canonical_data   jsonb not null,
@@ -558,6 +650,7 @@ begin
   if new.canonical_data is distinct from old.canonical_data
     or new.document_number is distinct from old.document_number
     or new.version is distinct from old.version
+    or new.template_version is distinct from old.template_version
     or new.document_type is distinct from old.document_type
     or new.source_id is distinct from old.source_id
     or new.issued_at is distinct from old.issued_at
@@ -660,21 +753,23 @@ revoke all on function public.award_bid(uuid) from public;
 grant execute on function public.award_bid(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
--- commit_material_order(): REWRITTEN for Decision 2. Groups line items
--- by their OWN cost_code_id (never the order's optional default) and
--- inserts one committed_costs row per distinct code, all sharing
--- source_id = the order's id — the same multi-row-per-event shape
--- FINANCIAL-ARCHITECTURE.md already documents for change_order.
+-- commit_material_order(): groups line items by their OWN cost_code_id
+-- (never the order's optional default) and inserts one committed_costs
+-- row per distinct code, all sharing source_id = the order's id — the
+-- same multi-row-per-event shape FINANCIAL-ARCHITECTURE.md already
+-- documents for change_order. Revision 3: returns TABLE(cost_code_id,
+-- committed_cost_id) — the mapping directly — not a bare `setof uuid`
+-- a caller would have to re-associate with a second query.
 -- ---------------------------------------------------------------------
 create or replace function public.commit_material_order(p_material_order_id uuid)
-returns setof uuid
+returns table(cost_code_id uuid, committed_cost_id uuid)
 language plpgsql security invoker set search_path = public, pg_temp
 as $$
 declare
   v_order material_orders%rowtype;
   v_vendor_name text;
   v_line record;
-  v_committed_cost_id uuid;
+  v_new_committed_cost_id uuid;
   v_line_item_count integer;
 begin
   select * into v_order from material_orders where id = p_material_order_id for update;
@@ -693,16 +788,24 @@ begin
 
   select name into v_vendor_name from vendors where id = v_order.vendor_id;
 
+  -- v_line.cc/v_line.total_cents are deliberately aliased away from
+  -- cost_code_id — this function's RETURNS TABLE makes cost_code_id an
+  -- OUT parameter, and assigning it directly from a query alias avoids
+  -- any ambiguity with material_order_line_items' own cost_code_id
+  -- column of the same name.
   for v_line in
-    select cost_code_id, sum(quantity * unit_price_cents)::bigint as total_cents
-    from material_order_line_items
-    where material_order_id = v_order.id
-    group by cost_code_id
+    select mo_li.cost_code_id as cc, sum(mo_li.quantity * mo_li.unit_price_cents)::bigint as total_cents
+    from material_order_line_items mo_li
+    where mo_li.material_order_id = v_order.id
+    group by mo_li.cost_code_id
   loop
     insert into committed_costs (project_id, cost_code_id, vendor_name, amount_cents, source_type, source_id)
-    values (v_order.project_id, v_line.cost_code_id, v_vendor_name, v_line.total_cents, 'material_order', v_order.id)
-    returning id into v_committed_cost_id;
-    return next v_committed_cost_id;
+    values (v_order.project_id, v_line.cc, v_vendor_name, v_line.total_cents, 'material_order', v_order.id)
+    returning id into v_new_committed_cost_id;
+
+    cost_code_id := v_line.cc;
+    committed_cost_id := v_new_committed_cost_id;
+    return next;
   end loop;
 
   update material_orders set status = 'ordered', ordered_at = now() where id = v_order.id;
@@ -715,15 +818,19 @@ revoke all on function public.commit_material_order(uuid) from public;
 grant execute on function public.commit_material_order(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------
--- issue_document(): new (Decision 4). Models supersede_committed_cost()'s
--- exact claim-old/insert-new/link shape. issued_by is ALWAYS auth.uid(),
+-- issue_document(): models supersede_committed_cost()'s exact
+-- claim-old/insert-new/link shape. issued_by is ALWAYS auth.uid(),
 -- never a caller-supplied parameter, so an issuance record can never be
--- forged to claim a different issuer.
+-- forged to claim a different issuer. Revision 3: takes
+-- p_template_version, frozen alongside canonical_data so the PDF route
+-- can always resolve the EXACT renderer that produced this snapshot,
+-- even after the current template file has moved on to a newer version.
 -- ---------------------------------------------------------------------
 create or replace function public.issue_document(
   p_document_type issued_document_type,
   p_source_id uuid,
   p_document_number text,
+  p_template_version text,
   p_canonical_data jsonb
 ) returns uuid
 language plpgsql security invoker set search_path = public, pg_temp
@@ -739,8 +846,8 @@ begin
   order by version desc limit 1
   for update;
 
-  insert into issued_documents (document_type, source_id, document_number, version, issued_by, canonical_data)
-  values (p_document_type, p_source_id, p_document_number, coalesce(v_prior_version, 0) + 1, auth.uid(), p_canonical_data)
+  insert into issued_documents (document_type, source_id, document_number, version, template_version, issued_by, canonical_data)
+  values (p_document_type, p_source_id, p_document_number, coalesce(v_prior_version, 0) + 1, p_template_version, auth.uid(), p_canonical_data)
   returning id into v_new_id;
 
   if v_prior_id is not null then
@@ -751,14 +858,14 @@ begin
 end;
 $$;
 
-revoke all on function public.issue_document(issued_document_type, uuid, text, jsonb) from public;
-grant execute on function public.issue_document(issued_document_type, uuid, text, jsonb) to authenticated;
+revoke all on function public.issue_document(issued_document_type, uuid, text, text, jsonb) from public;
+grant execute on function public.issue_document(issued_document_type, uuid, text, text, jsonb) to authenticated;
 ```
 
 - [ ] **Step 7: Write `schema/015_commitments_bids_procurement_down.sql`**
 
 ```sql
-drop function if exists public.issue_document(issued_document_type, uuid, text, jsonb);
+drop function if exists public.issue_document(issued_document_type, uuid, text, text, jsonb);
 drop function if exists public.commit_material_order(uuid);
 drop function if exists public.award_bid(uuid);
 
@@ -786,6 +893,8 @@ drop trigger if exists audit_bid_addenda on bid_addenda;
 drop table if exists bid_addenda;
 
 drop trigger if exists audit_bid_questions on bid_questions;
+drop trigger if exists bid_questions_recorded_by_self on bid_questions;
+drop function if exists public.enforce_bid_question_recorded_by_self();
 drop table if exists bid_questions;
 
 drop trigger if exists audit_bid_submissions on bid_submissions;
@@ -800,6 +909,8 @@ drop type if exists bid_package_status;
 drop policy if exists audit_log_vendor_members_staff_select on audit_log;
 drop trigger if exists audit_vendor_members on vendor_members;
 drop trigger if exists vendor_members_no_delete on vendor_members;
+drop trigger if exists vendor_members_identity_and_revocation on vendor_members;
+drop function if exists public.enforce_vendor_member_identity_and_revocation();
 drop trigger if exists vendor_members_org_match on vendor_members;
 drop function if exists public.enforce_vendor_member_org_match();
 drop function if exists public.is_vendor_member(uuid);
@@ -832,7 +943,7 @@ git commit -m "feat(P5): migration 015 — commitments, bids, procurement schema
 
 **Interfaces:**
 - Consumes: `set_test_user`/`clear_test_user`/`assert_that`/`assert_raises`/`test_fixture_ids` helpers; fixtures `admin`, `org_b_admin`, `project_a`, `cost_code_a`.
-- Produces: a second cost-code fixture (`cost_code_a2`, on `project_a`) so cross-cost-code material order tests have two real codes to allocate against; two vendor-session fixtures (`vendor_a_user_1`, `vendor_a_user_2`) linked to the same vendor via `vendor_members`, proving "two members, one business."
+- Produces: a second cost-code fixture (`cost_code_a2`, on `project_a`) so cross-cost-code material order tests have two real codes to allocate against; two vendor-session fixtures (`vendor_a_user_1`, `vendor_a_user_2`) linked to the same vendor via `vendor_members`, proving "two members, one business" and (Revision 3) that revoking one leaves the other unaffected.
 
 - [ ] **Step 1: Add both files to `scripts/db/run-sql-tests.mjs`'s `FILES` array**
 
@@ -849,7 +960,7 @@ git commit -m "feat(P5): migration 015 — commitments, bids, procurement schema
 -- =====================================================================
 -- Stone Column Portal — P5 (Commitments, Bids, Procurement) SQL/RLS
 -- test suite, covering schema/015_commitments_bids_procurement.sql
--- (Revision 2). Runs after schema/001-015 and after package1_tests.sql /
+-- (Revision 3). Runs after schema/001-015 and after package1_tests.sql /
 -- package_p1_auth_tests.sql / package_p4_estimating_qb_import_tests.sql.
 -- Reused fixtures: 'admin', 'org_b_admin', 'project_a', 'cost_code_a'.
 -- =====================================================================
@@ -1049,12 +1160,124 @@ end $$;
 
 reset role;
 select clear_test_user();
+
+-- ---------------------------------------------------------------------
+-- Revision 3 hardening: revocation. Revoke person 2's membership as
+-- staff, confirm person 2 loses access immediately while person 1 (same
+-- vendor, still active) is unaffected, then reactivate and confirm
+-- access is restored. Also confirms enforce_vendor_member_identity_and_
+-- revocation()'s two guards: identity fields are immutable, and
+-- revoked_by must equal the acting session's own auth.uid().
+-- ---------------------------------------------------------------------
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+-- Identity immutability: vendor_id/profile_id can never change post-insert.
+select assert_raises(
+  format(
+    'update vendor_members set vendor_id = %L where vendor_id = %L and profile_id = %L',
+    (select value from test_fixture_ids where key = 'vendor_a'),
+    (select value from test_fixture_ids where key = 'vendor_a'),
+    (select value from test_fixture_ids where key = 'vendor_a_user_2')
+  ),
+  'reassigning vendor_members.vendor_id post-insert must be rejected'
+);
+
+-- Anti-spoofing: revoked_by must equal auth.uid() at the moment of revocation.
+select assert_raises(
+  format(
+    'update vendor_members set revoked_at = now(), revoked_by = %L where vendor_id = %L and profile_id = %L',
+    (select value from test_fixture_ids where key = 'org_b_admin'),
+    (select value from test_fixture_ids where key = 'vendor_a'),
+    (select value from test_fixture_ids where key = 'vendor_a_user_2')
+  ),
+  'revoking with revoked_by set to someone other than the acting session must be rejected'
+);
+
+-- The actual revoke, correctly attributed.
+do $$
+begin
+  update vendor_members set revoked_at = now(), revoked_by = (select value from test_fixture_ids where key = 'admin')
+  where vendor_id = (select value from test_fixture_ids where key = 'vendor_a')
+    and profile_id = (select value from test_fixture_ids where key = 'vendor_a_user_2');
+
+  perform assert_that(
+    (select revoked_at from vendor_members where vendor_id = (select value from test_fixture_ids where key = 'vendor_a') and profile_id = (select value from test_fixture_ids where key = 'vendor_a_user_2')) is not null,
+    'vendor A person 2''s membership is now revoked'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Revoked person 2: must now see NOTHING, including what they could see moments ago.
+select set_test_user((select value from test_fixture_ids where key = 'vendor_a_user_2'));
+set local role authenticated;
+
+do $$
+begin
+  perform assert_that(
+    (select count(*) from bid_packages where id = (select value from test_fixture_ids where key = 'bid_package_a')) = 0,
+    'a revoked vendor member loses access immediately — is_vendor_member() requires revoked_at is null'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Person 1, same vendor, still active: must be completely unaffected by person 2's revocation.
+select set_test_user((select value from test_fixture_ids where key = 'vendor_a_user_1'));
+set local role authenticated;
+
+do $$
+begin
+  perform assert_that(
+    (select count(*) from bid_packages where id = (select value from test_fixture_ids where key = 'bid_package_a')) = 1,
+    'revoking one member does not affect another active member of the same vendor'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Reactivate person 2 and confirm access is restored.
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+begin
+  update vendor_members set revoked_at = null
+  where vendor_id = (select value from test_fixture_ids where key = 'vendor_a')
+    and profile_id = (select value from test_fixture_ids where key = 'vendor_a_user_2');
+
+  perform assert_that(
+    (select revoked_by from vendor_members where vendor_id = (select value from test_fixture_ids where key = 'vendor_a') and profile_id = (select value from test_fixture_ids where key = 'vendor_a_user_2')) is null,
+    'reactivating clears revoked_by along with revoked_at, so no stale attribution lingers'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+select set_test_user((select value from test_fixture_ids where key = 'vendor_a_user_2'));
+set local role authenticated;
+
+do $$
+begin
+  perform assert_that(
+    (select count(*) from bid_packages where id = (select value from test_fixture_ids where key = 'bid_package_a')) = 1,
+    'reactivating a membership restores access'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
 ```
 
 - [ ] **Step 5: Run to verify Section 2 passes**
 
 Run: `node scripts/db/run-sql-tests.mjs`
-Expected: PASS, including the org-match rejection and all three isolation-axis assertions.
+Expected: PASS, including the org-match rejection, all three isolation-axis assertions, and the full revoke → verify-blocked → verify-unaffected-sibling → reactivate → verify-restored cycle.
 
 - [ ] **Step 6: Section 3 — `bid_questions` provenance (Decision 8)**
 
@@ -1086,7 +1309,7 @@ begin
   );
   perform assert_that(
     (select recorded_by from bid_questions where id = v_question_id) = (select value from test_fixture_ids where key = 'admin'),
-    'recorded_by is populated from auth.uid() via column default, not a client-supplied value'
+    'recorded_by is populated from auth.uid() via column default on the ordinary case (no value supplied)'
   );
 end $$;
 
@@ -1100,6 +1323,28 @@ select assert_raises(
     (select value from test_fixture_ids where key = 'vendor_a')
   ),
   'a staff_recorded question with recorded_by forced to null must be rejected'
+);
+
+-- Revision 3 hardening: the actual spoofing case — a caller explicitly
+-- supplying a DIFFERENT user's id in the insert payload. A default
+-- alone could never catch this; enforce_bid_question_recorded_by_self()
+-- must.
+select assert_raises(
+  format(
+    $sql$insert into bid_questions (bid_package_id, vendor_id, question_text, source, recorded_by)
+         values (%L, %L, 'Spoofed question', 'staff_recorded', %L)$sql$,
+    (select value from test_fixture_ids where key = 'bid_package_a'),
+    (select value from test_fixture_ids where key = 'vendor_a'),
+    (select value from test_fixture_ids where key = 'org_b_admin')
+  ),
+  'inserting bid_questions with recorded_by explicitly set to a DIFFERENT user must be rejected — this is the actual spoofing case a default cannot catch'
+);
+
+-- Immutability: recorded_by/source can never be reassigned after insert,
+-- even by the same staff member who created the row.
+select assert_raises(
+  format('update bid_questions set recorded_by = %L where id = %L', (select value from test_fixture_ids where key = 'org_b_admin'), (select value from test_fixture_ids where key = 'bid_question_a')),
+  'reassigning bid_questions.recorded_by after insert must be rejected — provenance is set once'
 );
 
 reset role;
@@ -1241,30 +1486,44 @@ end $$;
 
 -- Happy path: material_order_a has two line items on two different
 -- cost codes (Step 9 above) — commit must produce TWO committed_costs
--- rows, correctly summed per code, sharing source_id.
+-- rows, correctly summed per code, sharing source_id. Revision 3: the
+-- RPC returns the (cost_code_id, committed_cost_id) mapping directly —
+-- this test asserts against that mapping, not merely "two rows exist."
 do $$
 declare
-  v_ids uuid[];
-  v_id uuid;
+  v_mapping record;
   v_row_count integer;
+  v_framing_committed_cost_id uuid;
+  v_drywall_committed_cost_id uuid;
+  v_mapping_count integer := 0;
 begin
-  select array_agg(id) into v_ids from commit_material_order((select value from test_fixture_ids where key = 'material_order_a'));
+  for v_mapping in
+    select * from commit_material_order((select value from test_fixture_ids where key = 'material_order_a'))
+  loop
+    v_mapping_count := v_mapping_count + 1;
+    if v_mapping.cost_code_id = (select value from test_fixture_ids where key = 'cost_code_a') then
+      v_framing_committed_cost_id := v_mapping.committed_cost_id;
+    elsif v_mapping.cost_code_id = (select value from test_fixture_ids where key = 'cost_code_a2') then
+      v_drywall_committed_cost_id := v_mapping.committed_cost_id;
+    end if;
+  end loop;
 
-  perform assert_that(array_length(v_ids, 1) = 2, 'committing an order with two cost codes produces exactly two committed_costs rows');
+  perform assert_that(v_mapping_count = 2, 'committing an order with two cost codes returns exactly two (cost_code_id, committed_cost_id) mapping rows');
+  perform assert_that(v_framing_committed_cost_id is not null, 'the mapping includes a row for the framing cost code');
+  perform assert_that(v_drywall_committed_cost_id is not null, 'the mapping includes a row for the drywall cost code');
+  perform assert_that(v_framing_committed_cost_id <> v_drywall_committed_cost_id, 'the two cost codes map to two DIFFERENT committed_costs rows, not the same one twice');
 
   select count(*) into v_row_count from committed_costs
   where source_type = 'material_order' and source_id = (select value from test_fixture_ids where key = 'material_order_a');
   perform assert_that(v_row_count = 2, 'both new rows share source_id = the material order''s id');
 
   perform assert_that(
-    (select amount_cents from committed_costs where cost_code_id = (select value from test_fixture_ids where key = 'cost_code_a')
-      and source_id = (select value from test_fixture_ids where key = 'material_order_a')) = 100 * 850,
-    'the framing-cost-code row sums only the framing line item (100 * 850)'
+    (select amount_cents from committed_costs where id = v_framing_committed_cost_id) = 100 * 850,
+    'the committed_cost_id the mapping returned for the framing cost code sums only the framing line item (100 * 850)'
   );
   perform assert_that(
-    (select amount_cents from committed_costs where cost_code_id = (select value from test_fixture_ids where key = 'cost_code_a2')
-      and source_id = (select value from test_fixture_ids where key = 'material_order_a')) = 40 * 1_200,
-    'the drywall-cost-code row sums only the drywall line item (40 * 1200), not both'
+    (select amount_cents from committed_costs where id = v_drywall_committed_cost_id) = 40 * 1_200,
+    'the committed_cost_id the mapping returned for the drywall cost code sums only the drywall line item (40 * 1200), not both'
   );
 
   perform assert_that(
@@ -1324,7 +1583,8 @@ Expected: PASS — this is the core behavior change of this revision; verify car
 ```sql
 -- =====================================================================
 -- SECTION 7 — issue_document(): claim-old/insert-new/link versioning
--- (Decision 4), immutability, and RLS for both document_type values.
+-- (Decision 4), template_version recording (Revision 3), immutability,
+-- and RLS for both document_type values.
 -- =====================================================================
 
 select set_test_user((select value from test_fixture_ids where key = 'admin'));
@@ -1339,17 +1599,20 @@ begin
     'purchase_order',
     (select value from test_fixture_ids where key = 'material_order_a'),
     'PO-1001',
+    '1',
     '{"vendor": "Acme Framing", "lineItems": [{"description": "2x6 Lumber", "costCode": "06-100"}]}'::jsonb
   ) into v_doc_v1;
   insert into test_fixture_ids values ('issued_document_v1', v_doc_v1);
 
   perform assert_that((select version from issued_documents where id = v_doc_v1) = 1, 'first issuance is version 1');
+  perform assert_that((select template_version from issued_documents where id = v_doc_v1) = '1', 'the caller-supplied template_version is recorded on the row');
   perform assert_that((select superseded_at from issued_documents where id = v_doc_v1) is null, 'version 1 starts non-superseded');
 
   select issue_document(
     'purchase_order',
     (select value from test_fixture_ids where key = 'material_order_a'),
     'PO-1001',
+    '1',
     '{"vendor": "Acme Framing", "lineItems": [{"description": "2x6 Lumber", "costCode": "06-100"}], "revisionNote": "corrected delivery address"}'::jsonb
   ) into v_doc_v2;
   insert into test_fixture_ids values ('issued_document_v2', v_doc_v2);
@@ -1358,12 +1621,25 @@ begin
   perform assert_that((select superseded_by_id from issued_documents where id = v_doc_v1) = v_doc_v2, 'version 1 now points at version 2 as its successor');
   perform assert_that((select superseded_at from issued_documents where id = v_doc_v1) is not null, 'version 1 is now marked superseded');
   perform assert_that((select issued_by from issued_documents where id = v_doc_v1) = (select value from test_fixture_ids where key = 'admin'), 'issued_by is the actual authenticated session, not a parameter');
+  -- version 1's template_version is untouched by superseding it — proving
+  -- the historical row's own renderer selector survives, which is the
+  -- whole point of recording it per-version rather than only on the
+  -- latest row.
+  perform assert_that((select template_version from issued_documents where id = v_doc_v1) = '1', 'superseding a document does not alter the superseded row''s own template_version');
 end $$;
 
 -- Immutability: a direct update to canonical_data must be rejected.
 select assert_raises(
   format('update issued_documents set canonical_data = ''{}''::jsonb where id = %L', (select value from test_fixture_ids where key = 'issued_document_v2')),
   'directly editing canonical_data on an existing issued_documents row must be rejected'
+);
+
+-- Revision 3: template_version is protected by the same immutability
+-- trigger as canonical_data — a snapshot's recorded renderer version
+-- can never be silently changed after the fact either.
+select assert_raises(
+  format('update issued_documents set template_version = ''2'' where id = %L', (select value from test_fixture_ids where key = 'issued_document_v2')),
+  'directly editing template_version on an existing issued_documents row must be rejected'
 );
 
 -- No delete, ever.
@@ -1506,7 +1782,7 @@ git commit -m "feat(P5): surface committed_costs vendor/source fields for displa
 
 ### Task 4: Bid package service functions + thin Server Actions
 
-**Unchanged from Revision 1** — no field/behavior in `bidService.ts`'s package-management half (`createBidPackage`, `publishBidPackage`, `inviteVendor`, `listBidPackages`, `getBidPackageDetail`) depends on vendor identity resolution or line-level cost codes; those are RLS-side and material-order-side changes respectively. Implement exactly as Revision 1 specified:
+**Package-management half unchanged from Revision 1** — no field/behavior in `createBidPackage`, `publishBidPackage`, `inviteVendor`, `listBidPackages`, `getBidPackageDetail` depends on vendor identity resolution or line-level cost codes; those are RLS-side and material-order-side changes respectively. **Step 3, below, is new this revision** — `listVendors` (needed by Task 6/9's vendor pickers) and the two vendor-membership functions Decision 3's revocation capability needs to actually be callable.
 
 **Files:**
 - Create: `packages/02-app-shell/src/services/bidService.ts`
@@ -1623,7 +1899,50 @@ export async function getBidPackageDetail(supabase: SupabaseClient, bidPackageId
 }
 ```
 
-- [ ] **Step 3: Write thin Server Actions in `apps/web/app/admin/bids/actions.ts`**
+- [ ] **Step 3 (Revision 3 addition): append `listVendors` and the two vendor-membership functions `revokeVendorMember`/`reactivateVendorMember` to `bidService.ts`**
+
+`listVendors` belongs here rather than a new file because it exists purely to support the vendor picker on `/admin/bids`/`/admin/procurement` (Tasks 6/9) — same reasoning Task 6's spec already gives for placing it in this file. `revokeVendorMember`/`reactivateVendorMember` make P5-DESIGN.md's Decision 3 revocation capability actually callable, not just correct-at-the-SQL-level — per the design record's own exclusion note, no UI in P5 calls these yet (that's plausibly P11's job, alongside a real invitation flow), but the functions exist and are typechecked now so a future screen only has to add UI, not business logic.
+
+```typescript
+export interface VendorRow {
+  id: string;
+  name: string;
+}
+
+export async function listVendors(supabase: SupabaseClient, orgId: string): Promise<VendorRow[]> {
+  const { data, error } = await supabase.from("vendors").select("id, name").eq("org_id", orgId).eq("is_archived", false).order("name");
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({ id: row.id, name: row.name }));
+}
+
+/** revoked_by is deliberately NOT a parameter — the DB trigger
+ *  (enforce_vendor_member_identity_and_revocation) requires it to equal
+ *  the acting session's own auth.uid() and rejects anything else, so
+ *  passing it here would only ever fail; the plain update relies on the
+ *  RLS-scoped client's own session to supply the correct value via the
+ *  trigger, exactly like recorded_by's DB-boundary enforcement above. */
+export async function revokeVendorMember(supabase: SupabaseClient, vendorId: string, profileId: string) {
+  const { error } = await supabase
+    .from("vendor_members")
+    .update({ revoked_at: new Date().toISOString(), revoked_by: (await supabase.auth.getUser()).data.user?.id })
+    .eq("vendor_id", vendorId)
+    .eq("profile_id", profileId);
+  if (error) return { error: error.message };
+  return {};
+}
+
+export async function reactivateVendorMember(supabase: SupabaseClient, vendorId: string, profileId: string) {
+  const { error } = await supabase
+    .from("vendor_members")
+    .update({ revoked_at: null })
+    .eq("vendor_id", vendorId)
+    .eq("profile_id", profileId);
+  if (error) return { error: error.message };
+  return {};
+}
+```
+
+- [ ] **Step 4: Write thin Server Actions in `apps/web/app/admin/bids/actions.ts`**
 
 ```typescript
 "use server";
@@ -1633,6 +1952,8 @@ import {
   createBidPackage as createBidPackageService,
   publishBidPackage as publishBidPackageService,
   inviteVendor as inviteVendorService,
+  revokeVendorMember as revokeVendorMemberService,
+  reactivateVendorMember as reactivateVendorMemberService,
 } from "../../../../../packages/02-app-shell/src/services/bidService";
 
 export async function createBidPackage(projectId: string, costCodeId: string, title: string, scopeDescription?: string, dueAt?: string) {
@@ -1649,18 +1970,31 @@ export async function inviteVendor(bidPackageId: string, vendorId: string) {
   const supabase = await createServerSupabaseClient();
   return inviteVendorService(supabase, bidPackageId, vendorId);
 }
+
+// No screen in P5 calls these two yet (P5-DESIGN.md's own exclusion
+// note) — exported now so the capability is typechecked and testable,
+// not dead code waiting to be written from scratch later.
+export async function revokeVendorMember(vendorId: string, profileId: string) {
+  const supabase = await createServerSupabaseClient();
+  return revokeVendorMemberService(supabase, vendorId, profileId);
+}
+
+export async function reactivateVendorMember(vendorId: string, profileId: string) {
+  const supabase = await createServerSupabaseClient();
+  return reactivateVendorMemberService(supabase, vendorId, profileId);
+}
 ```
 
-- [ ] **Step 4: Run typecheck**
+- [ ] **Step 5: Run typecheck**
 
 Run: `npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/02-app-shell/src/services/bidService.ts apps/web/app/admin/bids/actions.ts
-git commit -m "feat(P5): bid package service functions + Server Actions"
+git commit -m "feat(P5): bid package service functions + Server Actions, plus vendor-membership revoke/reactivate"
 ```
 
 ---
@@ -1825,7 +2159,7 @@ git commit -m "feat(P5): bid submission recording, award, and provenance-carryin
 - Modify: `apps/web/src/shell/AdminChrome.tsx` (add nav entry)
 
 **Interfaces:**
-- Consumes: `listBidPackages`, `getBidPackageDetail`, `listBidQuestions` (Task 4/5, read); `createBidPackage`, `publishBidPackage`, `inviteVendor`, `recordBidSubmission`, `awardBid`, `askBidQuestion`, `answerBidQuestion`, `issueBidAddendum` (Task 4/5, Server Actions); `issueSubcontract` (Task 8's `documentIssuanceService.ts`, Server Action); `repo.getCostCodes` (existing `FinancialRepository`); a vendor picker needs a list of the org's `vendors` (new, small `listVendors(supabase, orgId)` read helper — add to `bidService.ts` in this task, not a separate task, since it exists purely to support this screen's invite form: `select id, name from vendors where org_id = $1 and is_archived = false order by name`).
+- Consumes: `listBidPackages`, `getBidPackageDetail`, `listBidQuestions`, `listVendors` (Task 4/5, read); `createBidPackage`, `publishBidPackage`, `inviteVendor`, `recordBidSubmission`, `awardBid`, `askBidQuestion`, `answerBidQuestion`, `issueBidAddendum` (Task 4/5, Server Actions); `issueSubcontract` (Task 8's `documentIssuanceService.ts`, Server Action); `repo.getCostCodes` (existing `FinancialRepository`). `listVendors` was added to `bidService.ts` in Task 4 (Revision 3) specifically so this screen's invite form and Task 9's order form could share it rather than each task defining its own copy.
 
 **Authorization:**
 - Page-level: `requireRole(["admin", "staff"])` in `page.tsx`, same as every other `/admin/*` page — redirects unauthenticated users to `/login`, throws `AuthorizationError` for a wrong-role authenticated user (caught by the framework's default error boundary for a Server Component, same as every existing `/admin/*` page — no new handling needed here, unlike the PDF Route Handlers in Task 10 which must catch it explicitly since Route Handlers have no such boundary).
@@ -1874,7 +2208,7 @@ git commit -m "feat(P5): bid submission recording, award, and provenance-carryin
 
 - [ ] **Step 2: Implement `apps/web/app/admin/bids/page.tsx`** per the Data flow section above, following `/admin/import/page.tsx`'s exact "first project, no demo fallback" shape.
 
-- [ ] **Step 3: Add the two read-only Server Actions (`getBidPackageDetail`, `listBidQuestions`) and `listVendors` to the relevant files** per the Data flow section.
+- [ ] **Step 3: Add the two read-only Server Actions (`getBidPackageDetail`, `listBidQuestions`) to `apps/web/app/admin/bids/actions.ts`** per the Data flow section — `listVendors` needs no Server Action wrapper; `page.tsx` calls it directly server-side (Data flow step 1), the same way it calls `repo.getCostCodes`.
 
 - [ ] **Step 4: Add `"bids"` nav entry to `AdminChrome.tsx`** per the Navigation section — read the file first to match its exact existing entry shape.
 
@@ -2069,7 +2403,7 @@ git commit -m "feat(P5): /admin/commitments screen, grouping multi-cost-code mat
 
 ### Task 8: Material order + line item service functions + document issuance service
 
-**Substantially revised from Revision 1:** cost code is now a required per-line-item parameter, not inherited from the order; `commitMaterialOrder` returns an array; a new `documentIssuanceService.ts` implements Decision 4.
+**Substantially revised:** cost code is now a required per-line-item parameter, not inherited from the order; `commitMaterialOrder` returns the cost-code-to-commitment mapping directly (Revision 3, not a bare array of ids); a new `documentIssuanceService.ts` implements Decision 4, now passing `template_version` (Revision 3) with every issuance.
 
 **Files:**
 - Create: `packages/02-app-shell/src/services/procurementService.ts`
@@ -2208,12 +2542,21 @@ export async function addMaterialOrderLineItem(
   return {};
 }
 
-/** Returns an ARRAY — Decision 2 means one order may now back several
- *  committed_costs rows, one per distinct cost code among its lines. */
+export interface MaterialOrderCommitResult {
+  costCodeId: string;
+  committedCostId: string;
+}
+
+/** Returns the mapping directly (Revision 3) — Decision 2 means one
+ *  order may now back several committed_costs rows, one per distinct
+ *  cost code among its lines, and the RPC's own `table(cost_code_id,
+ *  committed_cost_id)` return shape is what lets a caller associate
+ *  each without a second query. */
 export async function commitMaterialOrder(supabase: SupabaseClient, materialOrderId: string) {
   const { data, error } = await supabase.rpc("commit_material_order", { p_material_order_id: materialOrderId });
   if (error) return { error: error.message };
-  return { committedCostIds: (data as string[] | null) ?? [] };
+  const rows = (data as { cost_code_id: string; committed_cost_id: string }[] | null) ?? [];
+  return { committedCosts: rows.map((row) => ({ costCodeId: row.cost_code_id, committedCostId: row.committed_cost_id })) as MaterialOrderCommitResult[] };
 }
 
 export async function recordReceivedQuantity(supabase: SupabaseClient, lineItemId: string, receivedQuantity: number, markBackordered?: boolean) {
@@ -2263,12 +2606,21 @@ export async function recordReceivedQuantity(supabase: SupabaseClient, lineItemI
 Run: `npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 4: Write `packages/02-app-shell/src/services/documentIssuanceService.ts` (Decision 4)**
+- [ ] **Step 4: Write `packages/02-app-shell/src/pdf/templateVersions.ts`, then `packages/02-app-shell/src/services/documentIssuanceService.ts` (Decision 4)**
+
+The version constants live in their own tiny module, imported by BOTH `documentIssuanceService.ts` (this task) and the actual PDF template components (Task 10), rather than the service importing from the templates directly — Task 10's components are created after this task in the plan's own sequence, so a forward import from here into Task 10's files would break this task's own typecheck step until Task 10 exists. A single shared source-of-truth file avoids the ordering problem entirely and guarantees the service and the templates can never silently declare two different version strings for the same template.
+
+```typescript
+// packages/02-app-shell/src/pdf/templateVersions.ts
+export const MATERIAL_ORDER_PDF_TEMPLATE_VERSION = "1";
+export const SUBCONTRACT_PDF_TEMPLATE_VERSION = "1";
+```
 
 ```typescript
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getMaterialOrderDetail } from "./procurementService";
 import { getBidPackageDetail } from "./bidService";
+import { MATERIAL_ORDER_PDF_TEMPLATE_VERSION, SUBCONTRACT_PDF_TEMPLATE_VERSION } from "../pdf/templateVersions";
 
 export type IssuedDocumentType = "purchase_order" | "subcontract";
 
@@ -2278,6 +2630,7 @@ export interface IssuedDocumentRow {
   sourceId: string;
   documentNumber: string;
   version: number;
+  templateVersion: string;
   issuedAt: string;
   issuedBy: string | null;
   canonicalData: unknown;
@@ -2292,6 +2645,7 @@ function mapIssuedDocument(row: any): IssuedDocumentRow {
     sourceId: row.source_id,
     documentNumber: row.document_number,
     version: row.version,
+    templateVersion: row.template_version,
     issuedAt: row.issued_at,
     issuedBy: row.issued_by,
     canonicalData: row.canonical_data,
@@ -2328,7 +2682,13 @@ export async function getIssuedDocumentVersion(supabase: SupabaseClient, documen
  *  issuance, then hands it to issue_document() to freeze. Every field
  *  the PDF template (Task 10) needs must be present here — anything
  *  missing here is unrecoverable later, since post-issuance the
- *  snapshot, not the live tables, is authoritative for this version. */
+ *  snapshot, not the live tables, is authoritative for this version.
+ *  MATERIAL_ORDER_PDF_TEMPLATE_VERSION (Revision 3, Decision 4) is
+ *  imported from the template module itself, never hand-typed here —
+ *  the whole point of "historical template versions remain renderable"
+ *  is that this string always reflects whichever template file actually
+ *  produced canonicalData, with zero chance of the two silently drifting
+ *  out of sync. */
 export async function issuePurchaseOrder(supabase: SupabaseClient, materialOrderId: string, documentNumber?: string) {
   const order = await getMaterialOrderDetail(supabase, materialOrderId);
   if (!order) return { error: "Material order not found." };
@@ -2355,6 +2715,7 @@ export async function issuePurchaseOrder(supabase: SupabaseClient, materialOrder
     p_document_type: "purchase_order",
     p_source_id: materialOrderId,
     p_document_number: documentNumber ?? order.orderNumber ?? materialOrderId.slice(0, 8),
+    p_template_version: MATERIAL_ORDER_PDF_TEMPLATE_VERSION,
     p_canonical_data: canonicalData,
   });
   if (error) return { error: error.message };
@@ -2384,6 +2745,7 @@ export async function issueSubcontract(supabase: SupabaseClient, bidPackageId: s
     p_document_type: "subcontract",
     p_source_id: bidPackageId,
     p_document_number: documentNumber ?? `SUB-${bidPackageId.slice(0, 8)}`,
+    p_template_version: SUBCONTRACT_PDF_TEMPLATE_VERSION,
     p_canonical_data: canonicalData,
   });
   if (error) return { error: error.message };
@@ -2451,8 +2813,8 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add packages/02-app-shell/src/services/procurementService.ts packages/02-app-shell/src/services/documentIssuanceService.ts apps/web/app/admin/procurement/actions.ts apps/web/app/admin/bids/submissionActions.ts
-git commit -m "feat(P5): line-level material order services + immutable document issuance"
+git add packages/02-app-shell/src/services/procurementService.ts packages/02-app-shell/src/services/documentIssuanceService.ts packages/02-app-shell/src/pdf/templateVersions.ts apps/web/app/admin/procurement/actions.ts apps/web/app/admin/bids/submissionActions.ts
+git commit -m "feat(P5): line-level material order services + immutable document issuance, mapping-returning commit"
 ```
 
 ---
@@ -2467,7 +2829,7 @@ git commit -m "feat(P5): line-level material order services + immutable document
 - Modify: `apps/web/src/shell/AdminChrome.tsx` (add nav entry)
 
 **Interfaces:**
-- Consumes: `listMaterialOrders`, `getMaterialOrderDetail` (Task 8, read); `createMaterialOrder`, `addMaterialOrderLineItem`, `commitMaterialOrder`, `recordReceivedQuantity`, `issuePurchaseOrder` (Task 8, Server Actions); `repo.getCostCodes` (existing, for the per-line cost-code selector — every line item's dropdown, not just an order-level one, per Decision 2); `listVendors` (Task 6, reused here for the order's vendor picker).
+- Consumes: `listMaterialOrders`, `getMaterialOrderDetail` (Task 8, read); `createMaterialOrder`, `addMaterialOrderLineItem`, `commitMaterialOrder`, `recordReceivedQuantity`, `issuePurchaseOrder` (Task 8, Server Actions); `repo.getCostCodes` (existing, for the per-line cost-code selector — every line item's dropdown, not just an order-level one, per Decision 2); `listVendors` (Task 4, reused here for the order's vendor picker — same shared function Task 6 also uses).
 
 **Authorization:** identical to Task 6 — `requireRole(["admin", "staff"])` at the page level, RLS as the real gate underneath, staff/admin only, no client or vendor variant.
 
@@ -2496,7 +2858,7 @@ git commit -m "feat(P5): line-level material order services + immutable document
 |---|---|---|
 | `createMaterialOrder` | "Create Order" form (project, optional default cost code, optional vendor, optional order number) | New order appears in the list, auto-selected, status `draft` |
 | `addMaterialOrderLineItem` | "Add Line Item" form submit, per order | New row in the line-item table, with its own cost code shown |
-| `commitMaterialOrder` | "Commit Order" button, behind confirmation, only visible with ≥1 line item and status `draft` | Order status → `ordered`; one or more new rows appear on `/admin/commitments`, grouped (Task 7); line-item edit forms disappear/lock, replaced by the receiving controls below |
+| `commitMaterialOrder` | "Commit Order" button, behind confirmation, only visible with ≥1 line item and status `draft` | Order status → `ordered`; the returned `{ costCodeId, committedCostId }[]` mapping drives a per-cost-code confirmation summary shown inline ("Framing: $85,000 committed", "Drywall: $48,000 committed"), not just a generic "committed" message; the same rows appear grouped on `/admin/commitments` (Task 7); line-item edit forms disappear/lock, replaced by the receiving controls below |
 | `recordReceivedQuantity` | "Record Received" inline control per line item, only visible once status is `ordered`/`partially_received` | That line's received quantity/backorder flag updates; order status recomputes to `partially_received` or `received` per the existing logic |
 | `issuePurchaseOrder` | "Issue PO" button, visible once committed | Opens/links the PO PDF (Task 10) at its new version; re-issuing after any change shows "Version 2 issued" same as Task 6's subcontract flow |
 
@@ -2552,12 +2914,15 @@ Run: `npm install @react-pdf/renderer` from whichever workspace `csv-parse` was 
 
 Confirm compatibility before proceeding: this repo runs Next.js `14.2.35` / React `18.3.1` (`apps/web/package.json`) — `@react-pdf/renderer` 3.x targets React 16.8+/18, so no conflict. No other Route Handler in this repo sets `runtime = "edge"` (confirmed by checking `apps/web/app/api/imports/parse/route.ts`, P4's own Route Handler), so Node has been the implicit default all along — Step 4/5 below make it explicit rather than continuing to rely on that being unchanged in the future.
 
-- [ ] **Step 2: Write `packages/02-app-shell/src/pdf/MaterialOrderPdf.tsx`**
+- [ ] **Step 2: Write `packages/02-app-shell/src/pdf/MaterialOrderPdf.tsx`, including the template-version renderer registry (Decision 4)**
+
+The registry is what makes "historical template versions remain renderable" a real code path rather than a design intention: the Route Handler (Step 4) never imports `MaterialOrderPdf` directly, it always looks the renderer up by `template_version` string through `MATERIAL_ORDER_PDF_RENDERERS`. When a future breaking template change ships, the convention is to add a new keyed entry (e.g. a `MaterialOrderPdfV2` component under `MATERIAL_ORDER_PDF_TEMPLATE_VERSION = "2"`) to this same registry object without removing the `"1"` entry — this file is the one place that convention has to be honored.
 
 ```tsx
 import React from "react";
 import { Document, Page, Text, View, StyleSheet } from "@react-pdf/renderer";
 import { formatCents } from "../../../01-financial-engine/src/money";
+import { MATERIAL_ORDER_PDF_TEMPLATE_VERSION } from "./templateVersions";
 
 const styles = StyleSheet.create({
   page: { padding: 32, fontSize: 11 },
@@ -2620,14 +2985,23 @@ export function MaterialOrderPdf({
     </Document>
   );
 }
+
+/** Keyed by template_version. The Route Handler resolves the correct
+ *  entry from a snapshot's own frozen template_version (issued
+ *  documents) or MATERIAL_ORDER_PDF_TEMPLATE_VERSION directly (drafts)
+ *  — it never imports MaterialOrderPdf by name. */
+export const MATERIAL_ORDER_PDF_RENDERERS: Record<string, typeof MaterialOrderPdf> = {
+  [MATERIAL_ORDER_PDF_TEMPLATE_VERSION]: MaterialOrderPdf,
+};
 ```
 
-- [ ] **Step 3: Write `packages/02-app-shell/src/pdf/SubcontractPdf.tsx`**
+- [ ] **Step 3: Write `packages/02-app-shell/src/pdf/SubcontractPdf.tsx`, including its own renderer registry**
 
 ```tsx
 import React from "react";
 import { Document, Page, Text, StyleSheet } from "@react-pdf/renderer";
 import { formatCents } from "../../../01-financial-engine/src/money";
+import { SUBCONTRACT_PDF_TEMPLATE_VERSION } from "./templateVersions";
 
 const styles = StyleSheet.create({
   page: { padding: 32, fontSize: 11 },
@@ -2662,9 +3036,13 @@ export function SubcontractPdf({
     </Document>
   );
 }
+
+export const SUBCONTRACT_PDF_RENDERERS: Record<string, typeof SubcontractPdf> = {
+  [SUBCONTRACT_PDF_TEMPLATE_VERSION]: SubcontractPdf,
+};
 ```
 
-- [ ] **Step 4: Write `apps/web/app/api/procurement/material-orders/[id]/pdf/route.ts` — Node runtime, snapshot-or-draft rendering, explicit auth/failure handling**
+- [ ] **Step 4: Write `apps/web/app/api/procurement/material-orders/[id]/pdf/route.ts` — Node runtime, snapshot-or-draft rendering through the version registry, explicit auth/failure handling**
 
 ```typescript
 export const runtime = "nodejs"; // @react-pdf/renderer requires Node APIs — never Edge (Decision 9)
@@ -2676,7 +3054,8 @@ import { requireRole, AuthorizationError } from "../../../../../../src/server/au
 import { createServerSupabaseClient } from "../../../../../../src/server/supabase/serverClient";
 import { getMaterialOrderDetail } from "../../../../../../../../packages/02-app-shell/src/services/procurementService";
 import { getLatestIssuedDocument, getIssuedDocumentVersion } from "../../../../../../../../packages/02-app-shell/src/services/documentIssuanceService";
-import { MaterialOrderPdf } from "../../../../../../../../packages/02-app-shell/src/pdf/MaterialOrderPdf";
+import { MATERIAL_ORDER_PDF_RENDERERS } from "../../../../../../../../packages/02-app-shell/src/pdf/MaterialOrderPdf";
+import { MATERIAL_ORDER_PDF_TEMPLATE_VERSION } from "../../../../../../../../packages/02-app-shell/src/pdf/templateVersions";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -2699,6 +3078,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   let lineItems: { description: string; costCodeId: string; quantity: number; unit: string | null; unitPriceCents: number; lineTotalCents: number }[];
   let totalCents: number;
   let isDraft: boolean;
+  let templateVersion: string;
 
   if (requestedVersion) {
     const snapshot = await getIssuedDocumentVersion(supabase, "purchase_order", params.id, Number(requestedVersion));
@@ -2709,6 +3089,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     lineItems = data.lineItems;
     totalCents = data.totalCents;
     isDraft = false;
+    templateVersion = snapshot.templateVersion;
   } else {
     const latestIssued = await getLatestIssuedDocument(supabase, "purchase_order", params.id);
     if (latestIssued) {
@@ -2718,6 +3099,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       lineItems = data.lineItems;
       totalCents = data.totalCents;
       isDraft = false;
+      templateVersion = latestIssued.templateVersion;
     } else {
       const detail = await getMaterialOrderDetail(supabase, params.id);
       if (!detail) return NextResponse.json({ error: "Material order not found" }, { status: 404 });
@@ -2727,12 +3109,23 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       lineItems = detail.lineItems.map((li) => ({ description: li.description, costCodeId: li.costCodeId, quantity: li.quantity, unit: li.unit, unitPriceCents: li.unitPriceCents, lineTotalCents: li.quantity * li.unitPriceCents }));
       totalCents = lineItems.reduce((sum, li) => sum + li.lineTotalCents, 0);
       isDraft = true;
+      templateVersion = MATERIAL_ORDER_PDF_TEMPLATE_VERSION;
     }
+  }
+
+  // Resolve the EXACT renderer this snapshot was issued under (or the
+  // current one, for a draft) — never "whatever MaterialOrderPdf
+  // currently exports." An unrecognized version is a data-integrity
+  // case that should never occur in practice but is defensively
+  // handled the same as any other rendering failure (Decision 4/9).
+  const Renderer = MATERIAL_ORDER_PDF_RENDERERS[templateVersion];
+  if (!Renderer) {
+    return NextResponse.json({ error: "Failed to render PDF" }, { status: 500 });
   }
 
   try {
     const buffer = await renderToBuffer(
-      React.createElement(MaterialOrderPdf, { documentNumber, vendorName, lineItems, totalCents, isDraft })
+      React.createElement(Renderer, { documentNumber, vendorName, lineItems, totalCents, isDraft })
     );
     return new NextResponse(buffer, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="po-${documentNumber}.pdf"` } });
   } catch {
@@ -2742,7 +3135,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 }
 ```
 
-- [ ] **Step 5: Write `apps/web/app/api/bids/[bidPackageId]/subcontract-pdf/route.ts`, same structure**
+- [ ] **Step 5: Write `apps/web/app/api/bids/[bidPackageId]/subcontract-pdf/route.ts`, same structure, including the registry dispatch**
 
 ```typescript
 export const runtime = "nodejs";
@@ -2754,7 +3147,8 @@ import { requireRole, AuthorizationError } from "../../../../../src/server/auth/
 import { createServerSupabaseClient } from "../../../../../src/server/supabase/serverClient";
 import { getBidPackageDetail } from "../../../../../../../packages/02-app-shell/src/services/bidService";
 import { getLatestIssuedDocument, getIssuedDocumentVersion } from "../../../../../../../packages/02-app-shell/src/services/documentIssuanceService";
-import { SubcontractPdf } from "../../../../../../../packages/02-app-shell/src/pdf/SubcontractPdf";
+import { SUBCONTRACT_PDF_RENDERERS } from "../../../../../../../packages/02-app-shell/src/pdf/SubcontractPdf";
+import { SUBCONTRACT_PDF_TEMPLATE_VERSION } from "../../../../../../../packages/02-app-shell/src/pdf/templateVersions";
 
 export async function GET(req: NextRequest, { params }: { params: { bidPackageId: string } }) {
   try {
@@ -2773,6 +3167,7 @@ export async function GET(req: NextRequest, { params }: { params: { bidPackageId
   let awardedVendorName: string;
   let amountCents: number;
   let isDraft: boolean;
+  let templateVersion: string;
 
   if (requestedVersion) {
     const snapshot = await getIssuedDocumentVersion(supabase, "subcontract", params.bidPackageId, Number(requestedVersion));
@@ -2780,12 +3175,14 @@ export async function GET(req: NextRequest, { params }: { params: { bidPackageId
     const data = snapshot.canonicalData as any;
     documentNumber = snapshot.documentNumber; title = data.title; scopeDescription = data.scopeDescription;
     awardedVendorName = data.awardedVendorName; amountCents = data.amountCents; isDraft = false;
+    templateVersion = snapshot.templateVersion;
   } else {
     const latestIssued = await getLatestIssuedDocument(supabase, "subcontract", params.bidPackageId);
     if (latestIssued) {
       const data = latestIssued.canonicalData as any;
       documentNumber = latestIssued.documentNumber; title = data.title; scopeDescription = data.scopeDescription;
       awardedVendorName = data.awardedVendorName; amountCents = data.amountCents; isDraft = false;
+      templateVersion = latestIssued.templateVersion;
     } else {
       const detail = await getBidPackageDetail(supabase, params.bidPackageId);
       if (!detail) return NextResponse.json({ error: "Bid package not found" }, { status: 404 });
@@ -2793,12 +3190,18 @@ export async function GET(req: NextRequest, { params }: { params: { bidPackageId
       if (!awarded) return NextResponse.json({ error: "No awarded submission for this bid package yet" }, { status: 409 });
       documentNumber = `SUB-${detail.id.slice(0, 8)}`; title = detail.title; scopeDescription = detail.scopeDescription;
       awardedVendorName = awarded.vendorName; amountCents = awarded.amountCents ?? 0; isDraft = true;
+      templateVersion = SUBCONTRACT_PDF_TEMPLATE_VERSION;
     }
+  }
+
+  const Renderer = SUBCONTRACT_PDF_RENDERERS[templateVersion];
+  if (!Renderer) {
+    return NextResponse.json({ error: "Failed to render PDF" }, { status: 500 });
   }
 
   try {
     const buffer = await renderToBuffer(
-      React.createElement(SubcontractPdf, { documentNumber, title, scopeDescription, awardedVendorName, amountCents, isDraft })
+      React.createElement(Renderer, { documentNumber, title, scopeDescription, awardedVendorName, amountCents, isDraft })
     );
     return new NextResponse(buffer, { headers: { "Content-Type": "application/pdf", "Content-Disposition": `inline; filename="subcontract-${documentNumber}.pdf"` } });
   } catch {
@@ -2833,6 +3236,10 @@ test("material order PDF route returns a safe 500 when renderToBuffer throws", a
 
 test("material order PDF route renders a DRAFT watermark when no issued_documents row exists, and omits it when one does", async () => {
   // ... mock getLatestIssuedDocument to return null in one case and a row in another, assert the isDraft flag passed into MaterialOrderPdf differs accordingly (test at the prop-construction level, not by parsing rendered PDF bytes)
+});
+
+test("material order PDF route returns a safe 500 for an unrecognized template_version, not a crash (Decision 4/Revision 3)", async () => {
+  // ... mock getLatestIssuedDocument to return a snapshot whose templateVersion is e.g. "99" (not a key in MATERIAL_ORDER_PDF_RENDERERS), assert status 500 and the same generic { error: "Failed to render PDF" } body — proves the registry-dispatch fallback is a real, tested code path, not just a design intention
 });
 ```
 
@@ -2982,11 +3389,11 @@ Extend the existing live-checkpoint procedure to 015. Confirm the checkpoint scr
 
 - [ ] **Step 3: Manually re-walk the full golden path end-to-end against the real hosted dev project**
 
-Bid package → invite two vendors → record two submissions → award one → confirm exactly one `committed_costs` row and the sibling `declined`. Material order with line items across **two different cost codes** → commit → confirm **two** `committed_costs` rows, correctly summed and grouped on `/admin/commitments` → attempt a post-commit line-item edit and confirm it's rejected → record a partial receive, mark backordered → confirm `getBackorderedMaterialLineItems` returns it with the correct `costCodeId`. Issue a PO, then issue it again after some change → confirm two `issued_documents` versions exist and `?version=1` still renders the original numbers. Confirm a second real login (second `vendor_members` row on the same `vendors.id`) reads identically to the first, and that a client/vendor-role session hitting either PDF route gets 403, not a 500 page.
+Bid package → invite two vendors → record two submissions → award one → confirm exactly one `committed_costs` row and the sibling `declined`. Material order with line items across **two different cost codes** → commit → confirm **two** `committed_costs` rows, correctly paired to their cost codes via the RPC's own returned mapping (not merely "two rows exist") and grouped on `/admin/commitments` → attempt a post-commit line-item edit and confirm it's rejected, with only `received_quantity`/`backordered` still accepted → record a partial receive, mark backordered → confirm `getBackorderedMaterialLineItems` returns it with the correct `costCodeId`. Issue a PO, then issue it again after some change → confirm two `issued_documents` versions exist, both recording `template_version`, and `?version=1` still renders the original numbers through version 1's own registry entry even after live data has changed. Confirm a second real login (second `vendor_members` row on the same `vendors.id`) reads identically to the first; **revoke** that second membership and confirm access is lost immediately while the first, still-active member is unaffected, then **reactivate** and confirm access returns. Attempt to insert a `bid_questions` row with `recorded_by` explicitly set to a different user's id and confirm the database rejects it. Confirm a client/vendor-role session hitting either PDF route gets 403, not a 500 page.
 
 - [ ] **Step 4: Write `docs/milestones/P5-complete.md`**
 
-Follow `docs/milestones/P4-complete.md`'s exact structure. Known limitations section must carry forward, explicitly, at minimum: no vendor-facing UI exercise of the new RLS until P11; no persisted PDF *bytes*, only canonical-data snapshots, with the template-stability caveat from Decision 4; single-cost-code-per-bid-package limitation (Decision 1, unchanged); single-award-per-package limitation (Decision 6, unchanged); no mechanism to end a `vendor_members` link yet. Final "Starter prompt for a fresh Claude Code session" section for P6, matching P4-complete.md's own precedent.
+Follow `docs/milestones/P4-complete.md`'s exact structure. Known limitations section must carry forward, explicitly, at minimum: no vendor-facing UI exercise of the new RLS until P11 (though revocation/reactivation are real, callable, and tested — just with no screen calling them in P5); no persisted PDF *bytes*, only canonical-data snapshots plus `template_version` — P5's reproducibility guarantee is content/layout-equivalent, not byte-identical, deferred to a future package that persists rendered files (Decision 4); single-cost-code-per-bid-package limitation (Decision 1, unchanged); single-award-per-package limitation (Decision 6, unchanged). Do not carry forward Revision 2's "no mechanism to end a vendor_members link" limitation — that gap is closed this revision (Decision 3); state plainly that it no longer applies rather than silently dropping the line. Final "Starter prompt for a fresh Claude Code session" section for P6, matching P4-complete.md's own precedent.
 
 - [ ] **Step 5: Update `docs/production-build/PRODUCTION-ROADMAP.md`'s status line**
 
@@ -3002,4 +3409,4 @@ git tag p5-complete
 
 - [ ] **Step 7: Report closeout summary**
 
-Report final acceptance-criteria status (all ten from `P5-DESIGN.md` Revision 2), verified command output, the live-checkpoint result, and every "Known limitation" from Step 4 restated explicitly.
+Report final acceptance-criteria status (all twelve from `P5-DESIGN.md` Revision 3), verified command output, the live-checkpoint result, and every "Known limitation" from Step 4 restated explicitly.
