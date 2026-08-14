@@ -37,6 +37,7 @@ const FILES = [
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",
   "tests/sql/package_p4_estimating_qb_import_tests.sql",
+  "tests/sql/package_p5_commitments_bids_procurement_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
 ];
 
