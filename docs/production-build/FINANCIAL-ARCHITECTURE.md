@@ -135,6 +135,7 @@ in the same commit that introduces it, never invented ad hoc:**
 | `manual` | `expenses` | Hand-entered by staff | 001 (existing default) |
 | `quickbooks_import` | `expenses` | Confirmed from an `import_batches` row | P4 |
 | `bid_award` | `committed_costs` | Created from an awarded `bid_submissions` row | P5 |
+| `material_order` | `committed_costs` | Created from a committed `material_orders` row (`commit_material_order()`) | P5 |
 | `change_order` | `budget_ledger` | Approved change order | P7 (slot already reserved, per `PRODUCTION-ROADMAP.md`'s P7 section) |
 | `selection_overage` | `budget_ledger` | Approved selection over allowance | P8 |
 | `vendor_invoice` | `expenses` | Confirmed from a vendor-submitted `vendor_invoices` row | P11 |
