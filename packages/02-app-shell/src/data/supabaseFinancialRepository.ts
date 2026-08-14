@@ -103,6 +103,9 @@ export class SupabaseFinancialRepository implements FinancialRepository {
       status: row.status,
       supersededAt: row.superseded_at,
       supersededById: row.superseded_by_id,
+      vendorName: row.vendor_name ?? undefined,
+      sourceType: row.source_type ?? undefined,
+      sourceId: row.source_id ?? undefined,
     }));
   }
 
