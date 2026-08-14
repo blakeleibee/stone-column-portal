@@ -213,14 +213,18 @@ vendor ever logs into anything P5 ships.
      after insert (a membership link's identity is fixed at creation;
      revoke-and-recreate is the only way to "move" one, and recreate
      here means reactivating the existing unique row, not inserting a
-     new one), and (b) requires `revoked_by = auth.uid()` at the exact
-     moment `revoked_at` transitions from `null` to non-null — the
-     same anti-spoofing principle Decision 8 applies to
-     `bid_questions.recorded_by`, applied here proactively rather than
-     waiting for a second review round to catch the identical class of
-     gap. Reactivation (`revoked_at` cleared back to `null`) clears
-     `revoked_by` too, so a stale attribution never lingers on an
-     active row.
+     new one), and (b) requires `revoked_by = auth.uid()` whenever
+     `revoked_at` or `revoked_by` changes — the same anti-spoofing
+     principle Decision 8 applies to `bid_questions.recorded_by`.
+     **The first version of this trigger only checked `update`s where
+     `revoked_at` itself changed** — a task-review finding caught two
+     real gaps: a row could be `insert`ed already-revoked with a forged
+     `revoked_by`, and an `update` touching only `revoked_by` (leaving
+     `revoked_at` unchanged) skipped the check entirely. The trigger
+     now also runs on `insert` and checks either field changing, not
+     just `revoked_at`. Reactivation (`revoked_at` cleared back to
+     `null`) clears `revoked_by` too, so a stale attribution never
+     lingers on an active row.
    - **No delete, ever** — `vendor_members_no_delete` (same
      `reject_delete()` trigger every other permanent-record table in
      this schema uses), so a later audit-log row referencing a
@@ -304,7 +308,13 @@ vendor ever logs into anything P5 ships.
    `issued_by` is set to `auth.uid()` *inside* the RPC, never accepted
    as a caller-supplied parameter — the same anti-impersonation
    reasoning as Decision 8 below, applied here so an issuance record
-   can never be forged to claim a different issuer.
+   can never be forged to claim a different issuer. **This alone does
+   not close the gap** — found during Task 1's implementation review,
+   not this decision's original pass: RLS still permits a direct
+   `insert` on `issued_documents` that bypasses `issue_document()`
+   entirely, so `enforce_issued_document_immutability()` now also runs
+   on `insert`, rejecting any row whose `issued_by` isn't the inserting
+   session's own `auth.uid()` regardless of which path wrote it.
    **`template_version`, added this revision, is what actually makes
    "historical template versions remain renderable" a mechanism rather
    than a hope.** Each PDF template module (`MaterialOrderPdf.tsx`/
@@ -459,19 +469,29 @@ vendor ever logs into anything P5 ships.
    to set `recorded_by` to someone else's id is rejected, at the
    database boundary, regardless of what the service layer does or
    fails to do. `issued_by` on `issued_documents` (Decision 4) never
-   had this gap in the first place — it is set *inside* the RPC body
-   with no caller-facing parameter to spoof at all, which is actually a
-   stronger pattern than a column default; `bid_questions` uses a
-   trigger instead because it is a plain table insert, not an RPC, so
-   there is no RPC body to hide the assignment inside. `asked_at` records when the vendor reportedly asked (per
-   staff, possibly by phone yesterday); the row's own `created_at`
-   (implicit, not separately named) records when it was actually
-   entered — keeping "what the vendor said" and "when this became a
-   system record" honestly distinct rather than conflated into one
-   timestamp. `bid_addenda` needed no equivalent change — an addendum
-   is inherently staff-issued by design (a vendor never issues one),
-   so it already carried `issued_by` with no impersonation risk to
-   begin with.
+   had this gap through the RPC-call path — `issued_by` is set *inside*
+   the RPC body with no caller-facing parameter to spoof, which is a
+   stronger starting point than a column default. **It was not,
+   however, immune to a direct table insert bypassing the RPC
+   entirely** (a task-review finding, corrected the same way as the two
+   items below: `enforce_issued_document_immutability()` now also runs
+   on `insert`). `bid_questions` uses a trigger from the start because
+   it is a plain table insert, not an RPC, so there is no RPC body to
+   hide the assignment inside. `asked_at` records when the vendor
+   reportedly asked (per staff, possibly by phone yesterday); the row's
+   own `created_at` (implicit, not separately named) records when it
+   was actually entered — keeping "what the vendor said" and "when this
+   became a system record" honestly distinct rather than conflated into
+   one timestamp. **`bid_addenda` needed the identical trigger-based fix
+   as `bid_questions`** — a correction to this decision's original
+   claim that it "needed no equivalent change... no impersonation risk
+   to begin with." That reasoning was wrong: `bid_addenda_staff_full_access`'s
+   `WITH CHECK` only tests project ownership, not who `issued_by`
+   claims to be, so a direct insert could forge it exactly like
+   `bid_questions.recorded_by` could before this decision's trigger. A
+   new `enforce_bid_addendum_issued_by_self()` closes it, found and
+   fixed during Task 1's implementation review, not this decision's
+   original pass.
 
 9. **New dependency: `@react-pdf/renderer`, used only inside a
    server-side Node.js Route Handler, pinned to an exact version (no

@@ -42,7 +42,7 @@
 - Create: `supabase/migrations/20260814000000_commitments_bids_procurement.sql` (mirror)
 
 **Interfaces:**
-- Produces: types `bid_package_status`, `bid_submission_status`, `material_order_status`, `issued_document_type`; tables `vendor_members`, `bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `issued_documents`; functions `is_vendor_member(uuid) returns boolean` (requires active/non-revoked membership), `award_bid(uuid) returns uuid`, `commit_material_order(uuid) returns table(cost_code_id uuid, committed_cost_id uuid)`, `issue_document(issued_document_type, uuid, text, text, jsonb) returns uuid` (now takes `p_template_version`); trigger functions `enforce_vendor_member_org_match()`, `enforce_vendor_member_identity_and_revocation()`, `log_audit_via_bid_package()`, `log_audit_via_material_order()`, `enforce_line_item_project_matches_order()`, `enforce_material_order_line_item_frozen_after_commit()`, `enforce_bid_question_recorded_by_self()`, `enforce_issued_document_immutability()`, `log_audit_via_issued_document()`.
+- Produces: types `bid_package_status`, `bid_submission_status`, `material_order_status`, `issued_document_type`; tables `vendor_members`, `bid_packages`, `bid_submissions`, `bid_questions`, `bid_addenda`, `material_orders`, `material_order_line_items`, `issued_documents`; functions `is_vendor_member(uuid) returns boolean` (requires active/non-revoked membership), `award_bid(uuid) returns uuid`, `commit_material_order(uuid) returns table(cost_code_id uuid, committed_cost_id uuid)`, `issue_document(issued_document_type, uuid, text, text, jsonb) returns uuid` (now takes `p_template_version`); trigger functions `enforce_vendor_member_org_match()`, `enforce_vendor_member_identity_and_revocation()`, `log_audit_via_bid_package()`, `log_audit_via_material_order()`, `enforce_line_item_project_matches_order()`, `enforce_material_order_line_item_frozen_after_commit()`, `enforce_bid_question_recorded_by_self()`, `enforce_bid_addendum_issued_by_self()`, `enforce_issued_document_immutability()`, `log_audit_via_issued_document()`.
 
 - [ ] **Step 1: Write `schema/015_commitments_bids_procurement.sql` — vendor identity, including revocation (Revision 3 hardening)**
 
@@ -102,18 +102,32 @@ create trigger vendor_members_org_match before insert or update on vendor_member
 -- to bid_questions.recorded_by, applied here too; (c) reactivating
 -- (revoked_at cleared) also clears revoked_by, so no stale attribution
 -- lingers on an active row.
+-- Fix found in Task 1 review (not the original Revision 3 pass): the
+-- update-only version below missed two spoofing paths — inserting a
+-- row that is ALREADY revoked with a forged revoked_by, and an update
+-- that changes ONLY revoked_by while leaving revoked_at untouched.
+-- Both are now covered: INSERT is checked directly, and the UPDATE
+-- check now triggers on either field changing, not just revoked_at.
 create or replace function public.enforce_vendor_member_identity_and_revocation() returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
+  if tg_op = 'INSERT' then
+    if new.revoked_at is not null and new.revoked_by is distinct from auth.uid() then
+      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when inserting an already-revoked row — got % (row %).',
+        auth.uid(), new.revoked_by, new.id;
+    end if;
+    return new;
+  end if;
+
   if new.vendor_id is distinct from old.vendor_id or new.profile_id is distinct from old.profile_id then
     raise exception 'vendor_members.vendor_id/profile_id are immutable after insert (row %) — revoke and reactivate the existing membership instead of reassigning it.', old.id;
   end if;
 
-  if new.revoked_at is distinct from old.revoked_at then
+  if new.revoked_by is distinct from old.revoked_by or new.revoked_at is distinct from old.revoked_at then
     if new.revoked_at is not null and new.revoked_by is distinct from auth.uid() then
-      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when revoking — got %.', auth.uid(), new.revoked_by;
+      raise exception 'vendor_members.revoked_by must equal the acting session''s own auth.uid() (%) when revoking — got % (row %).', auth.uid(), new.revoked_by, old.id;
     end if;
     if new.revoked_at is null then
       new.revoked_by := null;
@@ -125,7 +139,7 @@ end;
 $$;
 
 create trigger vendor_members_identity_and_revocation
-  before update on vendor_members
+  before insert or update on vendor_members
   for each row execute function public.enforce_vendor_member_identity_and_revocation();
 
 -- Revision 3: filters to ACTIVE membership. Every RLS policy in this
@@ -395,8 +409,13 @@ create trigger audit_bid_questions after insert or update on bid_questions
   for each row execute function public.log_audit_via_bid_package();
 
 -- ---------------------------------------------------------------------
--- Bid addenda: inherently staff-issued — no impersonation risk, no
--- source/recorded_by fields needed (issued_by already exists).
+-- Bid addenda: inherently staff-issued, no source/recorded_by enum
+-- needed (only one possible author role) — but issued_by is still just
+-- as spoofable via a direct table write as bid_questions.recorded_by
+-- was, since bid_addenda_staff_full_access's WITH CHECK below only
+-- tests project ownership, not who issued_by claims to be. Same
+-- trigger-based fix as bid_questions, found in task review, not
+-- something "no impersonation risk" excused (that framing was wrong).
 -- ---------------------------------------------------------------------
 create table bid_addenda (
   id             uuid primary key default uuid_generate_v4(),
@@ -423,6 +442,30 @@ create policy bid_addenda_vendor_read on bid_addenda
       where bs.bid_package_id = bid_addenda.bid_package_id and is_vendor_member(bs.vendor_id)
     )
   );
+
+create or replace function public.enforce_bid_addendum_issued_by_self() returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.issued_by is distinct from auth.uid() then
+      raise exception 'bid_addenda.issued_by must equal the inserting session''s own auth.uid() (%) — got %.',
+        auth.uid(), new.issued_by;
+    end if;
+    return new;
+  end if;
+
+  if new.issued_by is distinct from old.issued_by then
+    raise exception 'bid_addenda.issued_by is immutable after insert (row %) — provenance is set once, never reassigned.', old.id;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger bid_addenda_issued_by_self
+  before insert or update on bid_addenda
+  for each row execute function public.enforce_bid_addendum_issued_by_self();
 
 create trigger audit_bid_addenda after insert or update on bid_addenda
   for each row execute function public.log_audit_via_bid_package();
@@ -652,11 +695,28 @@ create policy issued_documents_staff_full_access on issued_documents
     end
   );
 
+-- Revision 3 fix (found in Task 1 review, not just Revision 3's original
+-- pass): issued_by being set "inside the RPC" (issue_document()) was
+-- never actually enforced against a DIRECT table insert —
+-- issued_documents_staff_full_access's WITH CHECK only tests project
+-- ownership, so any staff session could bypass the RPC entirely and
+-- insert a forged issued_by. This function now also runs on INSERT,
+-- closing that gap the same way bid_questions/bid_addenda's triggers
+-- do; the UPDATE branch (unchanged) still protects every field from
+-- being altered after the fact.
 create or replace function public.enforce_issued_document_immutability() returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
 begin
+  if tg_op = 'INSERT' then
+    if new.issued_by is distinct from auth.uid() then
+      raise exception 'issued_documents.issued_by must equal the inserting session''s own auth.uid() (%) — got %. Issue documents through issue_document(), which sets this automatically.',
+        auth.uid(), new.issued_by;
+    end if;
+    return new;
+  end if;
+
   if new.canonical_data is distinct from old.canonical_data
     or new.document_number is distinct from old.document_number
     or new.version is distinct from old.version
@@ -672,7 +732,7 @@ begin
 end;
 $$;
 
-create trigger issued_documents_immutable before update on issued_documents
+create trigger issued_documents_immutable before insert or update on issued_documents
   for each row execute function public.enforce_issued_document_immutability();
 
 create trigger issued_documents_no_delete before delete on issued_documents
@@ -900,6 +960,8 @@ drop table if exists material_orders;
 drop type if exists material_order_status;
 
 drop trigger if exists audit_bid_addenda on bid_addenda;
+drop trigger if exists bid_addenda_issued_by_self on bid_addenda;
+drop function if exists public.enforce_bid_addendum_issued_by_self();
 drop table if exists bid_addenda;
 
 drop trigger if exists audit_bid_questions on bid_questions;
