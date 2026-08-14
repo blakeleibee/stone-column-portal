@@ -1186,7 +1186,11 @@ begin
   insert into test_fixture_ids values ('vendor_a_user_2', v_vendor_a_user_2);
 
   -- A second, unrelated vendor business, invited to a DIFFERENT package.
+  -- Registered as its own fixture ('vendor_beta') — Task 2's
+  -- implementation found the identity-immutability test below needs a
+  -- genuinely different vendor_id to reassign to; this is that vendor.
   insert into vendors (org_id, name) values (v_org_a_id, 'Beta Electric') returning id into v_second_vendor;
+  insert into test_fixture_ids values ('vendor_beta', v_second_vendor);
   insert into profiles (id, org_id, role, full_name, email)
   values (v_vendor_b_user, v_org_a_id, 'vendor', 'Beta Electric Contact', 'beta@example.com');
   insert into project_members (project_id, user_id, member_role)
@@ -1285,10 +1289,16 @@ select set_test_user((select value from test_fixture_ids where key = 'admin'));
 set local role authenticated;
 
 -- Identity immutability: vendor_id/profile_id can never change post-insert.
+-- Task 2 implementation bug, fixed here: the first SET target below must
+-- be a GENUINELY different vendor_id (vendor_beta, not vendor_a) — a
+-- self-reassignment (setting vendor_id to its own current value) never
+-- trips new.vendor_id IS DISTINCT FROM old.vendor_id, making the
+-- original version of this test vacuous (it would never actually
+-- exercise the trigger's rejection path).
 select assert_raises(
   format(
     'update vendor_members set vendor_id = %L where vendor_id = %L and profile_id = %L',
-    (select value from test_fixture_ids where key = 'vendor_a'),
+    (select value from test_fixture_ids where key = 'vendor_beta'),
     (select value from test_fixture_ids where key = 'vendor_a'),
     (select value from test_fixture_ids where key = 'vendor_a_user_2')
   ),
@@ -1765,9 +1775,17 @@ select assert_raises(
   'deleting a line item of a non-draft order must be rejected'
 );
 
+-- received_quantity = 30 (of 40 ordered): a genuine partial receipt.
+-- Task 2 implementation bug, fixed here: the original value of 60
+-- exceeds the drywall line item's own quantity (40) and would trip
+-- material_order_line_items_received_not_over (received_quantity <=
+-- quantity) instead of exercising this test's actual point — that
+-- received_quantity/backordered stay editable post-commit. That
+-- constraint already has its own dedicated test above (the
+-- "150 > 100" assertion) and doesn't need re-triggering here.
 do $$
 begin
-  update material_order_line_items set received_quantity = 60, backordered = true
+  update material_order_line_items set received_quantity = 30, backordered = true
   where id = (select value from test_fixture_ids where key = 'material_order_line_a_drywall');
 
   perform assert_that(
