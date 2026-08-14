@@ -162,6 +162,15 @@ create policy bid_packages_staff_full_access on bid_packages
   for all to authenticated
   using (is_org_staff(project_id)) with check (is_org_staff(project_id));
 
+create or replace function public.get_bid_package_project_id(p_bid_package_id uuid) returns uuid
+language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select project_id from public.bid_packages where id = p_bid_package_id;
+$$;
+revoke all on function public.get_bid_package_project_id(uuid) from public;
+grant execute on function public.get_bid_package_project_id(uuid) to authenticated;
+
 create trigger audit_bid_packages after insert or update on bid_packages
   for each row execute function public.log_audit();
 
@@ -194,8 +203,8 @@ alter table bid_submissions enable row level security;
 
 create policy bid_submissions_staff_full_access on bid_submissions
   for all to authenticated
-  using (is_org_staff((select project_id from bid_packages where id = bid_submissions.bid_package_id)))
-  with check (is_org_staff((select project_id from bid_packages where id = bid_submissions.bid_package_id)));
+  using (is_org_staff(get_bid_package_project_id(bid_submissions.bid_package_id)))
+  with check (is_org_staff(get_bid_package_project_id(bid_submissions.bid_package_id)));
 
 create policy bid_submissions_vendor_read on bid_submissions
   for select to authenticated
@@ -232,15 +241,21 @@ revoke all on function public.log_audit_via_bid_package() from public;
 create trigger audit_bid_submissions after insert or update on bid_submissions
   for each row execute function public.log_audit_via_bid_package();
 
+create or replace function public.is_invited_vendor_for_bid_package(p_bid_package_id uuid) returns boolean
+language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1 from public.bid_submissions bs
+    where bs.bid_package_id = p_bid_package_id and is_vendor_member(bs.vendor_id)
+  );
+$$;
+revoke all on function public.is_invited_vendor_for_bid_package(uuid) from public;
+grant execute on function public.is_invited_vendor_for_bid_package(uuid) to authenticated;
+
 create policy bid_packages_vendor_read on bid_packages
   for select to authenticated
-  using (
-    is_project_vendor(project_id)
-    and exists (
-      select 1 from bid_submissions bs
-      where bs.bid_package_id = bid_packages.id and is_vendor_member(bs.vendor_id)
-    )
-  );
+  using (is_project_vendor(project_id) and is_invited_vendor_for_bid_package(bid_packages.id));
 
 -- ---------------------------------------------------------------------
 -- Bid questions: staff-recorded in P5, with structural provenance so a
@@ -270,8 +285,8 @@ alter table bid_questions enable row level security;
 
 create policy bid_questions_staff_full_access on bid_questions
   for all to authenticated
-  using (is_org_staff((select project_id from bid_packages where id = bid_questions.bid_package_id)))
-  with check (is_org_staff((select project_id from bid_packages where id = bid_questions.bid_package_id)));
+  using (is_org_staff(get_bid_package_project_id(bid_questions.bid_package_id)))
+  with check (is_org_staff(get_bid_package_project_id(bid_questions.bid_package_id)));
 
 create policy bid_questions_vendor_read on bid_questions
   for select to authenticated
@@ -355,8 +370,8 @@ alter table bid_addenda enable row level security;
 
 create policy bid_addenda_staff_full_access on bid_addenda
   for all to authenticated
-  using (is_org_staff((select project_id from bid_packages where id = bid_addenda.bid_package_id)))
-  with check (is_org_staff((select project_id from bid_packages where id = bid_addenda.bid_package_id)));
+  using (is_org_staff(get_bid_package_project_id(bid_addenda.bid_package_id)))
+  with check (is_org_staff(get_bid_package_project_id(bid_addenda.bid_package_id)));
 
 create policy bid_addenda_vendor_read on bid_addenda
   for select to authenticated
@@ -601,13 +616,13 @@ create policy issued_documents_staff_full_access on issued_documents
   using (
     case document_type
       when 'purchase_order' then is_org_staff((select project_id from material_orders where id = issued_documents.source_id))
-      when 'subcontract' then is_org_staff((select project_id from bid_packages where id = issued_documents.source_id))
+      when 'subcontract' then is_org_staff(get_bid_package_project_id(issued_documents.source_id))
     end
   )
   with check (
     case document_type
       when 'purchase_order' then is_org_staff((select project_id from material_orders where id = issued_documents.source_id))
-      when 'subcontract' then is_org_staff((select project_id from bid_packages where id = issued_documents.source_id))
+      when 'subcontract' then is_org_staff(get_bid_package_project_id(issued_documents.source_id))
     end
   );
 

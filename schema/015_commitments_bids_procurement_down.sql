@@ -39,6 +39,8 @@ drop type if exists bid_submission_status;
 
 drop trigger if exists audit_bid_packages on bid_packages;
 drop table if exists bid_packages;
+drop function if exists public.is_invited_vendor_for_bid_package(uuid);
+drop function if exists public.get_bid_package_project_id(uuid);
 drop type if exists bid_package_status;
 
 drop policy if exists audit_log_vendor_members_staff_select on audit_log;
