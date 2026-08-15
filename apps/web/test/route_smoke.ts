@@ -147,6 +147,16 @@ async function main() {
       "/admin/estimate's 'Financials' nav tab is NOT the active one",
       !!financialsNavTagOnEstimatePage && financialsNavTagOnEstimatePage.includes('data-active="false"')
     );
+    // The nav bar renders the FULL adminNav array on every admin page,
+    // regardless of which one is active (only data-active differs) — so
+    // this already-rendered, already-200 page is a natural place to
+    // prove the new "Bids" (P5, Task 6) nav entry actually made it into
+    // the rendered sidebar, without needing a separate authenticated
+    // fetch of /admin/bids itself (which has no DEMO_MODE fixture path
+    // — see the /admin/import-style block below for that route's own
+    // reachability proof).
+    const bidsNavTagOnEstimatePage = buttonTagFor(estimate.html, "Bids");
+    check("nav bar includes the new 'Bids' entry (P5, Task 6)", !!bidsNavTagOnEstimatePage);
 
     console.log("\n--- /admin/import is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
     // Unlike /admin/estimate, AdminImportPage always calls requireRole()
@@ -160,6 +170,21 @@ async function main() {
     check(
       "/admin/import redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
       (importRoute.status === 307 || importRoute.status === 308) && (importRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/bids is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Same shape as the /admin/import block directly above: AdminBidsPage
+    // always calls requireRole() regardless of DEMO_MODE (bid_packages/
+    // bid_submissions/bid_questions/bid_addenda have no fixture-repository
+    // equivalent — see that page's own doc comment), so under this test's
+    // DEMO_MODE=true env with no real session cookie it must redirect to
+    // /login rather than render. This still proves the route exists and
+    // is nav-wired (Task 6) without requiring a real authenticated
+    // Supabase session in this smoke test.
+    const bidsRoute = await getHtml("/admin/bids");
+    check(
+      "/admin/bids redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (bidsRoute.status === 307 || bidsRoute.status === 308) && (bidsRoute.location ?? "").endsWith("/login")
     );
 
     console.log("\n--- Every client route responds 200, correctly labeled ---");
