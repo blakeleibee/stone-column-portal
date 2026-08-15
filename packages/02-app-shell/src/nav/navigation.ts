@@ -30,6 +30,11 @@ export const adminNav: NavItem[] = [
   { key: "financials", label: "Financials", icon: "Wallet" },
   { key: "estimate", label: "Estimate", icon: "Calculator" },
   { key: "import", label: "Import", icon: "FileUp" },
+  // "bids" (P5, Task 6) — placed after estimate/import and before the
+  // commitments/procurement entries later P5 tasks (7, 9) will add,
+  // same rationale as the estimate/import comment above: a real route
+  // (/admin/bids) needs a nav entry to be reachable at all.
+  { key: "bids", label: "Bids", icon: "Gavel" },
   { key: "conversations", label: "Conversations", icon: "MessagesSquare" },
   { key: "contacts", label: "Contacts", icon: "Users" },
   { key: "settings", label: "Settings", icon: "Settings" },

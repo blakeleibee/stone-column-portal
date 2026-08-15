@@ -163,6 +163,14 @@ export interface BidQuestionRow {
   vendorId: string | null;
   source: "staff_recorded" | "vendor_submitted";
   recordedBy: string | null;
+  /** Resolved from profiles.full_name for recordedBy — kept as a
+   *  separate field (never folded into questionText) so the UI can
+   *  render "Recorded by [staff name]" as its own attribution line and
+   *  can never mistake a staff_recorded entry for something the vendor
+   *  typed (Decision 8). Null when recordedBy is null (e.g. a future
+   *  vendor_submitted row, dormant until P11) or when the profile
+   *  lookup finds no match. */
+  recordedByName: string | null;
   questionText: string;
   askedAt: string;
   answerText: string | null;
@@ -193,15 +201,31 @@ export async function answerBidQuestion(supabase: SupabaseClient, bidQuestionId:
   return {};
 }
 
+/** recordedByName is resolved with a SEPARATE query against `profiles`
+ *  (never a PostgREST embed) deliberately: bid_questions carries two
+ *  distinct FKs into profiles (recorded_by, answered_by), and relying
+ *  on an embed's default relationship resolution there is ambiguous —
+ *  an explicit two-step lookup is unambiguous and easy to verify. */
 export async function listBidQuestions(supabase: SupabaseClient, bidPackageId: string): Promise<BidQuestionRow[]> {
   const { data, error } = await supabase.from("bid_questions").select("*").eq("bid_package_id", bidPackageId).order("asked_at", { ascending: true });
   if (error) throw error;
-  return (data ?? []).map((row: any) => ({
+  const rows = data ?? [];
+
+  const recorderIds = Array.from(new Set(rows.map((row: any) => row.recorded_by).filter((id: string | null): id is string => !!id)));
+  const namesById = new Map<string, string>();
+  if (recorderIds.length > 0) {
+    const { data: profileRows, error: profileError } = await supabase.from("profiles").select("id, full_name").in("id", recorderIds);
+    if (profileError) throw profileError;
+    for (const p of profileRows ?? []) namesById.set(p.id, p.full_name as string);
+  }
+
+  return rows.map((row: any) => ({
     id: row.id,
     bidPackageId: row.bid_package_id,
     vendorId: row.vendor_id,
     source: row.source,
     recordedBy: row.recorded_by,
+    recordedByName: row.recorded_by ? namesById.get(row.recorded_by) ?? null : null,
     questionText: row.question_text,
     askedAt: row.asked_at,
     answerText: row.answer_text,
@@ -220,4 +244,37 @@ export async function issueBidAddendum(supabase: SupabaseClient, bidPackageId: s
     if (dueDateError) return { error: dueDateError.message };
   }
   return {};
+}
+
+export interface BidAddendumRow {
+  id: string;
+  bidPackageId: string;
+  title: string;
+  bodyText: string;
+  revisedDueAt: string | null;
+  issuedBy: string | null;
+  issuedAt: string;
+}
+
+/** Task 4/5 never exposed a read path for bid_addenda (only the insert,
+ *  issueBidAddendum, above) — added here in Task 6 because the
+ *  /admin/bids screen's addenda log (Mutations table: "New entry in
+ *  the addenda list") has nothing to render without it. Same shape as
+ *  every other list* function in this file. */
+export async function listBidAddenda(supabase: SupabaseClient, bidPackageId: string): Promise<BidAddendumRow[]> {
+  const { data, error } = await supabase
+    .from("bid_addenda")
+    .select("*")
+    .eq("bid_package_id", bidPackageId)
+    .order("issued_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    bidPackageId: row.bid_package_id,
+    title: row.title,
+    bodyText: row.body_text,
+    revisedDueAt: row.revised_due_at,
+    issuedBy: row.issued_by,
+    issuedAt: row.issued_at,
+  }));
 }
