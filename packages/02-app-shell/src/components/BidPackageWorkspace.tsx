@@ -865,7 +865,7 @@ export function BidPackageWorkspace({
           )}
         </div>
       </div>
-      <style>{workspaceStyles}</style>
+      <style dangerouslySetInnerHTML={{ __html: workspaceStyles }} />
     </div>
   );
 }
