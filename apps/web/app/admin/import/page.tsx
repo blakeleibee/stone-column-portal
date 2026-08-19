@@ -5,6 +5,7 @@ import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { listMappingProfiles } from "../../../../../packages/02-app-shell/src/services/importMappingService";
+import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
 import { createMappingProfile } from "./mappingActions";
 import {
   overrideImportRow,
@@ -28,16 +29,11 @@ export default async function AdminImportPage() {
   const supabase = await createServerSupabaseClient();
   const repo = getRepository(supabase);
 
-  const { data: firstProject } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("org_id", user.orgId)
-    .limit(1)
-    .maybeSingle();
+  const { project, switcherData } = await resolveProjectAndSwitcherData(supabase, user.orgId, user.role);
 
-  if (!firstProject) {
+  if (!project) {
     return (
-      <AdminChrome activeKey="import" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="import" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
         <p style={{ padding: 24 }}>No projects yet for this organization.</p>
       </AdminChrome>
     );
@@ -45,14 +41,14 @@ export default async function AdminImportPage() {
 
   const [mappingProfiles, costCodes] = await Promise.all([
     listMappingProfiles(supabase, user.orgId),
-    repo.getCostCodes(firstProject.id),
+    repo.getCostCodes(project.id),
   ]);
 
   return (
-    <AdminChrome activeKey="import" isDemoMode={isDemoMode()}>
+    <AdminChrome activeKey="import" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <ImportWizard
         orgId={user.orgId}
-        projectId={firstProject.id}
+        projectId={project.id}
         mappingProfiles={mappingProfiles}
         costCodes={costCodes}
         createMappingProfile={createMappingProfile}

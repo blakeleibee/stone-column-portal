@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { colors, spacing, radius, typography, touchTarget } from "../../../../packages/02-app-shell/src/design/tokens";
-import { projectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
+import { projectMeta as demoProjectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { formatCents } from "../../../../packages/01-financial-engine/src/money";
 import { AdminFinancialsScreen } from "../../../../packages/02-app-shell/src/screens/AdminFinancialsScreen";
 import type { AdminFinancialsViewModel } from "../../../../packages/02-app-shell/src/viewmodels/types";
@@ -22,20 +22,34 @@ const TABS: { key: ProjectTab; label: string }[] = [
   { key: "conversations", label: "Conversations" },
 ];
 
+/** Task 5: the only fields the header actually renders — deliberately
+ *  narrower than ProjectRow (or the fixture's projectMeta) so a caller
+ *  can pass either a real resolved ProjectRow or (in demo mode) the
+ *  fixture's projectMeta without adapting either shape. */
+export interface ProjectWorkspaceHeaderProject {
+  name: string;
+  address: string | null;
+}
+
 export function ProjectWorkspace({
   adminViewModel,
   initialTab,
+  project,
 }: {
   adminViewModel: AdminFinancialsViewModel;
   initialTab?: ProjectTab;
+  /** The resolved project whose name/address the header renders. Demo
+   *  callers keep passing the fixture's `projectMeta`; real-session
+   *  callers pass the project resolveSelectedProject() resolved. */
+  project: ProjectWorkspaceHeaderProject;
 }) {
   const [tab, setTab] = useState<ProjectTab>(initialTab ?? "overview");
 
   return (
     <div className="sc-workspace">
       <header className="sc-workspace-head">
-        <h1>{projectMeta.name}</h1>
-        <p>{projectMeta.address}</p>
+        <h1>{project.name}</h1>
+        <p>{project.address}</p>
       </header>
 
       <nav className="sc-workspace-tabs" aria-label="Project sections">
@@ -72,12 +86,19 @@ function PreviewTag({ label }: { label: string }) {
 }
 
 function ProjectOverviewTab() {
+  // Deliberately still the fixture's narrative copy, not the real
+  // project passed to the header above: this whole tab is explicitly
+  // marked preview-only ("Full scope... will live on this tab once
+  // Package 3 is built") — there is no real scope/allowance/closeout
+  // data behind it yet in any mode, so there is nothing real to thread
+  // through here. Only the header (name/address) reflects the real
+  // resolved project; see ProjectWorkspace's own prop doc comment.
   return (
     <div>
       <PreviewTag label="Package 3" />
       <p className="sc-tab-intro">
-        {projectMeta.name} is a custom home project for {projectMeta.clientNames}, currently in the{" "}
-        {projectMeta.phase.toLowerCase()} phase under a {projectMeta.pricingLabel.toLowerCase()} agreement. Full scope,
+        {demoProjectMeta.name} is a custom home project for {demoProjectMeta.clientNames}, currently in the{" "}
+        {demoProjectMeta.phase.toLowerCase()} phase under a {demoProjectMeta.pricingLabel.toLowerCase()} agreement. Full scope,
         allowances, and closeout tracking will live on this tab once Package 3 is built.
       </p>
       <div className="sc-card">

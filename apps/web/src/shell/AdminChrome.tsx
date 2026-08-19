@@ -7,7 +7,7 @@ import type { AppRole } from "../../../../packages/02-app-shell/src/nav/navigati
 import { projectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { DemoControls } from "../demo/DemoControls";
 import { SampleDataTag } from "../components/SampleDataTag";
-import { getProjectSwitcherData } from "../server/project/switcherDataAction";
+import { getProjectSwitcherData, type ProjectSwitcherData } from "../server/project/switcherDataAction";
 import { switchProject } from "../../app/admin/projects/switchAction";
 
 const ADMIN_PATH: Record<string, string> = {
@@ -30,47 +30,81 @@ export function AdminChrome({
   activeKey,
   isDemoMode,
   children,
+  projectSwitcherData,
 }: {
   activeKey: string;
   isDemoMode: boolean;
   children: React.ReactNode;
+  /**
+   * Task 5: optional server-resolved switcher data, passed by pages that
+   * already called resolveSelectedProject() + listAccessibleProjects()
+   * for their own content (via resolveProjectAndSwitcherData()) — reuses
+   * that data instead of AdminChrome firing its own client-side
+   * getProjectSwitcherData() round trip on every mount. This is what
+   * closes the Task 4 review finding that the header visibly blanks out
+   * and reloads on every admin-to-admin navigation: with this prop
+   * present, the switcher renders synchronously from the server-rendered
+   * prop on first paint instead of `null` → fetch → data.
+   *
+   * Deliberately three-state, not two: `undefined` (prop omitted
+   * entirely) means "this caller hasn't been migrated yet" and falls
+   * back to the original client-side fetch below, unchanged — additive,
+   * backward-compatible. `null` is a real value a migrated caller can
+   * pass (mirrors getProjectSwitcherData()'s own error/non-admin-role
+   * return), meaning "server already resolved this, and the answer is
+   * no switcher" — that also must NOT trigger the client-side fetch.
+   * Only `=== undefined` distinguishes "not migrated" from "migrated,
+   * resolved to nothing."
+   */
+  projectSwitcherData?: ProjectSwitcherData | null;
 }) {
   const router = useRouter();
   const [subRole, setSubRole] = useState<"admin" | "staff">("admin");
+  const hasServerSwitcherData = projectSwitcherData !== undefined;
 
-  // Task 4's ProjectSwitcher data. `null` = not yet loaded / unavailable
-  // (demo mode, no session, or a real session with a non-admin/staff
-  // role) — AppShell simply omits the switcher and falls back to the
-  // old plain `projectName` text in that case (see AppShell.tsx's
-  // `projectSwitcher` prop doc comment). Fetched client-side here
-  // (rather than threaded down from each page.tsx as a prop) because
-  // AdminChrome is the one shared call site for every admin page's
-  // <AppShell>, and this task is scoped to NOT touch those other
-  // pages' own Server Component data-loading (Task 5's job) — see the
-  // Task 4 report's Judgment calls section.
-  const [switcherData, setSwitcherData] = useState<Omit<AppShellProjectSwitcherProps, "onSwitch" | "allProjectsHref" | "archivedProjectsHref" | "createProjectHref"> | null>(null);
+  // Task 4's ProjectSwitcher data, fetched client-side. `null` = not yet
+  // loaded / unavailable (demo mode, no session, or a real session with
+  // a non-admin/staff role) — AppShell simply omits the switcher and
+  // falls back to the old plain `projectName` text in that case (see
+  // AppShell.tsx's `projectSwitcher` prop doc comment). This remains the
+  // fallback path for any admin page not yet passing
+  // `projectSwitcherData` (Task 5 only rewires overview/financials/
+  // estimate/bids/import) and for demo mode, which is unaffected.
+  const [clientSwitcherData, setClientSwitcherData] = useState<Omit<AppShellProjectSwitcherProps, "onSwitch" | "allProjectsHref" | "archivedProjectsHref" | "createProjectHref"> | null>(null);
 
   const loadSwitcherData = useCallback(async () => {
-    if (isDemoMode) {
-      setSwitcherData(null);
+    if (isDemoMode || hasServerSwitcherData) {
+      setClientSwitcherData(null);
       return;
     }
     const result = await getProjectSwitcherData();
     if ("error" in result) {
-      setSwitcherData(null);
+      setClientSwitcherData(null);
       return;
     }
-    setSwitcherData(result);
-  }, [isDemoMode]);
+    setClientSwitcherData(result);
+  }, [isDemoMode, hasServerSwitcherData]);
 
   useEffect(() => {
     loadSwitcherData();
   }, [loadSwitcherData]);
 
+  // Server-resolved data wins whenever the caller supplied it at all
+  // (including an explicit `null`) — see the prop's doc comment above
+  // for why `undefined` is the only "not migrated" signal.
+  const switcherData = hasServerSwitcherData ? projectSwitcherData : clientSwitcherData;
+
   async function handleSwitchProject(projectId: string) {
     const result = await switchProject(projectId);
     if (!("error" in result)) {
-      await loadSwitcherData();
+      // Server-resolved callers get fresh switcher data for free from
+      // router.refresh() re-rendering the page.tsx Server Component (and
+      // therefore this prop) — re-running the client-side fetch too
+      // would be a redundant round trip. Client-fetch callers still need
+      // the explicit reload, same as before Task 5.
+      if (!hasServerSwitcherData) {
+        await loadSwitcherData();
+      }
       router.refresh();
     }
     return result;

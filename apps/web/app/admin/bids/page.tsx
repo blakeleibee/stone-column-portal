@@ -5,6 +5,7 @@ import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { listBidPackages, listVendors } from "../../../../../packages/02-app-shell/src/services/bidService";
+import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
 import { createBidPackage, publishBidPackage, inviteVendor, getBidPackageDetail, listBidQuestions, listBidAddenda } from "./actions";
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum } from "./submissionActions";
 
@@ -22,31 +23,26 @@ export default async function AdminBidsPage() {
   const supabase = await createServerSupabaseClient();
   const repo = getRepository(supabase);
 
-  const { data: firstProject } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("org_id", user.orgId)
-    .limit(1)
-    .maybeSingle();
+  const { project, switcherData } = await resolveProjectAndSwitcherData(supabase, user.orgId, user.role);
 
-  if (!firstProject) {
+  if (!project) {
     return (
-      <AdminChrome activeKey="bids" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="bids" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
         <p style={{ padding: 24 }}>No projects yet for this organization.</p>
       </AdminChrome>
     );
   }
 
   const [bidPackages, costCodes, vendors] = await Promise.all([
-    listBidPackages(supabase, firstProject.id),
-    repo.getCostCodes(firstProject.id),
+    listBidPackages(supabase, project.id),
+    repo.getCostCodes(project.id),
     listVendors(supabase, user.orgId),
   ]);
 
   return (
-    <AdminChrome activeKey="bids" isDemoMode={isDemoMode()}>
+    <AdminChrome activeKey="bids" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <BidPackageWorkspace
-        projectId={firstProject.id}
+        projectId={project.id}
         bidPackages={bidPackages}
         costCodes={costCodes}
         vendors={vendors}

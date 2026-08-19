@@ -5,13 +5,15 @@ import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
+import { projectMeta as demoProjectMeta } from "../../../../../packages/01-financial-engine/fixtures/hawksRidge";
+import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
 
 export default async function AdminFinancialsPage() {
   if (isDemoMode()) {
     const adminVM = await loadAdminVM();
     return (
       <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
-        <ProjectWorkspace adminViewModel={adminVM} initialTab="financials" />
+        <ProjectWorkspace adminViewModel={adminVM} initialTab="financials" project={demoProjectMeta} />
       </AdminChrome>
     );
   }
@@ -20,25 +22,20 @@ export default async function AdminFinancialsPage() {
   const supabase = await createServerSupabaseClient();
   const repo = getRepository(supabase);
 
-  const { data: firstProject } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("org_id", user.orgId)
-    .limit(1)
-    .maybeSingle();
+  const { project, switcherData } = await resolveProjectAndSwitcherData(supabase, user.orgId, user.role);
 
-  if (!firstProject) {
+  if (!project) {
     return (
-      <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="financials" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
         <p style={{ padding: 24 }}>No projects yet for this organization.</p>
       </AdminChrome>
     );
   }
 
-  const adminVM = await loadAdminVMFor(firstProject.id, repo);
+  const adminVM = await loadAdminVMFor(project.id, repo);
   return (
-    <AdminChrome activeKey="financials" isDemoMode={isDemoMode()}>
-      <ProjectWorkspace adminViewModel={adminVM} initialTab="financials" />
+    <AdminChrome activeKey="financials" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
+      <ProjectWorkspace adminViewModel={adminVM} initialTab="financials" project={project} />
     </AdminChrome>
   );
 }
