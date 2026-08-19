@@ -230,13 +230,50 @@ reset role;
 select clear_test_user();
 
 -- 2.4 Self-escalation (Decision 1a) — the single most important new
--- test in this suite. project_staff_assignments_admin_manage is
--- admin-only with NO org-wide-staff carve-out, so EVERY staff_function
--- must be rejected attempting to insert a row naming themselves and a
--- project they don't already have access to (project_c). assigned_by
--- is set to the acting session's own id in each case so the failure
--- specifically demonstrates the admin-only RLS gate, not an incidental
--- assigned_by-mismatch failure.
+-- test in this suite.
+--
+-- REVIEW FINDING (Fix round 1): the original version of this section
+-- had ONLY the "invisible project" cases below (2.4a) for pm_a/super_a,
+-- and both were test-invalid as proof of the admin-only RLS gate.
+-- enforce_project_staff_assignment_org_match() (schema/016) is NOT
+-- SECURITY DEFINER, so its own `select org_id ... from projects where
+-- id = new.project_id` lookup is itself RLS-filtered through
+-- projects_staff_select. pm_a/super_a (assigned to project_a only)
+-- cannot see project_c at all, so that lookup returns NULL org_id and
+-- the BEFORE-trigger raises "org mismatch" -- before
+-- project_staff_assignments_admin_manage's actual admin-only RLS check
+-- is ever reached. The reviewer proved this empirically: restoring the
+-- exact known-vulnerable pre-fix policy (is_org_staff_for_org(...)
+-- instead of is_org_admin_for_org(...) on
+-- project_staff_assignments_admin_manage) and re-running the original
+-- pm_a/super_a assertions verbatim, both STILL passed -- because they
+-- were never exercising that policy at all. Only accounting_a/staff_a
+-- below (org-wide is_org_staff() visibility, so they CAN see
+-- project_c) ever actually reached and were correctly blocked by the
+-- real RLS gate.
+--
+-- Fixed by adding 2.4b: a companion case per function where the actor
+-- targets a project they CAN already see (project_a), assigning a
+-- DIFFERENT profile (not themselves) to it. This makes the org-match
+-- trigger's own lookup succeed cleanly (project_a IS visible to
+-- pm_a/super_a), so project_staff_assignments_admin_manage's
+-- is_org_admin_for_org() check is the ONLY thing left that can reject
+-- the insert -- confirmed by asserting the raised message actually
+-- contains "row-level security policy for table", not just "some
+-- error was raised", so this specific case can't silently degrade back
+-- into "passes for any reason" the way 2.4a's did.
+--
+-- 2.4a is kept below because it is still a real, valid guard (the
+-- org-match trigger's own protection against an invisible/nonexistent-
+-- to-this-session project) -- it is relabeled here to stop claiming to
+-- be proof of the admin-only RLS gate, since it never was.
+-- =====================================================================
+
+-- 2.4a — self-escalation naming an INVISIBLE project (project_c):
+-- exercises enforce_project_staff_assignment_org_match()'s own guard
+-- (NULL org_id from the RLS-filtered lookup is correctly treated as a
+-- mismatch), NOT project_staff_assignments_admin_manage. A real guard,
+-- but not evidence the admin-only RLS policy itself is enforced.
 select set_test_user((select value from test_fixture_ids where key = 'pm_a'));
 set local role authenticated;
 select assert_raises(
@@ -246,7 +283,7 @@ select assert_raises(
     (select value from test_fixture_ids where key = 'pm_a'),
     (select value from test_fixture_ids where key = 'pm_a')
   ),
-  'a project_manager-function staff session naming themselves + a project they do not already have access to must be rejected — the exact self-escalation path the independent review found and Decision 1a closes'
+  'a project_manager-function staff session naming a project they cannot even see (project_c) is rejected by enforce_project_staff_assignment_org_match()''s own RLS-filtered lookup returning NULL org_id — NOT proof of the admin-only RLS gate (see 2.4b below for that)'
 );
 reset role;
 select clear_test_user();
@@ -260,8 +297,78 @@ select assert_raises(
     (select value from test_fixture_ids where key = 'super_a'),
     (select value from test_fixture_ids where key = 'super_a')
   ),
-  'a superintendent-function staff session naming themselves + a project they do not already have access to must also be rejected — the same self-escalation path, same fix'
+  'a superintendent-function staff session naming a project they cannot even see (project_c) is rejected the same way — org-match trigger''s own guard, NOT proof of the admin-only RLS gate (see 2.4b below for that)'
 );
+reset role;
+select clear_test_user();
+
+-- 2.4b — the REAL admin-only-RLS-gate proof: target a project the
+-- actor CAN already see (project_a, their own assigned project), and
+-- assign a DIFFERENT profile (not themselves) to it. This makes the
+-- org-match trigger's lookup succeed cleanly (project_a's org_id
+-- resolves fine, since pm_a/super_a can see their own assigned
+-- project), so project_staff_assignments_admin_manage's
+-- is_org_admin_for_org() check is the only thing left that can reject
+-- the insert. assigned_by is the acting session's own id in each case,
+-- so the assigned_by-provenance trigger check also cannot be what's
+-- rejecting it. Verified by message substring (not a generic
+-- assert_raises "any error"), confirming the actual RLS policy is what
+-- fired.
+select set_test_user((select value from test_fixture_ids where key = 'pm_a'));
+set local role authenticated;
+do $$
+declare
+  v_sql text;
+begin
+  v_sql := format(
+    'insert into project_staff_assignments (project_id, profile_id, assigned_by) values (%L, %L, %L)',
+    (select value from test_fixture_ids where key = 'project_a'),
+    (select value from test_fixture_ids where key = 'accounting_a'),
+    (select value from test_fixture_ids where key = 'pm_a')
+  );
+  begin
+    execute v_sql;
+    raise exception 'ASSERTION FAILED (expected an error, got none): pm_a (assigned to project_a, so the org-match trigger passes cleanly) inserting a project_staff_assignments row assigning accounting_a to project_a must be rejected by project_staff_assignments_admin_manage';
+  exception
+    when others then
+      if sqlerrm like 'ASSERTION FAILED%' then
+        raise;
+      end if;
+      if sqlerrm not like '%row-level security policy for table%' then
+        raise exception 'ASSERTION FAILED (wrong rejection reason — got: %): expected project_staff_assignments_admin_manage''s RLS violation ("row-level security policy for table"), not some other error (e.g. the org-match trigger, which project_a would not trigger since pm_a can see it)', sqlerrm;
+      end if;
+      raise notice 'ok (rejected by the actual admin-only RLS policy, confirmed by message) — %', sqlerrm;
+  end;
+end $$;
+reset role;
+select clear_test_user();
+
+select set_test_user((select value from test_fixture_ids where key = 'super_a'));
+set local role authenticated;
+do $$
+declare
+  v_sql text;
+begin
+  v_sql := format(
+    'insert into project_staff_assignments (project_id, profile_id, assigned_by) values (%L, %L, %L)',
+    (select value from test_fixture_ids where key = 'project_a'),
+    (select value from test_fixture_ids where key = 'accounting_a'),
+    (select value from test_fixture_ids where key = 'super_a')
+  );
+  begin
+    execute v_sql;
+    raise exception 'ASSERTION FAILED (expected an error, got none): super_a (assigned to project_a, so the org-match trigger passes cleanly) inserting a project_staff_assignments row assigning accounting_a to project_a must be rejected by project_staff_assignments_admin_manage';
+  exception
+    when others then
+      if sqlerrm like 'ASSERTION FAILED%' then
+        raise;
+      end if;
+      if sqlerrm not like '%row-level security policy for table%' then
+        raise exception 'ASSERTION FAILED (wrong rejection reason — got: %): expected project_staff_assignments_admin_manage''s RLS violation ("row-level security policy for table"), not some other error (e.g. the org-match trigger, which project_a would not trigger since super_a can see it)', sqlerrm;
+      end if;
+      raise notice 'ok (rejected by the actual admin-only RLS policy, confirmed by message) — %', sqlerrm;
+  end;
+end $$;
 reset role;
 select clear_test_user();
 
