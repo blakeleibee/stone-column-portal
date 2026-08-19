@@ -1,12 +1,17 @@
 # Stone Column Portal — Product Vision
 
-**Status: DRAFT.** Produced at the owner's request as a candidate
-permanent north-star document. Not yet approved. Do not treat this as
-a binding project instruction, and do not cite it as settled policy in
-any future package design, until the owner has reviewed it and the
-open reconciliation items at the bottom of this document are resolved.
-Once approved, this document should be referenced from `CLAUDE.md`
-alongside the other `docs/production-build/` standing records.
+**Status: Approved in principle (2026-08-19).** This is now a
+permanent standing record, referenced from `CLAUDE.md` alongside the
+other `docs/production-build/` documents. The open reconciliation
+items originally listed below are resolved as of this revision: the
+create/select/switch-project gap is being actively closed by
+`docs/production-build/P3-DESIGN.md` ("Project & Staff Access
+Foundation," pulled forward ahead of P5 Task 7); the P2/P3
+specification gap is closed by that same document; `staff_function`
+differentiation is designed there too, pending its own independent
+review and owner approval before implementation. Amendments from here
+require the same explicit-approval bar as any other architecture
+document (§9).
 
 This document is the **permanent, durable statement of what the
 portal is for.** It changes rarely and only with explicit owner
@@ -207,20 +212,17 @@ package currently in flight.
   conflict, the conflict is surfaced to the owner explicitly — neither
   document silently overrides the other.
 
-## Open reconciliation items — pending owner decision
+## Status of items this vision originally flagged as unresolved
 
 This vision was drafted by reviewing the full existing document set,
-and that review surfaced real gaps and documentation conflicts that
-should be resolved before this document is adopted as permanent. They
-are not restated here in full — see
-`docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md`, sections
-**"Foundation gaps to correct before P5 continues"** and
-**"Contradictions and documentation gaps requiring reconciliation."**
-In short: (1) no real create/select/switch-project workflow exists in
-production yet, which §3 above states as a firm requirement; (2) the
-new P0–P15 roadmap's P2/P3 sections are not yet fully specified the
-way every other package is; (3) staff-role differentiation
-(PM/Superintendent/Accounting) does not yet exist at the database
-level, which understates §5's isolation guarantee for those three
-roles today. None of these invalidate the vision — they are exactly
-the kind of gap this document exists to make visible.
+and that review surfaced real gaps that needed resolving before this
+document could be adopted as permanent. As of this revision: the
+create/select/switch-project gap (§3), the missing P2/P3 design
+specification, and the missing staff-role differentiation (§5) are all
+in active resolution via `docs/production-build/P3-DESIGN.md` — not
+yet implemented, but designed, independently reviewed for
+authorization/migration risk, and awaiting the owner's implementation
+go-ahead. `docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md`
+remains the living tracker for this and every other package's
+completeness status — consult it, not this document, for current
+implementation state.

@@ -1,11 +1,14 @@
 # Product Completeness Matrix
 
-**Status: DRAFT.** Companion analysis to `PRODUCT-VISION.md`, produced
-by reviewing the full existing architecture/roadmap/design/milestone
-document set as of 2026-08-15. This is a **living snapshot**, not a
-permanent record — re-derive it (or at least its status column) at
-each major package boundary rather than trusting it as current
-forever. Not yet owner-approved.
+**Status: Approved in principle (2026-08-19), living document.**
+Companion analysis to `PRODUCT-VISION.md`, produced by reviewing the
+full existing architecture/roadmap/design/milestone document set as of
+2026-08-15. This is a **living snapshot**, not a permanent record —
+re-derive it (or at least its status column) at each major package
+boundary rather than trusting it as current forever. Section C's
+foundation gaps are now being actively resolved by
+`docs/production-build/P3-DESIGN.md`, pulled forward ahead of P5
+Task 7 — update this document's status entries once P3 ships.
 
 Sources reviewed in full for this document: `PRODUCTION-ROADMAP.md`,
 `TARGET-ARCHITECTURE.md`, `PRODUCTION-READINESS-AUDIT.md`,

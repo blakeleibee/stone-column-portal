@@ -1,11 +1,10 @@
 # Owner Preview Checklist
 
-**Status: DRAFT**, pending owner review alongside `PRODUCT-VISION.md`
-and `PRODUCT-COMPLETENESS-MATRIX.md`. Once approved, use this for
-**every** live owner preview of every future package (P5's remaining
-tasks onward) — it operationalizes `PRODUCT-VISION.md` §6 ("What
-'done' means") into something concrete to walk through together,
-so a preview is a workflow review, not a compile check.
+**Status: Approved in principle (2026-08-19).** Use this for **every**
+live owner preview of every future package, starting with P3's own
+Task 7 preview — it operationalizes `PRODUCT-VISION.md` §6 ("What
+'done' means") into something concrete to walk through together, so a
+preview is a workflow review, not a compile check.
 
 **How to use it:** work top to bottom against whatever workspace is
 being previewed. Not every section applies to every workspace (a

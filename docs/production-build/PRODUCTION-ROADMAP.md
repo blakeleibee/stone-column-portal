@@ -409,13 +409,29 @@ foundation, not this product UI.
 - **Explicit exclusions:** No SSO. No investor/lender roles yet
   (P12). No real financial mutation UI yet.
 
-## Package P3 — Production project foundation
+## Package P3 — Production project foundation ("Project & Staff Access Foundation")
 
 **Status: Vendor-identity RLS slice delivered as part of P1 (complete)
 — see `docs/production-build/P1-DESIGN.md` and
-`docs/milestones/P1-complete.md`.** Project CRUD/lifecycle UI,
-team-management UI, and project settings screens remain this
-section's (future) scope.
+`docs/milestones/P1-complete.md`.** The remaining scope described
+below — project CRUD/lifecycle UI, team-management UI, and project
+settings screens — is now fully specified, independently reviewed for
+authorization/migration risk, and awaiting owner approval for
+implementation in **`docs/production-build/P3-DESIGN.md`**, pulled
+forward ahead of P5 Task 7 by explicit owner decision (2026-08-19).
+That document supersedes this section's bullet list below with exact
+schema/RLS/tests/acceptance-criteria detail, the same way `P4-DESIGN.md`/
+`P5-DESIGN.md` supersede their own sections — this text is retained for
+historical continuity, not as the current spec. It also closes a gap
+this roadmap previously left open: `SECURITY-AND-PERMISSIONS-MATRIX.md`'s
+long-flagged `staff_function` (PM/Superintendent/Accounting)
+differentiation and the resulting audit-log over-exposure correction,
+neither of which this section originally named, are now part of P3's
+scope. Thin Leads intake, thin Company Templates, and the baseline
+backup/retention policy — old Package 3's other named items — remain
+explicitly **not** part of P3 as redefined; see
+`P3-DESIGN.md`'s Exclusions and
+`PRODUCT-COMPLETENESS-MATRIX.md` Section D for their status.
 
 - **Exact scope:** Real project CRUD and lifecycle, plus (per the
   recommended change above) the vendor identity/RLS foundation.

@@ -26,6 +26,23 @@ approval.** P0 (Next.js migration, environment/secrets scaffolding —
 no product scope change, no new backend) is the current active
 package.
 
+## Product vision & completeness — required reading before planning any package
+
+Before designing or scoping any future package (P3 onward), consult
+these three standing records — do not restate their contents here or
+re-derive them from first principles:
+
+- `docs/production-build/PRODUCT-VISION.md` — the permanent north star:
+  what the portal is for, who uses it, and what "done" means for any
+  feature.
+- `docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md` — the living
+  tracker of role/lifecycle-workflow coverage against the roadmap,
+  current foundation gaps, and prioritized missing capabilities. Update
+  it, don't bypass it, when a package's scope changes what it says.
+- `docs/production-build/OWNER-PREVIEW-CHECKLIST.md` — use this for
+  every live owner preview of every future package; a preview is a
+  workflow review against this checklist, not proof the app compiles.
+
 ## What's real vs. what's a placeholder — read this before touching any screen
 
 | Category | Where | Status |
