@@ -224,10 +224,19 @@ before it reaches the raw CHECK constraint.
    `schema/015` at implementation time — Task 1 below). **Deliberately
    excluded from this swap** (stay on plain `is_org_staff`, so they
    still narrow by project assignment per Decision 1 but are not
-   Superintendent-blocked): `projects` itself, `documents`,
-   `project_members`, `project_clients` — none of these are
-   dollar-bearing, and `SECURITY-AND-PERMISSIONS-MATRIX.md` does not
-   list Superintendent as excluded from Documents.
+   Superintendent-blocked): `documents`, `project_members`,
+   `project_clients` — none of these are dollar-bearing, and
+   `SECURITY-AND-PERMISSIONS-MATRIX.md` does not list Superintendent as
+   excluded from Documents. **Correction found during implementation
+   review:** this list originally also excluded `projects` on the same
+   "not dollar-bearing" reasoning, but `projects` actually carries two
+   real dollar columns (`gmp_amount_cents`, `deposit_amount_cents`).
+   `projects` stays off the `is_financial_staff` swap for `SELECT`/
+   `INSERT` (Decision 7a already gives `SELECT` its own assignment-aware
+   read and `INSERT` its own admin-only gate), but its `UPDATE` policy's
+   `USING` clause uses `is_financial_staff(id)` specifically, closing
+   the two-dollar-column write path a superintendent would otherwise
+   have had. See Decision 7a.
 
 5. **`audit_log`'s staff-facing SELECT policy is replaced with three
    narrower policies, implementing `SECURITY-AND-PERMISSIONS-MATRIX.md`'s
@@ -295,25 +304,36 @@ before it reaches the raw CHECK constraint.
    explicitly documents why the original policy uses
    `is_org_staff_for_org(org_id)` directly on the incoming row rather
    than `is_org_staff(id)`: "a self-join against the row currently
-   being inserted is unreliable." That warning is specific to INSERT's
-   `WITH CHECK` evaluation (the row doesn't yet exist as a queryable
-   committed row when the check runs) — it does not apply to `SELECT`/
-   `UPDATE`'s `USING` clause, which evaluates against an already-existing
-   row. This package therefore: uses `is_org_staff(id)` (assignment-
-   aware, per Decision 1) for `SELECT` and `UPDATE`'s `USING` clause;
-   uses `is_org_admin_for_org(org_id)` directly (no self-join, per
-   Decision 7 above) for `INSERT`'s `WITH CHECK`; and uses
+   being inserted is unreliable." **This package initially misjudged
+   the warning's scope** — treating it as specific to INSERT's `WITH
+   CHECK` and assuming `SELECT`'s `USING` clause was safe, because a
+   `SELECT` policy checks an already-existing, already-committed row
+   in the ordinary case. That assumption missed that Postgres also
+   evaluates the `SELECT` policy against the *in-flight* new row for
+   any `INSERT ... RETURNING` — which `create_project_with_defaults()`
+   itself uses — so the same self-join hazard reaches `SELECT` too,
+   just one step removed from where the warning was written. Found
+   during Task 1's implementation review (not the earlier design-stage
+   review), reproduced empirically, and fixed before this package was
+   considered complete: a new helper,
+   `is_org_staff_for_project_row(p_org_id uuid, p_project_id uuid)`,
+   takes `org_id` as a parameter straight off the row being checked
+   (no query against `projects` at all) and reproduces `is_org_staff()`'s
+   assignment-aware logic inline. Final shape: `SELECT`'s `USING`
+   clause calls `is_org_staff_for_project_row(org_id, id)`; `INSERT`'s
+   `WITH CHECK` uses `is_org_admin_for_org(org_id)` directly (per
+   Decision 7); `UPDATE`'s `USING` clause uses `is_financial_staff(id)`
+   (per the Decision 4 correction above — `is_org_staff(id)` alone
+   would have left the two dollar columns on `projects` writable by an
+   assigned superintendent) and its `WITH CHECK` uses
    `is_org_staff_for_org(org_id)` directly (no self-join, conservative
    — `org_id` cannot change on update in practice, but avoiding any
    self-referential subquery in a `WITH CHECK` clause entirely is the
-   safer reading of the original author's warning) for `UPDATE`'s
-   `WITH CHECK`. No `DELETE` policy is added — projects are never
-   hard-deleted in this system (`status='archived'` is the terminal
-   state), matching every table's own established archive-not-delete
-   convention, and none existed before this package either. Found
-   during independent review; this replaces the earlier, simpler (and
-   incorrect) plan to reuse `is_org_staff(id)` for every command
-   uniformly.
+   safer reading of the original author's warning). No `DELETE` policy
+   is added — projects are never hard-deleted in this system
+   (`status='archived'` is the terminal state), matching every table's
+   own established archive-not-delete convention, and none existed
+   before this package either.
 
 8. **The last-selected project is stored in a plain cookie, set by a
    Server Action on every successful switch — never in `localStorage`,
