@@ -1,9 +1,14 @@
 # Package P3 — Project & Staff Access Foundation
 
-**Status: Design only. Not yet implemented.** Pulled forward ahead of
-P5 Task 7 by explicit owner decision (2026-08-19), after
+**Status: Approved for implementation (2026-08-19).** Pulled forward
+ahead of P5 Task 7 by explicit owner decision, after
 `PRODUCT-VISION.md`/`PRODUCT-COMPLETENESS-MATRIX.md`/
-`OWNER-PREVIEW-CHECKLIST.md` were approved in principle. This document
+`OWNER-PREVIEW-CHECKLIST.md` were approved in principle, independently
+reviewed for authorization/migration risk (findings incorporated — see
+below), and its two remaining open owner decisions resolved (see
+"Owner decisions — resolved"). Implementation proceeds via the
+companion plan and the subagent-driven-development process; P5 Task 7
+remains blocked until P3 is complete and previewed. This document
 **is** `PRODUCTION-ROADMAP.md`'s Package P3 ("Production project
 foundation") — it supersedes that section's placeholder text with a
 full exact-scope design, the same way `P1-DESIGN.md` etc. did for
@@ -369,12 +374,33 @@ before it reaches the raw CHECK constraint.
     to `schema/017` — a trivial, purely mechanical rename, flagged here
     so it isn't missed; P4.1's design content itself needs no change.**
 
-## Owner decisions requiring sign-off (not yet made unilaterally)
+## Owner decisions — resolved (2026-08-19)
+
+**Approved as recommended:**
+- **#2 below: project creation is admin-only.** Enforced both inside
+  `create_project_with_defaults()` and at the RLS layer directly on
+  `projects`' own INSERT policy (Decision 7/7a) — not merely a
+  convention the RPC happens to follow.
+- **#3 below: `staff_function='accounting'` may not create projects.**
+  Same admin-only gate as #2, no separate carve-out. Accounting can be
+  assigned to a project immediately after creation like any other
+  initial team member.
+
+**Not contested — proceeding with the stated recommended default:**
+- **#1 below** was already resolved as "closed by Decision 4 + the
+  Decision 1a fix" prior to this approval round; nothing further
+  required.
+- **#4 below** (initial team assignment optional at creation, not
+  required) — proceeding with the recommended default since it wasn't
+  raised; revisit if this turns out wrong once real usage starts.
+
+The four items are preserved below exactly as originally presented,
+for the record of what was decided and why.
+
+## Owner decisions requiring sign-off (original presentation, now resolved above)
 
 Presented as short, plain-language choices with a recommended default,
-per standing product-development instructions. Nothing below has been
-implemented — these are exactly the judgment calls this design
-document exists to surface before code is written.
+per standing product-development instructions.
 
 1. **Does "restricted Superintendent access" need to close the
    residual direct-API channel to financial tables now, or can that
