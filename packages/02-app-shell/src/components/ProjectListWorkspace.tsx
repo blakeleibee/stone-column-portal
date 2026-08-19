@@ -466,16 +466,31 @@ export function ProjectListWorkspace({
                 {project.pricingModelLabel && <span>{project.pricingModelLabel}</span>}
                 <span>Created {formatDate(project.createdAt)}</span>
               </div>
-              {view === "active" && project.id !== currentProjectId && (
-                <button
-                  type="button"
-                  className="sc-projects-btn"
-                  disabled={switchingId === project.id}
-                  onClick={() => handleSwitch(project.id)}
-                >
-                  {switchingId === project.id ? "Switching…" : "Switch to this project"}
-                </button>
-              )}
+              <div className="sc-projects-row-actions">
+                {view === "active" && project.id !== currentProjectId && (
+                  <button
+                    type="button"
+                    className="sc-projects-btn"
+                    disabled={switchingId === project.id}
+                    onClick={() => handleSwitch(project.id)}
+                  >
+                    {switchingId === project.id ? "Switching…" : "Switch to this project"}
+                  </button>
+                )}
+                {/* Task 6 (P3): only entry point into
+                    /admin/projects/[id]/team today — a plain inline href,
+                    same as BidPackageWorkspace.tsx's own link to
+                    /admin/commitments, not a prop-threaded href (this
+                    route's shape is fixed, unlike activeProjectsHref/
+                    archivedProjectsHref above which vary by view). Shown
+                    for every row regardless of admin/staff — the team
+                    page itself renders the RLS-accurate restricted state
+                    for a non-admin viewer rather than this list guessing
+                    at that. */}
+                <a href={`/admin/projects/${project.id}/team`} className="sc-projects-btn">
+                  Manage Team
+                </a>
+              </div>
             </li>
           ))}
         </ul>
@@ -520,7 +535,8 @@ const workspaceStyles = `
 .sc-projects-row-name { font-weight: ${typography.weightSemibold}; font-size: ${typography.sizeMd}; }
 .sc-projects-current-tag { font-size: ${typography.sizeXs}; color: ${colors.sageDeep}; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
 .sc-projects-row-meta { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; }
-.sc-projects-row .sc-projects-btn { align-self: flex-start; margin-top: 4px; }
+.sc-projects-row-actions { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; margin-top: 4px; }
+.sc-projects-row .sc-projects-btn { align-self: flex-start; text-decoration: none; display: inline-block; }
 
 .sc-projects-badge { display: inline-block; padding: 2px 8px; border-radius: ${radius.pill}; font-size: 10px; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
 .sc-projects-badge-draft { background: ${colors.paperDim}; color: ${colors.stoneDark}; }

@@ -17,6 +17,9 @@ export type FeeBasis = "percentage" | "fixed";
 // Matches schema/001's `project_status` enum.
 export type ProjectStatus = "draft" | "active" | "on_hold" | "closed_out" | "archived";
 
+// Matches schema/016's `staff_function` enum exactly.
+export type StaffFunction = "project_manager" | "superintendent" | "accounting" | "general";
+
 export interface ProjectRow {
   id: string;
   orgId: string;
@@ -197,4 +200,134 @@ export async function reactivateStaffAssignment(supabase: SupabaseClient, assign
     .eq("id", assignmentId);
   if (error) return { error: error.message };
   return {};
+}
+
+export interface ProjectStaffAssignmentRow {
+  id: string;
+  projectId: string;
+  profileId: string;
+  profileName: string;
+  staffFunction: StaffFunction | null;
+  assignedAt: string;
+  assignedBy: string | null;
+  assignedByName: string | null;
+  revokedAt: string | null;
+  revokedBy: string | null;
+  revokedByName: string | null;
+}
+
+/**
+ * `project_staff_assignments`' own RLS (project_staff_assignments_admin_manage,
+ * schema/016) is `for all` — SELECT included — and admin-only. A
+ * non-admin caller (including an org-wide accounting/general staff
+ * member, and including a project_manager/superintendent who IS
+ * assigned to this exact project) gets zero rows back, not a partial or
+ * self-scoped view. Callers must not treat an empty result from this
+ * function as "no staff assigned" without first checking the caller's
+ * own role — see ProjectTeamWorkspace.tsx / the Task 6 team page, which
+ * only call this for an admin session and render an explicit
+ * "admin-only" restricted state otherwise, rather than a misleading
+ * empty list.
+ *
+ * Three distinct profile FKs (profile_id, assigned_by, revoked_by) are
+ * resolved with ONE batched `profiles` lookup, not a PostgREST embed —
+ * same reasoning as listBidQuestions (bidService.ts): an embed can't
+ * disambiguate which of several FKs into the same table it should
+ * follow, so this codebase's established pattern is a separate,
+ * explicit id-batch query instead.
+ */
+export async function listProjectStaffAssignments(
+  supabase: SupabaseClient,
+  projectId: string
+): Promise<ProjectStaffAssignmentRow[]> {
+  const { data, error } = await supabase
+    .from("project_staff_assignments")
+    .select("id, project_id, profile_id, assigned_at, assigned_by, revoked_at, revoked_by")
+    .eq("project_id", projectId)
+    .order("assigned_at", { ascending: false });
+  if (error) throw error;
+  const rows = data ?? [];
+
+  const profileIds = Array.from(
+    new Set(
+      rows
+        .flatMap((row: any) => [row.profile_id, row.assigned_by, row.revoked_by])
+        .filter((id: string | null): id is string => !!id)
+    )
+  );
+  const profilesById = new Map<string, { fullName: string; staffFunction: StaffFunction | null }>();
+  if (profileIds.length > 0) {
+    const { data: profileRows, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, full_name, staff_function")
+      .in("id", profileIds);
+    if (profileError) throw profileError;
+    for (const p of profileRows ?? []) {
+      profilesById.set(p.id, { fullName: p.full_name, staffFunction: p.staff_function ?? null });
+    }
+  }
+
+  return rows.map((row: any) => ({
+    id: row.id,
+    projectId: row.project_id,
+    profileId: row.profile_id,
+    profileName: profilesById.get(row.profile_id)?.fullName ?? "Unknown",
+    staffFunction: profilesById.get(row.profile_id)?.staffFunction ?? null,
+    assignedAt: row.assigned_at,
+    assignedBy: row.assigned_by,
+    assignedByName: row.assigned_by ? profilesById.get(row.assigned_by)?.fullName ?? null : null,
+    revokedAt: row.revoked_at,
+    revokedBy: row.revoked_by,
+    revokedByName: row.revoked_by ? profilesById.get(row.revoked_by)?.fullName ?? null : null,
+  }));
+}
+
+export interface ProjectMemberRow {
+  id: string;
+  projectId: string;
+  userId: string;
+  userName: string;
+  memberRole: "client" | "vendor";
+  isPrimary: boolean;
+  addedAt: string;
+}
+
+/**
+ * `project_members` (schema/001) holds client/vendor membership only
+ * (`project_members_client_or_vendor_only` CHECK — staff access is
+ * entirely through project_staff_assignments/is_org_staff, never this
+ * table). RLS: project_members_staff_manage lets any is_org_staff()
+ * caller (admin, org-wide accounting/general, or an assigned
+ * project_manager/superintendent) read every row for a project they can
+ * see; project_members_self_read additionally lets a client/vendor read
+ * their own row. No caller of this function today is a client/vendor
+ * session, but the function itself doesn't assume otherwise — RLS is
+ * still the only filter, same discipline as listAccessibleProjects.
+ */
+export async function listProjectMembers(supabase: SupabaseClient, projectId: string): Promise<ProjectMemberRow[]> {
+  const { data, error } = await supabase
+    .from("project_members")
+    .select("id, project_id, user_id, member_role, is_primary, added_at")
+    .eq("project_id", projectId)
+    .order("added_at", { ascending: true });
+  if (error) throw error;
+  const rows = data ?? [];
+
+  const userIds = Array.from(new Set(rows.map((row: any) => row.user_id).filter((id: string | null): id is string => !!id)));
+  const namesById = new Map<string, string>();
+  if (userIds.length > 0) {
+    const { data: profileRows, error: profileError } = await supabase.from("profiles").select("id, full_name").in("id", userIds);
+    if (profileError) throw profileError;
+    for (const p of profileRows ?? []) namesById.set(p.id, p.full_name as string);
+  }
+
+  return rows.map((row: any) => ({
+    id: row.id,
+    projectId: row.project_id,
+    userId: row.user_id,
+    userName: namesById.get(row.user_id) ?? "Unknown",
+    memberRole: row.member_role,
+    isPrimary: row.is_primary,
+    addedAt: row.added_at,
+  }));
 }

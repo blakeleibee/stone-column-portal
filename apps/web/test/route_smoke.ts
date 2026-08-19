@@ -6,6 +6,7 @@
  * Run with `npx tsx test/route_smoke.ts`.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAdminVM, loadClientVM } from "../src/data/loadViewModels";
@@ -34,6 +35,47 @@ function buttonTagFor(html: string, textFragment: string): string | null {
   const openTagEnd = html.indexOf(">", openTagStart);
   if (openTagStart === -1 || openTagEnd === -1) return null;
   return html.slice(openTagStart, openTagEnd + 1);
+}
+
+/**
+ * Task 6 (P3) regression guard for Task 5's overview/financials fix —
+ * see this function's call sites below for the full "why a source-level
+ * check, not an HTTP one" reasoning. Confirms `fixtureIdentifiers` (the
+ * fixture bindings imported at the top of `filePath`, e.g.
+ * `demoProjectMeta`) are referenced ONLY inside the file's
+ * `if (isDemoMode()) { ... }` branch — i.e. the real (non-demo) code
+ * path that runs for an actual authenticated session cannot reach the
+ * fixture import at all, because it's lexically unreachable once that
+ * branch's block has returned. Brace-counts from the first `{` after
+ * `if (isDemoMode())` to find that block's matching `}`, then checks
+ * the fixture identifiers don't appear anywhere after it.
+ */
+function checkNoFixtureReferenceOutsideDemoBlock(filePath: string, fixtureIdentifiers: string[], label: string) {
+  const source = fs.readFileSync(filePath, "utf8");
+  const demoBlockStart = source.indexOf("if (isDemoMode())");
+  if (demoBlockStart === -1) {
+    throw new Error(`${label}: expected an "if (isDemoMode())" branch guarding fixture usage — found none in ${filePath}.`);
+  }
+  const braceStart = source.indexOf("{", demoBlockStart);
+  let depth = 0;
+  let i = braceStart;
+  for (; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  if (depth !== 0) {
+    throw new Error(`${label}: could not find the matching closing brace for its "if (isDemoMode())" block in ${filePath}.`);
+  }
+  const afterDemoBlock = source.slice(i + 1);
+  for (const id of fixtureIdentifiers) {
+    check(
+      `${label}'s real (non-demo) code path never references the fixture binding \`${id}\` (Task 5 fix, Task 6 regression guard)`,
+      !afterDemoBlock.includes(id)
+    );
+  }
 }
 
 function startServer(): ChildProcess {
@@ -196,6 +238,52 @@ async function main() {
     check(
       "/admin/projects redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
       (projectsRoute.status === 307 || projectsRoute.status === 308) && (projectsRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/team is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Task 6 (P3): new per-project team-assignment screen, same
+    // real-backend-only shape as every block above — requireRole() runs
+    // before any project id is resolved, so an arbitrary path segment is
+    // enough to prove the route exists and is protected, without needing
+    // a real project id or a real authenticated session.
+    const teamRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/team");
+    check(
+      "/admin/projects/[id]/team redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (teamRoute.status === 307 || teamRoute.status === 308) && (teamRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log(
+      "\n--- Regression guard (Task 6): /admin/overview and /admin/financials no longer render the fixture project's name in a real session ---"
+    );
+    // Task 5 fixed both pages to stop unconditionally rendering
+    // loadAdminVM()'s hardcoded Hawks Ridge fixture in a real session
+    // (they now branch on isDemoMode() and only use the fixture inside
+    // that branch), but added no regression guard for it. The natural
+    // HTTP-level guard — fetch the route under a real authenticated
+    // session and assert "Hawks Ridge" is absent — is not achievable in
+    // THIS harness: unlike the DEMO_MODE=true checks above (which
+    // legitimately assert the fixture DOES render — that's demo mode's
+    // own contract), there is no mechanism anywhere in this test suite
+    // (see auth_smoke.ts, which only ever proves unauthenticated
+    // requests redirect) for establishing a real, non-demo, authenticated
+    // Supabase session — no seeded test user, no login flow driven here.
+    // Faking that with a stubbed session would test the stub, not the
+    // app. The honest, achievable substitute: statically prove the real
+    // (non-demo) code path in each page's own source can never reach the
+    // fixture import in the first place (see
+    // checkNoFixtureReferenceOutsideDemoBlock above) — a real session
+    // literally cannot render "Hawks Ridge" because the only code that
+    // reads `demoProjectMeta`/`demoExpenses` is lexically inside the
+    // `if (isDemoMode())` block, unreachable once DEMO_MODE is false.
+    checkNoFixtureReferenceOutsideDemoBlock(
+      path.join(APP_DIR, "app/admin/overview/page.tsx"),
+      ["demoProjectMeta", "demoExpenses"],
+      "/admin/overview"
+    );
+    checkNoFixtureReferenceOutsideDemoBlock(
+      path.join(APP_DIR, "app/admin/financials/page.tsx"),
+      ["demoProjectMeta"],
+      "/admin/financials"
     );
 
     console.log("\n--- Every client route responds 200, correctly labeled ---");
