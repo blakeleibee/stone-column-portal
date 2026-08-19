@@ -40,6 +40,7 @@ const FILES = [
   "tests/sql/package_p4_estimating_qb_import_tests.sql",
   "tests/sql/package_p5_commitments_bids_procurement_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
+  "tests/sql/package_p3_project_staff_access_tests.sql",
 ];
 
 async function main() {
