@@ -439,13 +439,63 @@ create policy issued_documents_staff_full_access on issued_documents
 -- unreliable." Independent review confirmed this warning is real and
 -- specific to INSERT's WITH CHECK evaluation — not to SELECT/UPDATE's
 -- USING clause, which check an already-existing row.
+--
+-- FIX ROUND 1 (Critical finding C1): the self-join hazard is *also*
+-- reachable through SELECT, not just INSERT/UPDATE's WITH CHECK.
+-- create_project_with_defaults() does
+-- `insert into projects (...) returning id into v_project_id` —
+-- Postgres evaluates the table's SELECT policy against a RETURNING
+-- clause too. The original projects_staff_select's `is_org_staff(id)`
+-- internally does `select org_id from public.projects where id =
+-- p_project_id`, which cannot see the not-yet-committed row mid-INSERT
+-- and resolves to null org_id, so is_org_staff() returns false and the
+-- RETURNING clause is rejected by RLS even though the INSERT itself
+-- was correctly authorized — breaking create_project_with_defaults()
+-- for every caller. Fixed by is_org_staff_for_project_row() below,
+-- which takes org_id directly off the row being checked (already
+-- visible, no self-join — the same pattern already used correctly by
+-- projects_staff_insert's is_org_admin_for_org(org_id) and
+-- projects_staff_update's WITH CHECK), reproducing is_org_staff()'s
+-- assignment-aware logic without querying `projects` at all.
 -- ---------------------------------------------------------------------
 drop policy projects_staff_full_access on projects;
 
--- SELECT: existing row, safe to use the assignment-aware helper.
+create or replace function public.is_org_staff_for_project_row(p_org_id uuid, p_project_id uuid) returns boolean
+language plpgsql stable security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_role app_role;
+  v_function staff_function;
+begin
+  if p_org_id is null or not public.is_org_staff_for_org(p_org_id) then
+    return false;
+  end if;
+
+  select role, staff_function into v_role, v_function
+  from public.profiles where id = auth.uid();
+
+  if v_role = 'admin' then
+    return true;
+  end if;
+
+  if v_function in ('project_manager', 'superintendent') then
+    return public.has_project_assignment(p_project_id);
+  end if;
+
+  return true;
+end;
+$$;
+
+revoke all on function public.is_org_staff_for_project_row(uuid, uuid) from public;
+grant execute on function public.is_org_staff_for_project_row(uuid, uuid) to authenticated;
+
+-- SELECT: existing row, but also reachable mid-INSERT via RETURNING
+-- (see FIX ROUND 1 note above) — org_id is a plain column on the row
+-- being checked, so no self-join hazard either way.
 create policy projects_staff_select on projects
   for select to authenticated
-  using (is_org_staff(id));
+  using (is_org_staff_for_project_row(org_id, id));
 
 -- INSERT: no self-join (org_id is a column on the incoming row
 -- itself); also tightens creation to admin-only at the RLS layer
@@ -458,9 +508,19 @@ create policy projects_staff_insert on projects
 -- WITH CHECK deliberately avoids any self-referential subquery on
 -- the new row image, per the same caution as INSERT above, even
 -- though the original comment only names INSERT explicitly.
+--
+-- FIX ROUND 1 (Important finding I2): USING is now is_financial_staff,
+-- not is_org_staff — projects carries two real dollar columns
+-- (gmp_amount_cents, deposit_amount_cents), so Decision 4's exclusion
+-- of `projects` from the financial-table swap list was incomplete.
+-- Without this, an assigned superintendent could UPDATE projects and
+-- change those amounts directly, defeating is_financial_staff()'s
+-- purpose everywhere else. WITH CHECK stays is_org_staff_for_org(org_id)
+-- (unchanged) — no self-join concern there, and USING is the financial
+-- gate, not WITH CHECK.
 create policy projects_staff_update on projects
   for update to authenticated
-  using (is_org_staff(id))
+  using (is_financial_staff(id))
   with check (is_org_staff_for_org(org_id));
 
 -- No DELETE policy is added — none existed before this package, and

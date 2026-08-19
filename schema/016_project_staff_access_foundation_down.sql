@@ -35,11 +35,14 @@ drop table if exists audit_financial_tables;
 
 -- ---------------------------------------------------------------------
 -- Step 6 reverse: restore projects_staff_full_access
--- (schema/001 lines 913-916), dropping the 3 command-specific policies.
+-- (schema/001 lines 913-916), dropping the 3 command-specific policies
+-- and the FIX ROUND 1 helper function.
 -- ---------------------------------------------------------------------
 drop policy if exists projects_staff_update on projects;
 drop policy if exists projects_staff_insert on projects;
 drop policy if exists projects_staff_select on projects;
+
+drop function if exists public.is_org_staff_for_project_row(uuid, uuid);
 
 create policy projects_staff_full_access on projects
   for all to authenticated
