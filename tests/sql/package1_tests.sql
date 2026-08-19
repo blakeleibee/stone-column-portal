@@ -168,14 +168,17 @@ insert into test_fixture_ids (key, value) values
 
 insert into auth.users (id)
 select value from test_fixture_ids where key in ('client_a', 'client_b', 'vendor_a', 'staff_a');
-insert into profiles (id, org_id, role, full_name, email)
-select (select value from test_fixture_ids where key = 'client_a'), org_id, 'client'::app_role, 'Alex Carter', 'alex@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
+-- staff_function (P3, migration 016) is required whenever role='staff' —
+-- 'general' here since this fixture predates the staff_function tiers
+-- and isn't exercising project-scoped access itself.
+insert into profiles (id, org_id, role, full_name, email, staff_function)
+select (select value from test_fixture_ids where key = 'client_a'), org_id, 'client'::app_role, 'Alex Carter', 'alex@example.com', null::staff_function from profiles where id = current_setting('app.current_test_user')::uuid
 union all
-select (select value from test_fixture_ids where key = 'client_b'), org_id, 'client'::app_role, 'Jordan Someone', 'jordan@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
+select (select value from test_fixture_ids where key = 'client_b'), org_id, 'client'::app_role, 'Jordan Someone', 'jordan@example.com', null::staff_function from profiles where id = current_setting('app.current_test_user')::uuid
 union all
-select (select value from test_fixture_ids where key = 'vendor_a'), org_id, 'vendor'::app_role, 'Vendor Contractor', 'vendor@example.com' from profiles where id = current_setting('app.current_test_user')::uuid
+select (select value from test_fixture_ids where key = 'vendor_a'), org_id, 'vendor'::app_role, 'Vendor Contractor', 'vendor@example.com', null::staff_function from profiles where id = current_setting('app.current_test_user')::uuid
 union all
-select (select value from test_fixture_ids where key = 'staff_a'), org_id, 'staff'::app_role, 'Staff Member', 'staff@example.com' from profiles where id = current_setting('app.current_test_user')::uuid;
+select (select value from test_fixture_ids where key = 'staff_a'), org_id, 'staff'::app_role, 'Staff Member', 'staff@example.com', 'general'::staff_function from profiles where id = current_setting('app.current_test_user')::uuid;
 
 insert into project_members (project_id, user_id, member_role) values ((select value from test_fixture_ids where key = 'project_a'), (select value from test_fixture_ids where key = 'client_a'), 'client');
 insert into project_members (project_id, user_id, member_role) values ((select value from test_fixture_ids where key = 'project_b'), (select value from test_fixture_ids where key = 'client_b'), 'client');
