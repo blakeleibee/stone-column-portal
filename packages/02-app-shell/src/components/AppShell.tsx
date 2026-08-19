@@ -3,6 +3,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { colors, spacing, radius, typography, touchTarget } from "../design/tokens";
 import { AppRole, NavItem, navForRole, clientMoreNav } from "../nav/navigation";
+import { ProjectSwitcher } from "./ProjectSwitcher";
+import type { ProjectRow } from "../services/projectService";
 
 const LOGO_SRC = "/assets/logo.jpg";
 
@@ -41,12 +43,34 @@ function IconPlaceholder({ name }: { name: string }) {
   );
 }
 
+/**
+ * Task 4: the data + mutation ProjectSwitcher needs, threaded through as
+ * one optional prop bundle rather than several loose ones. Optional
+ * (not required) so every existing caller/test that doesn't supply it
+ * (render_smoke.tsx, ClientChrome.tsx) keeps rendering exactly as
+ * before — the header simply falls back to the old plain `projectName`
+ * text when this is absent. When present, it REPLACES that plain text
+ * (ProjectSwitcher itself shows the current project's name + badge), so
+ * a caller should pass one or the other, not rely on both rendering
+ * together.
+ */
+export interface AppShellProjectSwitcherProps {
+  currentProject: ProjectRow | null;
+  otherProjects: ProjectRow[];
+  onSwitch: (projectId: string) => Promise<{ id: string } | { error: string }>;
+  isAdmin: boolean;
+  allProjectsHref: string;
+  archivedProjectsHref: string;
+  createProjectHref: string;
+}
+
 export interface AppShellProps {
   role: AppRole;
   activeKey: string;
   onNavigate: (key: string) => void;
   userName: string;
   projectName?: string;
+  projectSwitcher?: AppShellProjectSwitcherProps;
   isPreviewingAsClient?: boolean;
   onExitPreview?: () => void;
   children: React.ReactNode;
@@ -60,6 +84,7 @@ export function AppShell({
   onNavigate,
   userName,
   projectName,
+  projectSwitcher,
   isPreviewingAsClient,
   onExitPreview,
   children,
@@ -124,7 +149,11 @@ export function AppShell({
 
       <header className="sc-topbar">
         <div className="sc-topbar-brand">
-          {projectName && <span className="sc-topbar-project">{projectName}</span>}
+          {projectSwitcher ? (
+            <ProjectSwitcher {...projectSwitcher} />
+          ) : (
+            projectName && <span className="sc-topbar-project">{projectName}</span>
+          )}
         </div>
         <div className="sc-topbar-user">
           {role === "admin" && !isPreviewingAsClient ? (
@@ -230,7 +259,16 @@ export function AppShell({
         </div>
       )}
 
-      <style>{shellStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{shellStyles}</style> — the
+          same hydration-mismatch class found and fixed in
+          BidPackageWorkspace.tsx (commit 565a615): shellStyles
+          interpolates typography.fontFamily, which contains literal
+          apostrophes ('Inter', 'Segoe UI'), and React's plain-children
+          <style> text escaping differs between server and client render
+          for that content. This was a latent, not-yet-reported instance
+          of the exact same bug in this exact file, fixed here while
+          already touching AppShell.tsx for Task 4. */}
+      <style dangerouslySetInnerHTML={{ __html: shellStyles }} />
     </div>
   );
 }

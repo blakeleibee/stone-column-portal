@@ -116,10 +116,6 @@ async function main() {
     check("/admin/overview responds 200", overview.status === 200);
     check("/admin/overview shows the project name", overview.html.includes("Hawks Ridge"));
 
-    const projects = await getHtml("/admin/projects");
-    check("/admin/projects responds 200", projects.status === 200);
-    check("/admin/projects renders the project workspace tabs", projects.html.includes(">Financials<"));
-
     console.log("\n--- Financials figure comes from the real engine, not a hardcoded value ---");
     const financials = await getHtml("/admin/financials");
     check("/admin/financials responds 200", financials.status === 200);
@@ -185,6 +181,21 @@ async function main() {
     check(
       "/admin/bids redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
       (bidsRoute.status === 307 || bidsRoute.status === 308) && (bidsRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Task 4 (P3): AdminProjectsPage now always calls requireRole()
+    // regardless of DEMO_MODE, replacing the old stub that unconditionally
+    // rendered loadAdminVM()'s fixture project via ProjectWorkspace
+    // (ignoring DEMO_MODE entirely — the bug this task's brief flagged).
+    // Projects are org-scoped real data with no fixture-repository
+    // equivalent, same as /admin/import and /admin/bids above, so under
+    // this test's DEMO_MODE=true env with no real session cookie it must
+    // redirect to /login rather than render.
+    const projectsRoute = await getHtml("/admin/projects");
+    check(
+      "/admin/projects redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (projectsRoute.status === 307 || projectsRoute.status === 308) && (projectsRoute.location ?? "").endsWith("/login")
     );
 
     console.log("\n--- Every client route responds 200, correctly labeled ---");
