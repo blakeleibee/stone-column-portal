@@ -33,6 +33,7 @@ const FILES = [
   "schema/013_estimating_and_qb_import.sql",
   "schema/014_import_amount_canonicalization_and_audit_attribution.sql",
   "schema/015_commitments_bids_procurement.sql",
+  "schema/016_project_staff_access_foundation.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",
