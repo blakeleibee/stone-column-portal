@@ -18,7 +18,8 @@ export default async function AdminOverviewPage() {
     );
   }
 
-  // Real (non-demo) path — this used to call loadAdminVM() unconditionally,
+  // Real (non-demo) path — this used to call the zero-arg, fixture-backed
+  // `loadAdminVM` loader unconditionally (no project id, no real repo),
   // which meant a real authenticated session still saw the fixture Hawks
   // Ridge project's figures (standing bug flagged in this task's brief).
   // Fixed the same way /admin/financials/page.tsx already did it: resolve

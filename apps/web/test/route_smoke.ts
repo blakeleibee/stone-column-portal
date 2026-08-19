@@ -277,12 +277,21 @@ async function main() {
     // `if (isDemoMode())` block, unreachable once DEMO_MODE is false.
     checkNoFixtureReferenceOutsideDemoBlock(
       path.join(APP_DIR, "app/admin/overview/page.tsx"),
-      ["demoProjectMeta", "demoExpenses"],
+      // "loadAdminVM(" (with the trailing paren, so it doesn't
+      // false-positive against loadAdminVMFor(...)) is the actual
+      // original Task 5 bug, not just the fixture bindings: the real
+      // (non-demo) path used to call the zero-arg, fixture-backed
+      // loadAdminVM() unconditionally instead of
+      // loadAdminVMFor(project.id, repo). A future edit reverting that
+      // one call site back to loadAdminVM() would reintroduce the bug
+      // without ever touching demoProjectMeta/demoExpenses, so it needs
+      // its own check, not just the fixture identifiers.
+      ["demoProjectMeta", "demoExpenses", "loadAdminVM("],
       "/admin/overview"
     );
     checkNoFixtureReferenceOutsideDemoBlock(
       path.join(APP_DIR, "app/admin/financials/page.tsx"),
-      ["demoProjectMeta"],
+      ["demoProjectMeta", "loadAdminVM("],
       "/admin/financials"
     );
 
