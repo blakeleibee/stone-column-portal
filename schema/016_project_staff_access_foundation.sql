@@ -163,7 +163,9 @@ create trigger project_staff_assignments_org_match before insert or update on pr
 -- exactly: identity immutable after insert; revoked_by must equal the
 -- acting session's own auth.uid(), checked on both INSERT (an
 -- already-revoked row) and UPDATE (either field changing); reactivation
--- (revoked_at cleared) also clears revoked_by.
+-- (revoked_at cleared) auto-clears revoked_by (not a reject — the row
+-- itself is corrected in place), so no stale attribution lingers on an
+-- active row.
 create or replace function public.enforce_project_staff_assignment_identity_and_revocation() returns trigger
 language plpgsql set search_path = public, pg_temp
 as $$
@@ -195,10 +197,11 @@ begin
           auth.uid(), new.revoked_by, old.id;
       end if;
     else
-      -- Reactivation: revoked_at cleared must also clear revoked_by.
-      if new.revoked_by is not null then
-        raise exception 'Reactivating project_staff_assignments row % must also clear revoked_by.', old.id;
-      end if;
+      -- Reactivation: revoked_at cleared also clears revoked_by, so no
+      -- stale attribution lingers on an active row — mirrors
+      -- enforce_vendor_member_identity_and_revocation() (schema/015)
+      -- exactly, including the auto-clear (not reject) behavior.
+      new.revoked_by := null;
     end if;
   end if;
 

@@ -379,22 +379,16 @@ select assert_raises(
   'reassigning revoked_by on an already-revoked row, with revoked_at left unchanged, must still be rejected'
 );
 
--- Reactivation: unlike vendor_members' identical-in-spirit trigger
--- (schema/015 enforce_vendor_member_identity_and_revocation, which
--- auto-clears revoked_by via `new.revoked_by := null` when revoked_at
--- is cleared), project_staff_assignments'
--- enforce_project_staff_assignment_identity_and_revocation ONLY
--- validates — it raises "must also clear revoked_by" if the caller
--- doesn't clear it themselves, rather than clearing it for them. This
--- is a real divergence from 016's own header comment ("Mirrors
--- enforce_vendor_member_identity_and_revocation() ... exactly"),
--- confirmed by actually running this test against both triggers — see
--- task-2-report.md "Judgment calls / concerns". Testing the ACTUAL
--- shipped behavior here (both columns cleared explicitly in the same
--- statement), not the behavior the comment claims.
+-- Reactivation: revoked_at cleared alone auto-clears revoked_by too —
+-- mirrors vendor_members' identical trigger
+-- (enforce_vendor_member_identity_and_revocation, schema/015 line 78,
+-- `new.revoked_by := null;`) and reuses the exact single-field-update
+-- pattern package_p5_commitments_bids_procurement_tests.sql's own
+-- vendor_members reactivation test ("Reactivate person 2") already
+-- uses for the sibling table.
 do $$
 begin
-  update project_staff_assignments set revoked_at = null, revoked_by = null
+  update project_staff_assignments set revoked_at = null
   where project_id = (select value from test_fixture_ids where key = 'project_c')
     and profile_id = (select value from test_fixture_ids where key = 'pm_throwaway');
 
@@ -402,20 +396,15 @@ begin
     (select revoked_by from project_staff_assignments
        where project_id = (select value from test_fixture_ids where key = 'project_c')
          and profile_id = (select value from test_fixture_ids where key = 'pm_throwaway')) is null,
-    'reactivating (both revoked_at and revoked_by explicitly cleared in the same statement) leaves revoked_by null'
+    'reactivating (revoked_at cleared alone) auto-clears revoked_by along with it, so no stale attribution lingers — matches vendor_members'' behavior exactly'
   );
 end $$;
 
--- Regression proof of the divergence itself: clearing ONLY revoked_at
--- (as vendor_members' own equivalent test does, relying on that
--- trigger's auto-clear) is REJECTED here, not silently accepted —
--- confirms this is a real, currently-shipped behavioral difference
--- from vendor_members, not a one-off mistake in this test file. Uses
--- throwaway_pm_2 with a FRESH legitimate insert + revoke (its earlier
--- use above was only a REJECTED forged-revoked_by insert attempt,
--- which rolled back and left no row at all — a plain UPDATE against
--- that nonexistent row would silently affect 0 rows and never raise,
--- making the assert_raises below vacuous).
+-- Second, independent confirmation on a fresh row (throwaway_pm_2):
+-- proves this isn't specific to pm_throwaway's particular history.
+-- (Its earlier use above was only a REJECTED forged-revoked_by insert
+-- attempt, which rolled back and left no row at all, so this block
+-- gives it its own genuine, legitimate revoke-then-reactivate cycle.)
 do $$
 begin
   insert into project_staff_assignments (project_id, profile_id, assigned_by)
@@ -433,18 +422,20 @@ begin
        where project_id = (select value from test_fixture_ids where key = 'project_c')
          and profile_id = (select value from test_fixture_ids where key = 'throwaway_pm_2')
          and revoked_at is not null) = 1,
-    'throwaway_pm_2 now has a genuinely revoked project_c assignment row, set up for the reactivation-divergence proof below'
+    'throwaway_pm_2 now has a genuinely revoked project_c assignment row'
+  );
+
+  update project_staff_assignments set revoked_at = null
+  where project_id = (select value from test_fixture_ids where key = 'project_c')
+    and profile_id = (select value from test_fixture_ids where key = 'throwaway_pm_2');
+
+  perform assert_that(
+    (select revoked_by from project_staff_assignments
+       where project_id = (select value from test_fixture_ids where key = 'project_c')
+         and profile_id = (select value from test_fixture_ids where key = 'throwaway_pm_2')) is null,
+    'a second, independent row confirms the same revoked_by auto-clear behavior on reactivation'
   );
 end $$;
-
-select assert_raises(
-  format(
-    'update project_staff_assignments set revoked_at = null where project_id = %L and profile_id = %L',
-    (select value from test_fixture_ids where key = 'project_c'),
-    (select value from test_fixture_ids where key = 'throwaway_pm_2')
-  ),
-  'clearing ONLY revoked_at (leaving revoked_by set) is rejected — project_staff_assignments'' trigger does NOT auto-clear revoked_by on reactivation the way vendor_members'' trigger does, despite migration 016''s own comment claiming to mirror it exactly'
-);
 
 reset role;
 select clear_test_user();
