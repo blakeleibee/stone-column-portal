@@ -3,9 +3,10 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { colors, spacing, radius, typography } from "../../../../packages/02-app-shell/src/design/tokens";
-import { projectMeta, expenses } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { formatCents } from "../../../../packages/01-financial-engine/src/money";
+import type { Expense } from "../../../../packages/01-financial-engine/src/types";
 import type { AdminFinancialsViewModel } from "../../../../packages/02-app-shell/src/viewmodels/types";
+import type { ProjectMeta } from "../../../../packages/02-app-shell/src/data/financialRepository";
 import { ScheduleRail } from "../components/ScheduleRail";
 import { Badge, statusTone } from "../components/Badge";
 import { SCHEDULE, SELECTIONS } from "../data/sampleContent";
@@ -18,11 +19,38 @@ import { SCHEDULE, SELECTIONS } from "../data/sampleContent";
  * (passed in, already computed by the Package 1 engine); schedule and
  * selections are static sample content (no backend yet — see
  * data/sampleContent.ts's header comment).
+ *
+ * Task 5 fix round 1: `project`/`expenses` were previously imported
+ * directly from the fixture (`fixtures/hawksRidge`), unconditionally, so
+ * a real non-demo session still saw the fixture's project card and
+ * "Recently Imported" rows even after Task 5 fixed this screen's OWN
+ * `loadAdminVM()` fixture bug one layer up. Both are now required props:
+ * demo callers pass the fixture's `projectMeta`/`expenses` explicitly
+ * (same objects, same visual output); real callers pass the resolved
+ * real project and its real expense rows. `project` is typed `ProjectMeta`
+ * (the same type `adminVM.projectMeta` already uses) rather than a new
+ * bespoke shape — every field on it is optional except id/name/
+ * projectNumber, so real sessions that don't have a real value for a
+ * given field (e.g. `clientNames`, which has no real data source wired
+ * up yet — no project_clients query exists) can simply omit it; the JSX
+ * below renders each optional field conditionally rather than printing
+ * "undefined" or a stray separator.
  */
-export function AdminOverviewScreen({ adminVM }: { adminVM: AdminFinancialsViewModel }) {
+export function AdminOverviewScreen({
+  adminVM,
+  project,
+  expenses,
+}: {
+  adminVM: AdminFinancialsViewModel;
+  project: ProjectMeta;
+  expenses: Expense[];
+}) {
   const router = useRouter();
   const pendingDecisions = SELECTIONS.filter((s) => s.status === "Client decision required" || s.status === "Submitted for approval");
   const draftExpenseCount = expenses.filter((e) => e.financialStatus === "pending").length;
+  // Graceful omission (not "undefined · Cost-Plus 15%") for whichever of
+  // these two real sessions don't have — see the component doc comment.
+  const projectMetaLine = [project.clientNames, project.pricingLabel].filter(Boolean).join(" · ");
 
   return (
     <div className="sc-overview">
@@ -34,15 +62,13 @@ export function AdminOverviewScreen({ adminVM }: { adminVM: AdminFinancialsViewM
         <button className="sc-project-card" onClick={() => router.push("/admin/projects")}>
           <div className="sc-project-card-head">
             <div>
-              <div className="sc-project-address">{projectMeta.address}</div>
-              <div className="sc-project-name">{projectMeta.name}</div>
-              <div className="sc-project-meta">
-                {projectMeta.clientNames} · {projectMeta.pricingLabel}
-              </div>
+              {project.address && <div className="sc-project-address">{project.address}</div>}
+              <div className="sc-project-name">{project.name}</div>
+              {projectMetaLine && <div className="sc-project-meta">{projectMetaLine}</div>}
             </div>
             <div className="sc-project-badges">
               <Badge tone="sage">Active</Badge>
-              <Badge tone="gold">{projectMeta.phase}</Badge>
+              {project.phase && <Badge tone="gold">{project.phase}</Badge>}
             </div>
           </div>
           <ScheduleRail phases={SCHEDULE} compact />
