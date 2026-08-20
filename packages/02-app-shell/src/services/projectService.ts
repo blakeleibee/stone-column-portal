@@ -138,6 +138,38 @@ export async function createProject(
 }
 
 /**
+ * Application-layer guard for P3-DESIGN.md Decision 9: "Every write
+ * Server Action re-checks the project's current status server-side
+ * before proceeding (never trusts that the UI hid the edit control) ...
+ * so a stale tab pointed at a since-archived project cannot mutate it."
+ * This is the actual security boundary for the known gap where
+ * /admin/projects/[id]/team's assign/revoke/reactivate controls remain
+ * reachable by direct URL for an archived project even though every
+ * list-view link to the route is already hidden — RLS on
+ * project_staff_assignments (project_staff_assignments_admin_manage,
+ * schema/016) is admin-only but does NOT check the parent project's
+ * status at all, so this check has to live here, not there.
+ *
+ * Looks the project's current status up through the caller's own
+ * RLS-scoped client — same `select ... eq("id", ...)` pattern every
+ * other read in this file already uses, never a service-role client.
+ * Deliberately a plain lookup, not layered onto listAccessibleProjects()
+ * (which the callers here don't otherwise need) or duplicated inline in
+ * all three functions below.
+ */
+export async function assertProjectNotArchived(
+  supabase: SupabaseClient,
+  projectId: string
+): Promise<{ error: string } | null> {
+  const { data, error } = await supabase.from("projects").select("status").eq("id", projectId).maybeSingle();
+  if (error) return { error: error.message };
+  if (data?.status === "archived") {
+    return { error: "This project is archived. Team management isn't available for archived projects." };
+  }
+  return null;
+}
+
+/**
  * assigned_by has NO column default (unlike bid_questions.recorded_by,
  * which defaults to auth.uid()) — the DB trigger
  * (enforce_project_staff_assignment_identity_and_revocation, schema/016)
@@ -155,6 +187,9 @@ export async function createProject(
  * clearer message where it's cheap to do so.
  */
 export async function assignStaffToProject(supabase: SupabaseClient, projectId: string, profileId: string) {
+  const archivedError = await assertProjectNotArchived(supabase, projectId);
+  if (archivedError) return archivedError;
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -177,8 +212,24 @@ export async function assignStaffToProject(supabase: SupabaseClient, projectId: 
  *  revoked_by to equal the acting session's own auth.uid() whenever
  *  revoked_at is being set to non-null; there is no column default to
  *  fall back on, so omitting it here would always fail the trigger's
- *  check (NULL is distinct from auth.uid()). */
+ *  check (NULL is distinct from auth.uid()).
+ *
+ *  This function only receives assignmentId, not project_id — the
+ *  archived-project guard above needs the latter, so an explicit
+ *  lookup step resolves project_id from the assignment row first
+ *  (visible here, not hidden inside a clever join/RPC). */
 export async function revokeStaffAssignment(supabase: SupabaseClient, assignmentId: string) {
+  const { data: assignmentRow, error: lookupError } = await supabase
+    .from("project_staff_assignments")
+    .select("project_id")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (lookupError) return { error: lookupError.message };
+  if (!assignmentRow) return { error: "Staff assignment not found." };
+
+  const archivedError = await assertProjectNotArchived(supabase, assignmentRow.project_id);
+  if (archivedError) return archivedError;
+
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -192,8 +243,23 @@ export async function revokeStaffAssignment(supabase: SupabaseClient, assignment
 
 /** revoked_by is deliberately NOT included — the trigger auto-clears it
  *  when revoked_at is cleared (reactivation), same as
- *  reactivateVendorMember. */
+ *  reactivateVendorMember.
+ *
+ *  Same project_id-resolution step as revokeStaffAssignment above, for
+ *  the same reason: this function only receives assignmentId, and the
+ *  archived-project guard needs to know which project it belongs to. */
 export async function reactivateStaffAssignment(supabase: SupabaseClient, assignmentId: string) {
+  const { data: assignmentRow, error: lookupError } = await supabase
+    .from("project_staff_assignments")
+    .select("project_id")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (lookupError) return { error: lookupError.message };
+  if (!assignmentRow) return { error: "Staff assignment not found." };
+
+  const archivedError = await assertProjectNotArchived(supabase, assignmentRow.project_id);
+  if (archivedError) return archivedError;
+
   const { error } = await supabase
     .from("project_staff_assignments")
     .update({ revoked_at: null })

@@ -71,6 +71,30 @@ export default async function ProjectTeamPage({ params }: { params: { id: string
     );
   }
 
+  // Known, previously-disclosed gap (owner live-preview finding, closed
+  // here): every list-view link to this route is already hidden for an
+  // archived project, but the route itself was still fully live if
+  // reached by direct URL. Per P3-DESIGN.md Decision 9 ("archived
+  // projects are read-only for everyone ... never write-eligible"),
+  // this page-level guard is the user-facing half of the fix — it stops
+  // the live ProjectTeamWorkspace (assign/revoke/reactivate) from ever
+  // rendering for an archived project, not just from being usable. The
+  // actual security boundary is the service-layer guard
+  // (assertProjectNotArchived, projectService.ts), reused by
+  // assignStaffToProject/revokeStaffAssignment/reactivateStaffAssignment
+  // — this check is defense-in-depth / UX, not a replacement for that.
+  if (project.status === "archived") {
+    return (
+      <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
+        <NoProjectAccess
+          backHref="/admin/projects"
+          message={`${project.name} is archived. Team management isn't available for archived projects.`}
+          backLabel="Back to your projects"
+        />
+      </AdminChrome>
+    );
+  }
+
   // Staff-assignment reads are admin-only at the RLS layer
   // (project_staff_assignments_admin_manage, schema/016, is `for all` —
   // SELECT included). Deliberately NOT queried at all for a non-admin
