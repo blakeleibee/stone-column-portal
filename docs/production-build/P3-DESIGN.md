@@ -141,9 +141,12 @@ from `is_org_staff()`'s general pattern for this reason. Fixed by
 splitting the `projects` policy per command (Decision 1) rather than
 overriding that documented precedent on an unverified assumption. Also
 incorporated: tightened wording on acceptance criterion 5 (the audit-log
-fix does not, and was never intended to, close the two untouched,
-non-financial `orgs`/`profiles`/`vendor_members` audit policies — see
-Decision 5); explicit single-transaction application note for the
+fix does not, and was never intended to, close the four untouched,
+non-project-scoped audit policies — `audit_log_org_scoped_select`
+(`orgs`/`profiles`/`projects`), `audit_log_vendor_members_staff_select`,
+`audit_log_vendors_staff_select`, and
+`audit_log_import_mapping_profiles_staff_select` — see Decision 5);
+explicit single-transaction application note for the
 migration (Task 1); a diff-based down-migration verification step
 (Task 1); explicit provenance enforcement for `assigned_by`, matching
 the `bid_questions.recorded_by`/`bid_addenda.issued_by` precedent
@@ -685,12 +688,16 @@ used (closing the `DEMO_MODE`-bypass bug found in Research findings).
 5. A `'superintendent'`-function staff account cannot read any
    Decision-4-listed financial table, or any *project-scoped* audit-log
    row (the three new policies in Decision 5), for any project, by
-   default. (The two untouched, non-financial audit policies —
-   `orgs`/`profiles` and `vendor_members` changes — remain org-wide
-   staff-visible by deliberate, explicit exclusion; see Decision 5.
-   This distinction is stated precisely here because the independent
-   review found the original, looser wording would have overstated
-   what's actually delivered.)
+   default. (The four untouched, non-project-scoped audit policies —
+   `audit_log_org_scoped_select` (schema/006, `orgs`/`profiles`/
+   `projects`), `audit_log_vendor_members_staff_select` (schema/015),
+   `audit_log_vendors_staff_select` (schema/012), and
+   `audit_log_import_mapping_profiles_staff_select` (schema/013) —
+   remain org-wide staff-visible by deliberate, explicit exclusion; see
+   Decision 5. This distinction is stated precisely here because the
+   independent review found the original, looser wording would have
+   overstated what's actually delivered; the count was itself corrected
+   from "two" to the real four during the final-review fix wave.)
 5a. No staff account other than an admin can write to
    `project_staff_assignments` — including attempting to assign
    themselves to a project they don't already have access to. No

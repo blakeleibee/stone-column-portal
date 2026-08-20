@@ -50,22 +50,18 @@ export default async function AdminOverviewPage() {
     repo.getExpenses(project.id),
   ]);
 
-  // adminVM.projectMeta already carries real name/phase/pricingLabel from
-  // SupabaseFinancialRepository.getProjectMeta() — but that method's own
-  // query selects `address` and never maps it onto the returned object
-  // (a separate, pre-existing bug outside this task's file list), so
-  // `address` is patched in here from the already-resolved `project`
-  // (ProjectRow), which maps it correctly. `clientNames` has no real data
-  // source yet (no project_clients/project_members query wired up) and is
+  // adminVM.projectMeta already carries real name/phase/pricingLabel/address
+  // from SupabaseFinancialRepository.getProjectMeta() (that method's own
+  // query previously selected `address` but never mapped it onto the
+  // returned object — fixed in the final-review fix wave, so the
+  // address-patched-in-from-`project` workaround this comment used to
+  // describe is no longer needed). `clientNames` has no real data source
+  // yet (no project_clients/project_members query wired up) and is
   // intentionally left absent — AdminOverviewScreen renders that
   // gracefully, not as "undefined".
   return (
     <AdminChrome activeKey="overview" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-      <AdminOverviewScreen
-        adminVM={adminVM}
-        project={{ ...adminVM.projectMeta, address: project.address ?? undefined }}
-        expenses={realExpenses}
-      />
+      <AdminOverviewScreen adminVM={adminVM} project={adminVM.projectMeta} expenses={realExpenses} />
     </AdminChrome>
   );
 }

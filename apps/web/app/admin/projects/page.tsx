@@ -6,6 +6,7 @@ import { requireRole } from "../../../src/server/auth/require";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { listAccessibleProjects } from "../../../../../packages/02-app-shell/src/services/projectService";
 import { resolveSelectedProject } from "../../../src/server/project/resolveSelectedProject";
+import type { ProjectSwitcherData } from "../../../src/server/project/switcherDataAction";
 import { createProject } from "./createAction";
 import { switchProject } from "./switchAction";
 
@@ -51,9 +52,27 @@ export default async function AdminProjectsPage({
     supabase.from("profiles").select("id, full_name, role").eq("org_id", user.orgId).in("role", ["staff", "client"]),
   ]);
 
+  // Server-resolved ProjectSwitcher data (final-review fix wave, Minor
+  // finding 2): this page already fetched allAccessible/currentProject
+  // above for its own content, so build AdminChrome's switcher data from
+  // that instead of issuing a second listAccessibleProjects()/
+  // resolveSelectedProject() round trip via resolveProjectAndSwitcherData()
+  // (the shared helper Task 5 used for the other five admin pages). The
+  // switcher's own convention (per listAccessibleProjects()'s doc comment
+  // and every other caller of resolveProjectAndSwitcherData) is
+  // active-ish projects only, so `otherProjects` filters out archived
+  // rows even though this page's own `allAccessible` fetch deliberately
+  // includes them for the ?view=archived list below.
+  const switcherData: ProjectSwitcherData = {
+    currentProject,
+    otherProjects: allAccessible.filter((project) => project.status !== "archived" && project.id !== currentProject?.id),
+    hasArchivedProjects: allAccessible.some((project) => project.status === "archived"),
+    isAdmin: user.role === "admin",
+  };
+
   if (searchParams.project && !allAccessible.some((project) => project.id === searchParams.project)) {
     return (
-      <AdminChrome activeKey="projects" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
         <NoProjectAccess backHref="/admin/projects" />
       </AdminChrome>
     );
@@ -69,7 +88,7 @@ export default async function AdminProjectsPage({
   const clientOptions = profileRows.filter((p) => p.role === "client").map((p) => ({ id: p.id, name: p.full_name }));
 
   return (
-    <AdminChrome activeKey="projects" isDemoMode={isDemoMode()}>
+    <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <ProjectListWorkspace
         view={view}
         projects={projects}

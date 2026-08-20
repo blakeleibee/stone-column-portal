@@ -37,18 +37,27 @@ export async function resolveProjectAndSwitcherData(
   orgId: string,
   role: string
 ): Promise<ResolvedProjectAndSwitcherData> {
-  const [project, allProjects] = await Promise.all([
+  // allProjectsIncludingArchived: true (a change from this function's
+  // pre-fix-wave default-only fetch) so switcherData.hasArchivedProjects
+  // can be computed from the SAME query rather than a second round trip
+  // — otherProjects still filters back down to the active-ish subset,
+  // preserving the switcher's existing "active projects only" behavior
+  // (final-review fix wave, Minor finding 3).
+  const [project, allProjectsIncludingArchived] = await Promise.all([
     resolveSelectedProject(supabase, orgId),
-    listAccessibleProjects(supabase, orgId),
+    listAccessibleProjects(supabase, orgId, { includeArchived: true }),
   ]);
 
-  const otherProjects = allProjects.filter((p) => p.id !== project?.id);
+  const activeProjects = allProjectsIncludingArchived.filter((p) => p.status !== "archived");
+  const otherProjects = activeProjects.filter((p) => p.id !== project?.id);
+  const hasArchivedProjects = allProjectsIncludingArchived.some((p) => p.status === "archived");
 
   return {
     project,
     switcherData: {
       currentProject: project,
       otherProjects,
+      hasArchivedProjects,
       isAdmin: role === "admin",
     },
   };

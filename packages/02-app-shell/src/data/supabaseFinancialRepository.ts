@@ -20,6 +20,7 @@ export class SupabaseFinancialRepository implements FinancialRepository {
       id: data.id,
       name: data.name,
       projectNumber: data.project_number,
+      address: data.address ?? undefined,
       phase: data.phase ?? "",
       pricingLabel: data.pricing_model_label ?? "",
     };

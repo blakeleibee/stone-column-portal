@@ -1,9 +1,12 @@
+import { cookies } from "next/headers";
 import { AdminChrome } from "../../../../../src/shell/AdminChrome";
 import { ProjectTeamWorkspace } from "../../../../../../../packages/02-app-shell/src/components/ProjectTeamWorkspace";
 import { NoProjectAccess } from "../../../../../../../packages/02-app-shell/src/components/NoProjectAccess";
 import { isDemoMode } from "../../../../../src/server/demoMode";
 import { requireRole } from "../../../../../src/server/auth/require";
 import { createServerSupabaseClient } from "../../../../../src/server/supabase/serverClient";
+import { SELECTED_PROJECT_COOKIE_NAME } from "../../../../../src/server/project/resolveSelectedProject";
+import type { ProjectSwitcherData } from "../../../../../src/server/project/switcherDataAction";
 import {
   listAccessibleProjects,
   listProjectStaffAssignments,
@@ -36,9 +39,33 @@ export default async function ProjectTeamPage({ params }: { params: { id: string
   const accessible = await listAccessibleProjects(supabase, user.orgId, { includeArchived: true });
   const project = accessible.find((p) => p.id === params.id);
 
+  // Server-resolved ProjectSwitcher data (final-review fix wave, Minor
+  // finding 2), built from the `accessible` list already fetched above
+  // rather than a second listAccessibleProjects()/resolveSelectedProject()
+  // round trip through the shared resolveProjectAndSwitcherData() helper
+  // (that helper always issues its own query internally, with no
+  // pre-fetched-list variant). This page's own content is scoped by the
+  // `params.id` route param, not the cookie-selected project, so the
+  // switcher's `currentProject` is resolved here independently — reading
+  // the same selected-project cookie resolveSelectedProject() reads, then
+  // matching it against the active (non-archived) subset of `accessible`,
+  // reproducing resolveSelectedProjectForCookieValue()'s own cookie-match
+  // -> first-entry -> null fallback exactly, just without re-querying.
+  const cookieStore = await cookies();
+  const cookieProjectId = cookieStore.get(SELECTED_PROJECT_COOKIE_NAME)?.value ?? null;
+  const activeProjects = accessible.filter((p) => p.status !== "archived");
+  const currentProject =
+    (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || activeProjects[0] || null;
+  const switcherData: ProjectSwitcherData = {
+    currentProject,
+    otherProjects: activeProjects.filter((p) => p.id !== currentProject?.id),
+    hasArchivedProjects: accessible.some((p) => p.status === "archived"),
+    isAdmin: user.role === "admin",
+  };
+
   if (!project) {
     return (
-      <AdminChrome activeKey="projects" isDemoMode={isDemoMode()}>
+      <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
         <NoProjectAccess backHref="/admin/projects" />
       </AdminChrome>
     );
@@ -73,7 +100,7 @@ export default async function ProjectTeamPage({ params }: { params: { id: string
   }));
 
   return (
-    <AdminChrome activeKey="projects" isDemoMode={isDemoMode()}>
+    <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <ProjectTeamWorkspace
         projectId={project.id}
         projectName={project.name}

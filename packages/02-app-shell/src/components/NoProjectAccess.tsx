@@ -2,12 +2,21 @@
 
 /**
  * The single, shared "you don't have access to this project" state
- * (P3-DESIGN.md Decision 10). Deliberately generic and reusable — this
- * task (Task 4) is its first caller (the `/admin/projects?project=<id>`
- * deep-link check), but Task 5 renders this exact component from every
- * page it rewires onto `resolveSelectedProject()`/`requireProjectAccess()`
- * whenever the named project turns out to be nonexistent, wrong-org, or
- * revoked. Per Decision 10 the three cases are deliberately NOT
+ * (P3-DESIGN.md Decision 10). Deliberately generic and reusable — Task 4
+ * (`/admin/projects?project=<id>`'s deep-link check) and Task 6
+ * (`/admin/projects/[id]/team`, when the route's project id isn't in the
+ * caller's accessible list) both render this exact component. Task 5's
+ * five rewired pages (overview/financials/estimate/bids/import) do NOT
+ * render this — corrected here during the final-review fix wave, which
+ * found this comment's earlier claim to the contrary; those pages use
+ * `resolveSelectedProject()`'s own null-means-"zero accessible
+ * projects" contract and render a plain "No projects yet for this
+ * organization" fallback instead, since a null selected project there
+ * means the org has no accessible projects at all, not a specific
+ * named-but-inaccessible one.
+ *
+ * Per Decision 10, when this component IS rendered, its three possible
+ * causes (nonexistent, wrong-org, revoked) are deliberately NOT
  * distinguished in the copy shown (RLS already returns zero rows
  * identically for all three — surfacing which one it was would leak
  * information about resources the caller can't see).

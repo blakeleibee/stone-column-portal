@@ -45,6 +45,13 @@ export interface ProjectSwitcherProps {
    *  currentProject, excludes archived — same "active projects" default
    *  as listAccessibleProjects()'s own default). */
   otherProjects: ProjectRow[];
+  /** Whether the org has any archived projects at all, independent of
+   *  otherProjects/currentProject (both exclude archived). Lets the
+   *  empty-state message distinguish "this org genuinely has zero
+   *  projects" from "zero ACTIVE projects, but archived ones exist" —
+   *  final-review fix wave, Minor finding 3; the two states used to
+   *  render the same "No projects yet" copy. */
+  hasArchivedProjects: boolean;
   /** Re-validates server-side before setting the cookie (Decision 8) —
    *  this component never trusts its own click as the access check. */
   onSwitch: (projectId: string) => Promise<{ id: string } | { error: string }>;
@@ -59,6 +66,7 @@ export interface ProjectSwitcherProps {
 export function ProjectSwitcher({
   currentProject,
   otherProjects,
+  hasArchivedProjects,
   onSwitch,
   isAdmin,
   allProjectsHref,
@@ -117,7 +125,11 @@ export function ProjectSwitcher({
 
             {otherProjects.length === 0 ? (
               <p className="sc-switcher-empty-msg">
-                {currentProject ? "No other active projects." : "No projects yet for this organization."}
+                {currentProject
+                  ? "No other active projects."
+                  : hasArchivedProjects
+                    ? "No active projects for this organization — see Completed / Archived below."
+                    : "No projects yet for this organization."}
               </p>
             ) : (
               otherProjects.map((project) => (

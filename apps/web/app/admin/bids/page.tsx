@@ -10,13 +10,16 @@ import { createBidPackage, publishBidPackage, inviteVendor, getBidPackageDetail,
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum } from "./submissionActions";
 
 /**
- * "First project" convention, same as /admin/estimate/page.tsx and
- * /admin/import/page.tsx. Like /admin/import (and unlike
- * /admin/estimate), there is no demo-mode/fixture fallback here: bids
- * are staff/admin-only real-backend procurement data with no fixture
- * repository equivalent (bid_packages/bid_submissions/bid_questions/
- * bid_addenda), so this screen always requires a real authenticated
- * admin/staff session, regardless of DEMO_MODE.
+ * Resolves its project/switcher data via resolveSelectedProject()
+ * (through the shared resolveProjectAndSwitcherData() helper), same as
+ * /admin/estimate/page.tsx and /admin/import/page.tsx — Task 5 replaced
+ * every page's earlier ad hoc "first project" query with this. Like
+ * /admin/import (and unlike /admin/estimate), there is no demo-mode/
+ * fixture fallback here: bids are staff/admin-only real-backend
+ * procurement data with no fixture repository equivalent
+ * (bid_packages/bid_submissions/bid_questions/bid_addenda), so this
+ * screen always requires a real authenticated admin/staff session,
+ * regardless of DEMO_MODE.
  */
 export default async function AdminBidsPage() {
   const user = await requireRole(["admin", "staff"]);

@@ -57,6 +57,7 @@ function IconPlaceholder({ name }: { name: string }) {
 export interface AppShellProjectSwitcherProps {
   currentProject: ProjectRow | null;
   otherProjects: ProjectRow[];
+  hasArchivedProjects: boolean;
   onSwitch: (projectId: string) => Promise<{ id: string } | { error: string }>;
   isAdmin: boolean;
   allProjectsHref: string;

@@ -8,6 +8,11 @@ import { resolveSelectedProject } from "./resolveSelectedProject";
 export interface ProjectSwitcherData {
   currentProject: ProjectRow | null;
   otherProjects: ProjectRow[];
+  /** See ProjectSwitcher.tsx's own doc comment on this same field —
+   *  distinguishes "org has zero projects" from "zero active projects,
+   *  but archived ones exist" in the switcher's empty-state message
+   *  (final-review fix wave, Minor finding 3). */
+  hasArchivedProjects: boolean;
   isAdmin: boolean;
 }
 
@@ -34,15 +39,22 @@ export async function getProjectSwitcherData(): Promise<ProjectSwitcherData | { 
   if (!user) return { error: "Not authenticated." };
 
   if (user.role !== "admin" && user.role !== "staff") {
-    return { currentProject: null, otherProjects: [], isAdmin: false };
+    return { currentProject: null, otherProjects: [], hasArchivedProjects: false, isAdmin: false };
   }
 
-  const [currentProject, allProjects] = await Promise.all([
+  // Fetched with includeArchived: true (a change from this function's
+  // pre-fix-wave default-only fetch) so hasArchivedProjects can be
+  // computed from the SAME query rather than a second round trip —
+  // otherProjects still filters back down to the active-ish subset,
+  // preserving the switcher's existing "active projects only" behavior.
+  const [currentProject, allProjectsIncludingArchived] = await Promise.all([
     resolveSelectedProject(supabase, user.orgId),
-    listAccessibleProjects(supabase, user.orgId),
+    listAccessibleProjects(supabase, user.orgId, { includeArchived: true }),
   ]);
 
-  const otherProjects = allProjects.filter((project) => project.id !== currentProject?.id);
+  const activeProjects = allProjectsIncludingArchived.filter((project) => project.status !== "archived");
+  const otherProjects = activeProjects.filter((project) => project.id !== currentProject?.id);
+  const hasArchivedProjects = allProjectsIncludingArchived.some((project) => project.status === "archived");
 
-  return { currentProject, otherProjects, isAdmin: user.role === "admin" };
+  return { currentProject, otherProjects, hasArchivedProjects, isAdmin: user.role === "admin" };
 }

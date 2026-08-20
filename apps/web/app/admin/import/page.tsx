@@ -16,13 +16,16 @@ import {
 } from "./confirmActions";
 
 /**
- * "First project" convention, same as /admin/estimate/page.tsx. Unlike
- * that page, there is no demo-mode/fixture fallback here: Task 9's
- * `/api/imports/parse` Route Handler always calls `canManageProject` and
- * writes through a real Supabase client (there is no fixture-repository
- * equivalent for import_batches/import_rows), so this screen is
- * real-backend-only and always requires a real authenticated admin/staff
- * session, regardless of DEMO_MODE.
+ * Resolves its project/switcher data via resolveSelectedProject()
+ * (through the shared resolveProjectAndSwitcherData() helper), same as
+ * /admin/estimate/page.tsx — Task 5 replaced this page's earlier ad hoc
+ * "first project" query with this. Unlike that page, there is no
+ * demo-mode/fixture fallback here: Task 9's `/api/imports/parse` Route
+ * Handler always calls `canManageProject` and writes through a real
+ * Supabase client (there is no fixture-repository equivalent for
+ * import_batches/import_rows), so this screen is real-backend-only and
+ * always requires a real authenticated admin/staff session, regardless
+ * of DEMO_MODE.
  */
 export default async function AdminImportPage() {
   const user = await requireRole(["admin", "staff"]);
