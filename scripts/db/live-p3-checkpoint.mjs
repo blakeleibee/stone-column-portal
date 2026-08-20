@@ -207,6 +207,36 @@ async function main() {
   const { data: pmProjectsAfterRevoke } = await pmSeed.client.from("projects").select("id").eq("org_id", orgAId);
   record("Revoked project_manager immediately sees 0 projects", (pmProjectsAfterRevoke?.length ?? -1) === 0, `got ${pmProjectsAfterRevoke?.length}`);
 
+  // Reactivation: this is the exact call shape reactivateStaffAssignment()
+  // (packages/02-app-shell/src/services/projectService.ts) makes -- clear
+  // revoked_at only, and rely on the trigger fixed in commit 615d735
+  // (schema/016_project_staff_access_foundation.sql) to auto-clear
+  // revoked_by rather than reject the update. This is the exact gap that
+  // let a stale supabase/migrations/ mirror of that fix ship undetected
+  // (the mirror still had the pre-fix reject-on-reactivate body while
+  // schema/016 and the SQL test suite had the auto-clear fix) -- a live
+  // checkpoint that never exercised reactivation couldn't have caught it.
+  const { error: reactivateErr } = await adminA
+    .from("project_staff_assignments")
+    .update({ revoked_at: null })
+    .eq("id", assignment.id);
+  record("Admin can reactivate the PM's assignment (revoked_at cleared, revoked_by left for the trigger to auto-clear)", !reactivateErr, reactivateErr?.message);
+
+  const { data: pmProjectsAfterReactivate } = await pmSeed.client.from("projects").select("id").eq("org_id", orgAId);
+  const pmVisibilityRestored = pmProjectsAfterReactivate?.length === 1 && pmProjectsAfterReactivate[0].id === projectA1Id;
+  record("Reactivated project_manager's project visibility is restored (sees exactly Project A1 again)", pmVisibilityRestored, `got ${JSON.stringify(pmProjectsAfterReactivate?.map((p) => p.id))}`);
+
+  const { data: assignmentAfterReactivate, error: assignmentReadErr } = await adminA
+    .from("project_staff_assignments")
+    .select("revoked_at, revoked_by")
+    .eq("id", assignment.id)
+    .single();
+  record(
+    "Reactivated assignment's revoked_by is actually null afterward (not just revoked_at) -- proves the trigger auto-clears rather than requiring the caller to pass it",
+    !assignmentReadErr && assignmentAfterReactivate?.revoked_at === null && assignmentAfterReactivate?.revoked_by === null,
+    assignmentReadErr?.message ?? `got revoked_at=${assignmentAfterReactivate?.revoked_at}, revoked_by=${assignmentAfterReactivate?.revoked_by}`
+  );
+
   // ---- Cross-organization isolation ----
   const orgB = await signUpAndBootstrap("admin-b", "Org B");
   const { data: crossOrgRead } = await orgB.client.from("projects").select("id").eq("id", projectA1Id);

@@ -163,7 +163,9 @@ create trigger project_staff_assignments_org_match before insert or update on pr
 -- exactly: identity immutable after insert; revoked_by must equal the
 -- acting session's own auth.uid(), checked on both INSERT (an
 -- already-revoked row) and UPDATE (either field changing); reactivation
--- (revoked_at cleared) also clears revoked_by.
+-- (revoked_at cleared) auto-clears revoked_by (not a reject — the row
+-- itself is corrected in place), so no stale attribution lingers on an
+-- active row.
 create or replace function public.enforce_project_staff_assignment_identity_and_revocation() returns trigger
 language plpgsql set search_path = public, pg_temp
 as $$
@@ -195,10 +197,11 @@ begin
           auth.uid(), new.revoked_by, old.id;
       end if;
     else
-      -- Reactivation: revoked_at cleared must also clear revoked_by.
-      if new.revoked_by is not null then
-        raise exception 'Reactivating project_staff_assignments row % must also clear revoked_by.', old.id;
-      end if;
+      -- Reactivation: revoked_at cleared also clears revoked_by, so no
+      -- stale attribution lingers on an active row — mirrors
+      -- enforce_vendor_member_identity_and_revocation() (schema/015)
+      -- exactly, including the auto-clear (not reject) behavior.
+      new.revoked_by := null;
     end if;
   end if;
 
@@ -234,6 +237,23 @@ grant execute on function public.has_project_assignment(uuid) to authenticated;
 -- Preserves the exact language/security/search_path clauses of the
 -- pre-016 body (schema/001 lines 103-112); only the internal logic
 -- changes.
+--
+-- FIX ROUND 2 (Important finding I2, final whole-branch review):
+-- is_org_staff_for_project_row(p_org_id, p_project_id) (Step 6, below)
+-- was added during Task 1's review round to fix the projects_staff_select
+-- self-join hazard, and independently re-implemented this function's
+-- exact role/staff_function/assignment logic rather than delegating to
+-- it — two copies of the same authorization rule, one keystroke away
+-- from silently diverging. Refactored so is_org_staff() resolves
+-- org_id (the one piece of work is_org_staff_for_project_row() cannot
+-- do itself, since it takes org_id as an argument rather than a
+-- project id to look up) and then delegates entirely. Semantically
+-- identical to the previous body: is_org_staff_for_project_row()'s own
+-- `if p_org_id is null or not is_org_staff_for_org(p_org_id) then
+-- return false` already reproduces this function's
+-- `v_org_id is null or not is_org_staff_for_org(v_org_id) -> false`
+-- path exactly, including the case where the project id resolves to no
+-- row at all (v_org_id stays null).
 -- ---------------------------------------------------------------------
 create or replace function public.is_org_staff(p_project_id uuid) returns boolean
 language plpgsql stable security definer
@@ -241,28 +261,9 @@ set search_path = public, pg_temp
 as $$
 declare
   v_org_id uuid;
-  v_role app_role;
-  v_function staff_function;
 begin
   select org_id into v_org_id from public.projects where id = p_project_id;
-  if v_org_id is null or not public.is_org_staff_for_org(v_org_id) then
-    return false;
-  end if;
-
-  select role, staff_function into v_role, v_function
-  from public.profiles where id = auth.uid();
-
-  if v_role = 'admin' then
-    return true;
-  end if;
-
-  if v_function in ('project_manager', 'superintendent') then
-    return public.has_project_assignment(p_project_id);
-  end if;
-
-  -- 'accounting', 'general', and legacy NULL (pre-migration, should not
-  -- occur post-backfill) remain org-wide, matching today's behavior.
-  return true;
+  return public.is_org_staff_for_project_row(v_org_id, p_project_id);
 end;
 $$;
 
