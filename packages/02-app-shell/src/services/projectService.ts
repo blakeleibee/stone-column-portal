@@ -133,7 +133,19 @@ export async function createProject(
     p_initial_staff_profile_ids: params.initialStaffProfileIds ?? [],
     p_initial_client_profile_ids: params.initialClientProfileIds ?? [],
   });
-  if (error) return { error: error.message };
+  if (error) {
+    // Friendly rewrite for the `projects_number_unique_per_org` collision
+    // (final-review fix wave, Minor finding 7) — same precedent as
+    // assignStaffToProject's own `/org mismatch/` rewrite below: without
+    // this, the raw Postgres constraint-violation message (something
+    // like `duplicate key value violates unique constraint
+    // "projects_number_unique_per_org"`) surfaces verbatim in the create
+    // form.
+    if (/projects_number_unique_per_org/.test(error.message)) {
+      return { error: "That project number is already in use in your organization — choose a different one." };
+    }
+    return { error: error.message };
+  }
   return { id: data as string };
 }
 
