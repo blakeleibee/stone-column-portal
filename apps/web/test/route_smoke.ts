@@ -240,6 +240,21 @@ async function main() {
       (projectsRoute.status === 307 || projectsRoute.status === 308) && (projectsRoute.location ?? "").endsWith("/login")
     );
 
+    // final-review fix wave, Minor finding 5: the ?view=completed view
+    // (the distinct `status='closed_out'` list — Important finding 1's
+    // ProjectSwitcher fix is what made it reachable from the header) had
+    // no route_smoke coverage of its own; same shape as the base
+    // /admin/projects check above — requireRole() runs before the view
+    // query param is even read, so this only needs to prove the route
+    // still redirects to /login unauthenticated, same as every other
+    // real-backend-only screen in this file.
+    const projectsCompletedRoute = await getHtml("/admin/projects?view=completed");
+    check(
+      "/admin/projects?view=completed redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (projectsCompletedRoute.status === 307 || projectsCompletedRoute.status === 308) &&
+        (projectsCompletedRoute.location ?? "").endsWith("/login")
+    );
+
     console.log("\n--- /admin/projects/[id]/team is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
     // Task 6 (P3): new per-project team-assignment screen, same
     // real-backend-only shape as every block above — requireRole() runs
