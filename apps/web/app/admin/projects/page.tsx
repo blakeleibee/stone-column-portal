@@ -61,10 +61,16 @@ export default async function AdminProjectsPage({
     // can show real role context ("Jane Doe — Project Manager"), not a
     // bare name-only checkbox list — it was previously never selected at
     // all, so the picker structurally couldn't show it.
+    // is_active filter (final-review fix wave, Important finding 2):
+    // matches /admin/projects/[id]/team's own candidate-staff picker
+    // query exactly — without this, a deactivated staff member was
+    // assignable at project-creation time even though the team screen
+    // already refuses to offer them.
     supabase
       .from("profiles")
       .select("id, full_name, role, staff_function")
       .eq("org_id", user.orgId)
+      .eq("is_active", true)
       .in("role", ["staff", "client"]),
   ]);
 
@@ -123,6 +129,8 @@ export default async function AdminProjectsPage({
         // number too, since uniqueness is enforced org-wide regardless of
         // status.
         allProjectNumbers={allAccessible.map((project) => project.projectNumber)}
+        hasCompletedProjects={allAccessible.some((project) => project.status === "closed_out")}
+        hasArchivedProjects={allAccessible.some((project) => project.status === "archived")}
         initialCreateOpen={searchParams.new === "1"}
         createProject={createProject}
         switchProject={switchProject}

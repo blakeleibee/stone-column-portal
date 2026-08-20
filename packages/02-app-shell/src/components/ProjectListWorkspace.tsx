@@ -191,6 +191,17 @@ export interface ProjectListWorkspaceProps {
    *  suggestion based only on this view's rows could collide with a
    *  number that belongs to an archived/completed project. */
   allProjectNumbers: string[];
+  /** Whether the org has any completed/archived projects at all,
+   *  independent of this view's own filtered `projects` prop —
+   *  final-review fix wave, Minor finding 4: without these, an org whose
+   *  only projects are e.g. `closed_out` saw the Active view's "No
+   *  projects yet for this organization" message, which is misleading
+   *  (the org does have projects, just none active). Same
+   *  "genuinely zero" vs. "zero in this view, but others exist
+   *  elsewhere" pattern ProjectSwitcher.tsx already applies via its own
+   *  `hasArchivedProjects` prop. */
+  hasCompletedProjects: boolean;
+  hasArchivedProjects: boolean;
   initialCreateOpen?: boolean;
   createProject: (params: CreateProjectParams) => Promise<{ id: string } | { error: string }>;
   switchProject: (projectId: string) => Promise<{ id: string } | { error: string }>;
@@ -208,6 +219,8 @@ export function ProjectListWorkspace({
   staffOptions,
   clientOptions,
   allProjectNumbers,
+  hasCompletedProjects,
+  hasArchivedProjects,
   initialCreateOpen,
   createProject,
   switchProject,
@@ -358,11 +371,24 @@ export function ProjectListWorkspace({
       }
       resetCreateForm();
       setCreateOpen(false);
-      // Best-effort: even if the switch fails for some reason, the
-      // project itself was created successfully and the setup page loads
-      // it directly by id, not via the switcher cookie — so a switch
-      // failure here shouldn't block the navigation below (item 11).
-      await switchProject(result.id);
+      const switchResult = await switchProject(result.id);
+      if ("error" in switchResult) {
+        // The project itself was created successfully — don't lose that
+        // fact — but the setup checklist's "Go to Overview" link is
+        // cookie-driven, not tied to this project's id directly (item
+        // 11's original design), so silently navigating there after a
+        // failed switch would land the owner on a stale, previously-
+        // selected project with no indication anything went wrong
+        // (final-review fix wave, Minor finding 6). Surface the failure
+        // via the same switchError banner the per-row "Switch to this
+        // project" action uses, and stay on the list instead of
+        // proceeding to the setup page as if the switch worked.
+        setSwitchError(
+          `"${params.name}" was created, but switching to it failed (${switchResult.error}). Find it below and switch to it manually.`
+        );
+        router.refresh();
+        return;
+      }
       router.push(`/admin/projects/${result.id}/setup`);
     } finally {
       setCreateSubmitting(false);
@@ -584,7 +610,9 @@ export function ProjectListWorkspace({
 
             {pricingModel === "cost_plus_percentage" && (
               <div className="sc-projects-field">
-                <label htmlFor="sc-proj-fee-pct">Fee percentage</label>
+                <label htmlFor="sc-proj-fee-pct">
+                  Fee percentage<span className="sc-projects-field-required" aria-hidden="true">*</span>
+                </label>
                 <input
                   id="sc-proj-fee-pct"
                   type="number"
@@ -599,7 +627,9 @@ export function ProjectListWorkspace({
 
             {pricingModel === "cost_plus_fixed_fee" && (
               <div className="sc-projects-field">
-                <label htmlFor="sc-proj-fee-fixed">Fixed fee amount ($)</label>
+                <label htmlFor="sc-proj-fee-fixed">
+                  Fixed fee amount ($)<span className="sc-projects-field-required" aria-hidden="true">*</span>
+                </label>
                 <input
                   id="sc-proj-fee-fixed"
                   type="number"
@@ -632,7 +662,9 @@ export function ProjectListWorkspace({
                   </div>
                   {feeBasis === "percentage" ? (
                     <div className="sc-projects-field">
-                      <label htmlFor="sc-proj-fee-pct-fallback">Fee percentage</label>
+                      <label htmlFor="sc-proj-fee-pct-fallback">
+                        Fee percentage<span className="sc-projects-field-required" aria-hidden="true">*</span>
+                      </label>
                       <input
                         id="sc-proj-fee-pct-fallback"
                         type="number"
@@ -645,7 +677,9 @@ export function ProjectListWorkspace({
                     </div>
                   ) : (
                     <div className="sc-projects-field">
-                      <label htmlFor="sc-proj-fee-fixed-fallback">Fixed fee amount ($)</label>
+                      <label htmlFor="sc-proj-fee-fixed-fallback">
+                        Fixed fee amount ($)<span className="sc-projects-field-required" aria-hidden="true">*</span>
+                      </label>
                       <input
                         id="sc-proj-fee-fixed-fallback"
                         type="number"
@@ -716,7 +750,9 @@ export function ProjectListWorkspace({
               ? "No archived projects."
               : view === "completed"
                 ? "No completed projects."
-                : "No projects yet for this organization."
+                : hasCompletedProjects || hasArchivedProjects
+                  ? "No active projects for this organization — see Completed or Archived above."
+                  : "No projects yet for this organization."
             : "No projects match your search/filter."}
         </p>
       ) : (
