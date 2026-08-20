@@ -13,11 +13,15 @@
  * Two views, one component: `view="active"` (default; excludes
  * `status='archived'`) and `view="archived"` (Decision 9's separate,
  * explicitly read-only "Completed / Archived" view — no create form, no
- * switch action rendered for those rows, matching the brief's "no edit
- * affordances render for them" instruction. The actual write-blocking
- * for an archived project is the database's job (RLS / the
- * enforce_project_status_transition trigger), not this component's —
- * this is purely a UI-affordance choice).
+ * switch action, no "Manage Team" link rendered for those rows, matching
+ * the brief's "no edit affordances render for them" instruction. This is
+ * purely a UI-affordance choice: `enforce_project_status_transition()`
+ * (schema/008) only guards the validity of `projects.status`'s own
+ * transitions, not writes to an archived project's child tables (cost
+ * codes, budget entries, staff assignments, etc.) — no such DB-level
+ * write guard exists yet. Corrected during the final-review fix wave
+ * after an earlier draft of this comment, and this view's own visible
+ * copy, both overstated that guarantee.)
  *
  * After a successful create OR switch, this component calls
  * `router.refresh()` rather than hand-patching state (same discipline
@@ -246,10 +250,7 @@ export function ProjectListWorkspace({
       </div>
 
       {view === "archived" && (
-        <p className="sc-projects-archived-note">
-          Archived projects are read-only. Actual write-blocking is enforced by the database, not by hiding these
-          controls.
-        </p>
+        <p className="sc-projects-archived-note">Archived projects are shown read-only in this view.</p>
       )}
 
       <div className="sc-projects-controls">
@@ -483,13 +484,20 @@ export function ProjectListWorkspace({
                     /admin/commitments, not a prop-threaded href (this
                     route's shape is fixed, unlike activeProjectsHref/
                     archivedProjectsHref above which vary by view). Shown
-                    for every row regardless of admin/staff — the team
-                    page itself renders the RLS-accurate restricted state
-                    for a non-admin viewer rather than this list guessing
-                    at that. */}
-                <a href={`/admin/projects/${project.id}/team`} className="sc-projects-btn">
-                  Manage Team
-                </a>
+                    for every active-view row regardless of admin/staff —
+                    the team page itself renders the RLS-accurate
+                    restricted state for a non-admin viewer rather than
+                    this list guessing at that. Hidden in the archived
+                    view (final-review fix wave, I1): an archived
+                    project's team isn't editable, so a "Manage Team" link
+                    here would be a dead end at best and a misleading
+                    write affordance at worst, matching this view's
+                    read-only intent. */}
+                {view === "active" && (
+                  <a href={`/admin/projects/${project.id}/team`} className="sc-projects-btn">
+                    Manage Team
+                  </a>
+                )}
               </div>
             </li>
           ))}
