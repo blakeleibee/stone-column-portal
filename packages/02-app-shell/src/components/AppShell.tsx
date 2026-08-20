@@ -61,6 +61,7 @@ export interface AppShellProjectSwitcherProps {
   onSwitch: (projectId: string) => Promise<{ id: string } | { error: string }>;
   isAdmin: boolean;
   allProjectsHref: string;
+  completedProjectsHref: string;
   archivedProjectsHref: string;
   createProjectHref: string;
 }

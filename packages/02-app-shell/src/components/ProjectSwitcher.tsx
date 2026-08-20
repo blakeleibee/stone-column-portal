@@ -5,8 +5,8 @@
  * admin screen (PRODUCT-VISION.md §3, P3-DESIGN.md's UI section). Shows
  * the current project's name/status badge and a dropdown of the
  * caller's other accessible ACTIVE-ish projects, plus links to the full
- * list and the separate archived view, plus an admin-only "+ Create New
- * Project" link.
+ * list and the separate Completed and Archived views, plus an admin-only
+ * "+ Create New Project" link.
  *
  * Same convention as EstimateTable.tsx/MappingProfileForm.tsx (the
  * established precedent for package-level Client Components that need a
@@ -59,6 +59,13 @@ export interface ProjectSwitcherProps {
    *  Project" link. */
   isAdmin: boolean;
   allProjectsHref: string;
+  /** The distinct `status='closed_out'` view — final-review fix wave,
+   *  Important finding 1: this footer used to only link to
+   *  archivedProjectsHref under a combined "Completed / Archived" label,
+   *  so there was no way to reach /admin/projects?view=completed from
+   *  anywhere except navigating there directly. Now a real, separate
+   *  destination. */
+  completedProjectsHref: string;
   archivedProjectsHref: string;
   createProjectHref: string;
 }
@@ -70,6 +77,7 @@ export function ProjectSwitcher({
   onSwitch,
   isAdmin,
   allProjectsHref,
+  completedProjectsHref,
   archivedProjectsHref,
   createProjectHref,
 }: ProjectSwitcherProps) {
@@ -128,7 +136,7 @@ export function ProjectSwitcher({
                 {currentProject
                   ? "No other active projects."
                   : hasArchivedProjects
-                    ? "No active projects for this organization — see Completed / Archived below."
+                    ? "No active projects for this organization — see Completed or Archived below."
                     : "No projects yet for this organization."}
               </p>
             ) : (
@@ -153,8 +161,11 @@ export function ProjectSwitcher({
               <a href={allProjectsHref} className="sc-switcher-link">
                 All projects
               </a>
+              <a href={completedProjectsHref} className="sc-switcher-link">
+                Completed
+              </a>
               <a href={archivedProjectsHref} className="sc-switcher-link">
-                Completed / Archived
+                Archived
               </a>
               {isAdmin && (
                 <a href={createProjectHref} className="sc-switcher-link sc-switcher-link-create">

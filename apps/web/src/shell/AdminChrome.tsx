@@ -70,7 +70,7 @@ export function AdminChrome({
   // fallback path for any admin page not yet passing
   // `projectSwitcherData` (Task 5 only rewires overview/financials/
   // estimate/bids/import) and for demo mode, which is unaffected.
-  const [clientSwitcherData, setClientSwitcherData] = useState<Omit<AppShellProjectSwitcherProps, "onSwitch" | "allProjectsHref" | "archivedProjectsHref" | "createProjectHref"> | null>(null);
+  const [clientSwitcherData, setClientSwitcherData] = useState<Omit<AppShellProjectSwitcherProps, "onSwitch" | "allProjectsHref" | "completedProjectsHref" | "archivedProjectsHref" | "createProjectHref"> | null>(null);
 
   const loadSwitcherData = useCallback(async () => {
     if (isDemoMode || hasServerSwitcherData) {
@@ -156,6 +156,7 @@ export function AdminChrome({
                 ...switcherData,
                 onSwitch: handleSwitchProject,
                 allProjectsHref: "/admin/projects",
+                completedProjectsHref: "/admin/projects?view=completed",
                 archivedProjectsHref: "/admin/projects?view=archived",
                 createProjectHref: "/admin/projects?new=1",
               }
