@@ -415,9 +415,9 @@ foundation, not this product UI.
 the real hosted dev Supabase project; sitting at an owner-preview
 checkpoint as of 2026-08-20** (a completion pass covering UI/UX
 polish and one remaining security guard — archived-project team
-management by direct URL — is in progress before final acceptance).
-Not yet merged into `p5-commitments-bids-procurement`, no `p3-complete`
-tag. Full design record: **`docs/production-build/P3-DESIGN.md`**,
+management by direct URL — is now COMPLETE, pending final owner
+acceptance). Not yet merged into `p5-commitments-bids-procurement`, no
+`p3-complete` tag. Full design record: **`docs/production-build/P3-DESIGN.md`**,
 pulled forward ahead of P5 Task 7 by explicit owner decision
 (2026-08-19). That document supersedes this section's bullet list below
 with exact schema/RLS/tests/acceptance-criteria detail, the same way

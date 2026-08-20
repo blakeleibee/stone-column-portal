@@ -161,9 +161,9 @@ the record of what was gapped and why stays intact):
    inputs, staff-picker empty state, project-number guidance, filter/
    label clarity, inline validation, a lightweight post-creation setup
    checklist) and one remaining security guard (archived-project team
-   management reachable by direct URL) are in progress as of this
-   entry, before final P3 acceptance — not a re-opening of this gap,
-   a completion pass on an already-real feature.
+   management reachable by direct URL) are now COMPLETE as of this
+   entry — not a re-opening of this gap, a completion pass on an
+   already-real feature.
 2. ~~P2/P3's "remaining scope" has no fully-specified design
    document~~ — **RESOLVED.** `P3-DESIGN.md` is now that document.
 3. ~~`staff_function` role differentiation does not exist at the
