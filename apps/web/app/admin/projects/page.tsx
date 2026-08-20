@@ -21,8 +21,13 @@ import { switchProject } from "./switchAction";
  *
  * Query params (P3-DESIGN.md's Decision 9/10, plus this task's own
  * judgment calls — see the Task 4 report):
- *   - `view=archived` — the separate, explicit "Completed / Archived"
- *     view (Decision 9); default is the active-ish list.
+ *   - `view=archived` / `view=completed` — the two separate, explicit
+ *     read-only views (Decision 9, extended by the owner-preview
+ *     correction round's item 9 to distinguish `closed_out` from
+ *     `archived` rather than folding "Closed Out" into the active-ish
+ *     list); default is the active-ish list (`draft`/`active`/`on_hold`
+ *     only — `closed_out` moved out to its own view, so it no longer
+ *     shows up mixed in with in-progress projects there).
  *   - `project=<id>` — a direct link naming a specific project. If it's
  *     not in the caller's accessible list (nonexistent, wrong org, or a
  *     revoked assignment), renders the shared NoProjectAccess page
@@ -44,12 +49,23 @@ export default async function AdminProjectsPage({
     // includeArchived: true — this single fetch backs both the
     // ?project= accessibility check below (which must also recognize a
     // legitimately archived project the caller can still see) and
-    // whichever of the active/archived views is being rendered, so this
-    // screen never issues more than one listAccessibleProjects() query
-    // per request.
+    // whichever of the active/completed/archived views is being
+    // rendered, so this screen never issues more than one
+    // listAccessibleProjects() query per request. `closed_out` rows are
+    // already included regardless (only `archived` is excluded by
+    // default), so no extra fetch is needed for the Completed view.
     listAccessibleProjects(supabase, user.orgId, { includeArchived: true }),
     resolveSelectedProject(supabase, user.orgId),
-    supabase.from("profiles").select("id, full_name, role").eq("org_id", user.orgId).in("role", ["staff", "client"]),
+    // staff_function is selected here (owner-preview correction round,
+    // item 4) so ProjectListWorkspace's initial-staff-assignments picker
+    // can show real role context ("Jane Doe — Project Manager"), not a
+    // bare name-only checkbox list — it was previously never selected at
+    // all, so the picker structurally couldn't show it.
+    supabase
+      .from("profiles")
+      .select("id, full_name, role, staff_function")
+      .eq("org_id", user.orgId)
+      .in("role", ["staff", "client"]),
   ]);
 
   // Server-resolved ProjectSwitcher data (final-review fix wave, Minor
@@ -78,13 +94,17 @@ export default async function AdminProjectsPage({
     );
   }
 
-  const view = searchParams.view === "archived" ? "archived" : "active";
-  const projects = allAccessible.filter((project) =>
-    view === "archived" ? project.status === "archived" : project.status !== "archived"
-  );
+  const view = searchParams.view === "archived" ? "archived" : searchParams.view === "completed" ? "completed" : "active";
+  const projects = allAccessible.filter((project) => {
+    if (view === "archived") return project.status === "archived";
+    if (view === "completed") return project.status === "closed_out";
+    return project.status !== "archived" && project.status !== "closed_out";
+  });
 
   const profileRows = profilesResult.data ?? [];
-  const staffOptions = profileRows.filter((p) => p.role === "staff").map((p) => ({ id: p.id, name: p.full_name }));
+  const staffOptions = profileRows
+    .filter((p) => p.role === "staff")
+    .map((p) => ({ id: p.id, name: p.full_name, staffFunction: p.staff_function ?? null }));
   const clientOptions = profileRows.filter((p) => p.role === "client").map((p) => ({ id: p.id, name: p.full_name }));
 
   return (
@@ -97,10 +117,17 @@ export default async function AdminProjectsPage({
         isAdmin={user.role === "admin"}
         staffOptions={staffOptions}
         clientOptions={clientOptions}
+        // Org-wide, all-statuses project numbers (not just this view's
+        // filtered `projects`) — the safe-next-number suggestion (item 5)
+        // must avoid colliding with an archived/completed project's
+        // number too, since uniqueness is enforced org-wide regardless of
+        // status.
+        allProjectNumbers={allAccessible.map((project) => project.projectNumber)}
         initialCreateOpen={searchParams.new === "1"}
         createProject={createProject}
         switchProject={switchProject}
         activeProjectsHref="/admin/projects"
+        completedProjectsHref="/admin/projects?view=completed"
         archivedProjectsHref="/admin/projects?view=archived"
       />
     </AdminChrome>

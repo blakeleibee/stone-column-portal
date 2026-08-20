@@ -10,21 +10,24 @@
  * comment for why this package stays free of any apps/web/next/headers
  * dependency).
  *
- * Two views, one component: `view="active"` (default; excludes
- * `status='archived'`) and `view="archived"` (Decision 9's separate,
- * explicitly read-only "Completed / Archived" view — no create form, no
- * switch action, no "Manage Team" link rendered for those rows, matching
- * the brief's "no edit affordances render for them" instruction. This is
- * purely a UI-affordance choice: `enforce_project_status_transition()`
- * (schema/008) only guards the validity of `projects.status`'s own
- * transitions, not writes to an archived project's child tables (cost
- * codes, budget entries, staff assignments, etc.) — no such DB-level
- * write guard exists yet. Corrected during the final-review fix wave
- * after an earlier draft of this comment, and this view's own visible
- * copy, both overstated that guarantee.)
+ * Three views, one component (owner-preview correction round, item 9):
+ * `view="active"` (default; `draft`/`active`/`on_hold` only),
+ * `view="completed"` (schema/008's distinct `closed_out` state — a
+ * finished job, not yet archived; read-only like Archived but still
+ * shows "Manage Team" since staffing cleanup on a just-finished job is
+ * plausible), and `view="archived"` (fully read-only — no create form,
+ * no switch action, no "Manage Team" link). This is purely a UI-
+ * affordance choice: `enforce_project_status_transition()` (schema/008)
+ * only guards the validity of `projects.status`'s own transitions, not
+ * writes to an archived project's child tables (cost codes, budget
+ * entries, staff assignments, etc.) — no such DB-level write guard
+ * exists yet.
  *
- * After a successful create OR switch, this component calls
- * `router.refresh()` rather than hand-patching state (same discipline
+ * After a successful create, this component switches to the new project
+ * and navigates straight to its setup checklist (owner-preview
+ * correction round, item 11) rather than just closing the form and
+ * refreshing the list — see handleCreateSubmit. After a switch action on
+ * an existing row, it still calls `router.refresh()` (same discipline
  * EstimateTable.tsx/MappingProfileForm.tsx already established) — the
  * next render's `projects`/`currentProjectId` props always come from a
  * real server re-read via page.tsx, never a client-guessed value.
@@ -32,7 +35,14 @@
 import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { colors, spacing, radius, typography, touchTarget } from "../design/tokens";
-import type { ProjectRow, ProjectStatus, PricingModel, FeeBasis, CreateProjectParams } from "../services/projectService";
+import type {
+  ProjectRow,
+  ProjectStatus,
+  PricingModel,
+  FeeBasis,
+  CreateProjectParams,
+  StaffFunction,
+} from "../services/projectService";
 
 const STATUS_LABELS: Record<ProjectStatus, string> = {
   draft: "Draft",
@@ -42,12 +52,17 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
   archived: "Archived",
 };
 
+// `closed_out` deliberately excluded (owner-preview correction round,
+// item 8/9): now that Completed is its own tab, offering it as a filter
+// option here too would be the exact "status filter duplicates what the
+// view tabs already do" redundancy the brief flagged, and page.tsx no
+// longer includes closed_out projects in the active-view `projects` prop
+// anyway.
 const ACTIVE_STATUS_FILTERS: { value: ProjectStatus | "all"; label: string }[] = [
   { value: "all", label: "All statuses" },
   { value: "draft", label: "Draft" },
   { value: "active", label: "Active" },
   { value: "on_hold", label: "On Hold" },
-  { value: "closed_out", label: "Closed Out" },
 ];
 
 const PRICING_MODEL_OPTIONS: { value: PricingModel; label: string }[] = [
@@ -58,6 +73,33 @@ const PRICING_MODEL_OPTIONS: { value: PricingModel; label: string }[] = [
   { value: "hybrid_custom", label: "Hybrid / Custom" },
   { value: "other", label: "Other" },
 ];
+
+// A pricing model whose fee capture the RPC can express directly — no
+// separate "fee basis" picker needed, since the model already implies
+// one (owner-preview correction round, item 3).
+function pricingModelImpliesFeeBasis(model: PricingModel): boolean {
+  return model === "cost_plus_percentage" || model === "cost_plus_fixed_fee";
+}
+
+const PROJECT_TYPE_OPTIONS = [
+  "New Construction",
+  "Remodel/Renovation",
+  "Addition",
+  "Commercial",
+  "Service/Warranty",
+  "Other",
+] as const;
+
+// Same labels/values as ProjectTeamWorkspace.tsx's own STAFF_FUNCTION_LABELS
+// (that file is out of scope for this task — see its "What NOT to do" —
+// so this is a deliberate small duplication of that exact mapping rather
+// than a shared import, not a second, drifted convention).
+const STAFF_FUNCTION_LABELS: Record<StaffFunction, string> = {
+  project_manager: "Project Manager",
+  superintendent: "Superintendent",
+  accounting: "Accounting",
+  general: "General Staff",
+};
 
 type SortKey = "name" | "projectNumber" | "createdAt";
 
@@ -70,13 +112,65 @@ function StatusBadge({ status }: { status: ProjectStatus }) {
   return <span className={`sc-projects-badge sc-projects-badge-${status}`}>{STATUS_LABELS[status]}</span>;
 }
 
+/**
+ * Finds a safe "next" project number to suggest (owner-preview
+ * correction round, item 5) — deliberately simple, not exhaustive: only
+ * recognizes values that are all digits, or a non-digit prefix followed
+ * by a run of digits at the very end (e.g. "1024", "PRJ-1024"). Picks
+ * whichever prefix appears most often among the org's existing numbers
+ * (ties keep whichever was seen first), then returns that prefix plus
+ * its highest matched value + 1, zero-padded to match that value's own
+ * width. Returns null — never a guess — when nothing matches a
+ * recognizable pattern, so the field is left blank rather than forcing
+ * an unsafe suggestion.
+ */
+function suggestNextProjectNumber(numbers: string[]): string | null {
+  const groups = new Map<string, { count: number; maxValue: number; width: number }>();
+  for (const raw of numbers) {
+    const trimmed = (raw ?? "").trim();
+    const match = /^(\D*)(\d+)$/.exec(trimmed);
+    if (!match) continue;
+    const [, prefix, digits] = match;
+    const value = Number.parseInt(digits, 10);
+    if (!Number.isFinite(value)) continue;
+    const existing = groups.get(prefix);
+    if (existing) {
+      existing.count += 1;
+      if (value > existing.maxValue) {
+        existing.maxValue = value;
+        existing.width = digits.length;
+      }
+    } else {
+      groups.set(prefix, { count: 1, maxValue: value, width: digits.length });
+    }
+  }
+  let bestPrefix: string | null = null;
+  let best: { count: number; maxValue: number; width: number } | null = null;
+  for (const [prefix, info] of groups) {
+    if (!best || info.count > best.count) {
+      best = info;
+      bestPrefix = prefix;
+    }
+  }
+  if (!best || bestPrefix === null) return null;
+  return `${bestPrefix}${String(best.maxValue + 1).padStart(best.width, "0")}`;
+}
+
 export interface ProjectOption {
   id: string;
   name: string;
 }
 
+/** staffOptions carries `staff_function` (owner-preview correction round,
+ *  item 4) so the picker can show real names + role, not a bare id-backed
+ *  checkbox list; clientOptions stays the simpler shape since clients
+ *  don't have a staff_function. */
+export interface StaffProjectOption extends ProjectOption {
+  staffFunction: StaffFunction | null;
+}
+
 export interface ProjectListWorkspaceProps {
-  view: "active" | "archived";
+  view: "active" | "completed" | "archived";
   projects: ProjectRow[];
   currentProjectId: string | null;
   /** createAction.ts's wrapper forwards CreateProjectParams.orgId straight
@@ -88,12 +182,20 @@ export interface ProjectListWorkspaceProps {
    *  down as a plain prop (server-known, not client-guessed). */
   orgId: string;
   isAdmin: boolean;
-  staffOptions: ProjectOption[];
+  staffOptions: StaffProjectOption[];
   clientOptions: ProjectOption[];
+  /** Every project number already in use across the whole org (all
+   *  statuses, not just this view's filtered `projects`) — used only to
+   *  compute the next-number suggestion (item 5); `unique(org_id,
+   *  project_number)` applies org-wide regardless of status, so a
+   *  suggestion based only on this view's rows could collide with a
+   *  number that belongs to an archived/completed project. */
+  allProjectNumbers: string[];
   initialCreateOpen?: boolean;
   createProject: (params: CreateProjectParams) => Promise<{ id: string } | { error: string }>;
   switchProject: (projectId: string) => Promise<{ id: string } | { error: string }>;
   activeProjectsHref: string;
+  completedProjectsHref: string;
   archivedProjectsHref: string;
 }
 
@@ -105,10 +207,12 @@ export function ProjectListWorkspace({
   isAdmin,
   staffOptions,
   clientOptions,
+  allProjectNumbers,
   initialCreateOpen,
   createProject,
   switchProject,
   activeProjectsHref,
+  completedProjectsHref,
   archivedProjectsHref,
 }: ProjectListWorkspaceProps) {
   const router = useRouter();
@@ -122,9 +226,12 @@ export function ProjectListWorkspace({
   const [createError, setCreateError] = useState<string | null>(null);
 
   const [name, setName] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
   const [projectNumber, setProjectNumber] = useState("");
+  const [projectNumberTouched, setProjectNumberTouched] = useState(false);
   const [address, setAddress] = useState("");
-  const [projectType, setProjectType] = useState("");
+  const [projectTypeChoice, setProjectTypeChoice] = useState("");
+  const [projectTypeOther, setProjectTypeOther] = useState("");
   const [pricingModel, setPricingModel] = useState<PricingModel>("cost_plus_percentage");
   const [pricingModelLabel, setPricingModelLabel] = useState("");
   const [feeBasis, setFeeBasis] = useState<FeeBasis>("percentage");
@@ -136,10 +243,12 @@ export function ProjectListWorkspace({
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
 
+  const suggestedProjectNumber = useMemo(() => suggestNextProjectNumber(allProjectNumbers), [allProjectNumbers]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return projects
-      .filter((p) => (view === "archived" ? true : statusFilter === "all" || p.status === statusFilter))
+      .filter((p) => (view === "active" ? statusFilter === "all" || p.status === statusFilter : true))
       .filter((p) => !q || p.name.toLowerCase().includes(q) || p.projectNumber.toLowerCase().includes(q))
       .slice()
       .sort((a, b) => {
@@ -154,9 +263,12 @@ export function ProjectListWorkspace({
 
   function resetCreateForm() {
     setName("");
+    setNameTouched(false);
     setProjectNumber("");
+    setProjectNumberTouched(false);
     setAddress("");
-    setProjectType("");
+    setProjectTypeChoice("");
+    setProjectTypeOther("");
     setPricingModel("cost_plus_percentage");
     setPricingModelLabel("");
     setFeeBasis("percentage");
@@ -166,8 +278,31 @@ export function ProjectListWorkspace({
     setSelectedClientIds([]);
   }
 
+  /** The "+ Create New Project" / "Discard" toggle (item 6). Renamed from
+   *  the old ambiguous "Cancel" — and, to make that new label honest,
+   *  closing the form now actually discards whatever was typed, matching
+   *  what "Discard" promises rather than silently keeping stale state
+   *  around for the next time the form opens. */
+  function handleToggleCreate() {
+    setCreateOpen((wasOpen) => {
+      if (wasOpen) {
+        resetCreateForm();
+        setCreateError(null);
+      }
+      return !wasOpen;
+    });
+  }
+
+  function handlePricingModelChange(value: PricingModel) {
+    setPricingModel(value);
+    if (value === "cost_plus_percentage") setFeeBasis("percentage");
+    else if (value === "cost_plus_fixed_fee") setFeeBasis("fixed");
+  }
+
   async function handleCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setNameTouched(true);
+    setProjectNumberTouched(true);
     if (!name.trim()) {
       setCreateError("Project name is required.");
       return;
@@ -176,27 +311,39 @@ export function ProjectListWorkspace({
       setCreateError("Project number is required.");
       return;
     }
+
+    const resolvedProjectType =
+      projectTypeChoice === "" ? null : projectTypeChoice === "Other" ? projectTypeOther.trim() || null : projectTypeChoice;
+    // The pricing model already implies a fee basis for the two cost-plus
+    // models (item 3) — for every other model, whatever the fallback
+    // picker last set stands.
+    const resolvedFeeBasis: FeeBasis = pricingModelImpliesFeeBasis(pricingModel)
+      ? pricingModel === "cost_plus_percentage"
+        ? "percentage"
+        : "fixed"
+      : feeBasis;
+
     const params: CreateProjectParams = {
       orgId,
       name: name.trim(),
       projectNumber: projectNumber.trim(),
       address: address.trim() || null,
-      projectType: projectType.trim() || null,
+      projectType: resolvedProjectType,
       pricingModel,
       pricingModelLabel: pricingModelLabel.trim() || null,
-      feeBasis,
-      feeBasisPoints: feeBasis === "percentage" && feePercent.trim() ? Math.round(Number(feePercent) * 100) : null,
+      feeBasis: resolvedFeeBasis,
+      feeBasisPoints: resolvedFeeBasis === "percentage" && feePercent.trim() ? Math.round(Number(feePercent) * 100) : null,
       feeFixedAmountCents:
-        feeBasis === "fixed" && feeFixedDollars.trim() ? Math.round(Number(feeFixedDollars) * 100) : null,
+        resolvedFeeBasis === "fixed" && feeFixedDollars.trim() ? Math.round(Number(feeFixedDollars) * 100) : null,
       initialStaffProfileIds: selectedStaffIds,
       initialClientProfileIds: selectedClientIds,
     };
 
-    if (feeBasis === "percentage" && (params.feeBasisPoints == null || Number.isNaN(params.feeBasisPoints))) {
+    if (resolvedFeeBasis === "percentage" && (params.feeBasisPoints == null || Number.isNaN(params.feeBasisPoints))) {
       setCreateError("Enter a valid fee percentage.");
       return;
     }
-    if (feeBasis === "fixed" && (params.feeFixedAmountCents == null || Number.isNaN(params.feeFixedAmountCents))) {
+    if (resolvedFeeBasis === "fixed" && (params.feeFixedAmountCents == null || Number.isNaN(params.feeFixedAmountCents))) {
       setCreateError("Enter a valid fixed fee amount.");
       return;
     }
@@ -211,7 +358,12 @@ export function ProjectListWorkspace({
       }
       resetCreateForm();
       setCreateOpen(false);
-      router.refresh();
+      // Best-effort: even if the switch fails for some reason, the
+      // project itself was created successfully and the setup page loads
+      // it directly by id, not via the switcher cookie — so a switch
+      // failure here shouldn't block the navigation below (item 11).
+      await switchProject(result.id);
+      router.push(`/admin/projects/${result.id}/setup`);
     } finally {
       setCreateSubmitting(false);
     }
@@ -232,25 +384,39 @@ export function ProjectListWorkspace({
     }
   }
 
+  const viewTitle = view === "archived" ? "Archived Projects" : view === "completed" ? "Completed Projects" : "Projects";
+
   return (
     <div className="sc-projects-workspace">
       <div className="sc-projects-header">
-        <h2>{view === "archived" ? "Completed / Archived Projects" : "Projects"}</h2>
+        <h2>{viewTitle}</h2>
         <div className="sc-projects-view-tabs">
           <a href={activeProjectsHref} className={`sc-projects-tab${view === "active" ? " sc-projects-tab-active" : ""}`}>
             Active
           </a>
           <a
+            href={completedProjectsHref}
+            className={`sc-projects-tab${view === "completed" ? " sc-projects-tab-active" : ""}`}
+          >
+            Completed
+          </a>
+          <a
             href={archivedProjectsHref}
             className={`sc-projects-tab${view === "archived" ? " sc-projects-tab-active" : ""}`}
           >
-            Completed / Archived
+            Archived
           </a>
         </div>
       </div>
 
       {view === "archived" && (
         <p className="sc-projects-archived-note">Archived projects are shown read-only in this view.</p>
+      )}
+      {view === "completed" && (
+        <p className="sc-projects-archived-note">
+          Completed projects are shown read-only in this view. &ldquo;Manage Team&rdquo; still applies — staffing cleanup
+          on a just-finished job is often still legitimate.
+        </p>
       )}
 
       <div className="sc-projects-controls">
@@ -288,8 +454,13 @@ export function ProjectListWorkspace({
         </select>
 
         {view === "active" && isAdmin && (
-          <button type="button" className="sc-projects-btn sc-projects-btn-primary" onClick={() => setCreateOpen((v) => !v)}>
-            {createOpen ? "Cancel" : "+ Create New Project"}
+          <button
+            type="button"
+            className="sc-projects-btn sc-projects-btn-primary"
+            onClick={handleToggleCreate}
+            disabled={createSubmitting}
+          >
+            {createOpen ? "Discard" : "+ Create New Project"}
           </button>
         )}
       </div>
@@ -302,34 +473,86 @@ export function ProjectListWorkspace({
           <form onSubmit={handleCreateSubmit} className="sc-projects-form">
             <div className="sc-projects-form-row">
               <div className="sc-projects-field">
-                <label htmlFor="sc-proj-name">Project name</label>
-                <input id="sc-proj-name" className="sc-projects-input" value={name} onChange={(e) => setName(e.target.value)} />
+                <label htmlFor="sc-proj-name">
+                  Project name<span className="sc-projects-field-required" aria-hidden="true">*</span>
+                </label>
+                <input
+                  id="sc-proj-name"
+                  className="sc-projects-input sc-projects-field-input"
+                  required
+                  aria-required="true"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  onBlur={() => setNameTouched(true)}
+                />
+                {nameTouched && !name.trim() && <p className="sc-projects-field-error-inline">Project name is required.</p>}
               </div>
               <div className="sc-projects-field">
-                <label htmlFor="sc-proj-number">Project number</label>
-                <input
-                  id="sc-proj-number"
-                  className="sc-projects-input"
-                  value={projectNumber}
-                  onChange={(e) => setProjectNumber(e.target.value)}
-                />
+                <label htmlFor="sc-proj-number">
+                  Project number<span className="sc-projects-field-required" aria-hidden="true">*</span>
+                </label>
+                <div className="sc-projects-field-inline">
+                  <input
+                    id="sc-proj-number"
+                    className="sc-projects-input sc-projects-field-input"
+                    required
+                    aria-required="true"
+                    value={projectNumber}
+                    onChange={(e) => setProjectNumber(e.target.value)}
+                    onBlur={() => setProjectNumberTouched(true)}
+                  />
+                  {suggestedProjectNumber && (
+                    <button
+                      type="button"
+                      className="sc-projects-btn sc-projects-btn-sm"
+                      onClick={() => setProjectNumber(suggestedProjectNumber)}
+                    >
+                      Suggest next number
+                    </button>
+                  )}
+                </div>
+                <p className="sc-projects-field-help">Must be unique within your organization.</p>
+                {projectNumberTouched && !projectNumber.trim() && (
+                  <p className="sc-projects-field-error-inline">Project number is required.</p>
+                )}
               </div>
             </div>
 
-            <div className="sc-projects-field">
+            <div className="sc-projects-field sc-projects-field-wide">
               <label htmlFor="sc-proj-address">Address (optional)</label>
-              <input id="sc-proj-address" className="sc-projects-input" value={address} onChange={(e) => setAddress(e.target.value)} />
+              <input
+                id="sc-proj-address"
+                className="sc-projects-input sc-projects-field-input"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
             </div>
 
             <div className="sc-projects-field">
               <label htmlFor="sc-proj-type">Project type (optional)</label>
-              <input
+              <select
                 id="sc-proj-type"
-                className="sc-projects-input"
-                placeholder="e.g. New Build, Remodel"
-                value={projectType}
-                onChange={(e) => setProjectType(e.target.value)}
-              />
+                className="sc-projects-input sc-projects-field-input"
+                value={projectTypeChoice}
+                onChange={(e) => setProjectTypeChoice(e.target.value)}
+              >
+                <option value="">— Select —</option>
+                {PROJECT_TYPE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+              {projectTypeChoice === "Other" && (
+                <input
+                  id="sc-proj-type-other"
+                  className="sc-projects-input sc-projects-field-input"
+                  placeholder="Describe the project type"
+                  value={projectTypeOther}
+                  onChange={(e) => setProjectTypeOther(e.target.value)}
+                  style={{ marginTop: 6 }}
+                />
+              )}
             </div>
 
             <div className="sc-projects-form-row">
@@ -337,9 +560,9 @@ export function ProjectListWorkspace({
                 <label htmlFor="sc-proj-pricing">Pricing model</label>
                 <select
                   id="sc-proj-pricing"
-                  className="sc-projects-input"
+                  className="sc-projects-input sc-projects-field-input"
                   value={pricingModel}
-                  onChange={(e) => setPricingModel(e.target.value as PricingModel)}
+                  onChange={(e) => handlePricingModelChange(e.target.value as PricingModel)}
                 >
                   {PRICING_MODEL_OPTIONS.map((opt) => (
                     <option key={opt.value} value={opt.value}>
@@ -352,57 +575,96 @@ export function ProjectListWorkspace({
                 <label htmlFor="sc-proj-pricing-label">Pricing model label (optional)</label>
                 <input
                   id="sc-proj-pricing-label"
-                  className="sc-projects-input"
+                  className="sc-projects-input sc-projects-field-input"
                   value={pricingModelLabel}
                   onChange={(e) => setPricingModelLabel(e.target.value)}
                 />
               </div>
             </div>
 
-            <div className="sc-projects-form-row">
+            {pricingModel === "cost_plus_percentage" && (
               <div className="sc-projects-field">
-                <label htmlFor="sc-proj-fee-basis">Fee basis</label>
-                <select
-                  id="sc-proj-fee-basis"
-                  className="sc-projects-input"
-                  value={feeBasis}
-                  onChange={(e) => setFeeBasis(e.target.value as FeeBasis)}
-                >
-                  <option value="percentage">Percentage</option>
-                  <option value="fixed">Fixed amount</option>
-                </select>
+                <label htmlFor="sc-proj-fee-pct">Fee percentage</label>
+                <input
+                  id="sc-proj-fee-pct"
+                  type="number"
+                  step="0.01"
+                  className="sc-projects-input sc-projects-field-input"
+                  placeholder="e.g. 15"
+                  value={feePercent}
+                  onChange={(e) => setFeePercent(e.target.value)}
+                />
               </div>
-              {feeBasis === "percentage" ? (
-                <div className="sc-projects-field">
-                  <label htmlFor="sc-proj-fee-pct">Fee percentage</label>
-                  <input
-                    id="sc-proj-fee-pct"
-                    type="number"
-                    step="0.01"
-                    className="sc-projects-input"
-                    placeholder="e.g. 15"
-                    value={feePercent}
-                    onChange={(e) => setFeePercent(e.target.value)}
-                  />
-                </div>
-              ) : (
-                <div className="sc-projects-field">
-                  <label htmlFor="sc-proj-fee-fixed">Fixed fee ($)</label>
-                  <input
-                    id="sc-proj-fee-fixed"
-                    type="number"
-                    step="0.01"
-                    className="sc-projects-input"
-                    value={feeFixedDollars}
-                    onChange={(e) => setFeeFixedDollars(e.target.value)}
-                  />
-                </div>
-              )}
-            </div>
+            )}
 
-            {staffOptions.length > 0 && (
+            {pricingModel === "cost_plus_fixed_fee" && (
               <div className="sc-projects-field">
-                <label>Initial staff assignments (optional)</label>
+                <label htmlFor="sc-proj-fee-fixed">Fixed fee amount ($)</label>
+                <input
+                  id="sc-proj-fee-fixed"
+                  type="number"
+                  step="0.01"
+                  className="sc-projects-input sc-projects-field-input"
+                  value={feeFixedDollars}
+                  onChange={(e) => setFeeFixedDollars(e.target.value)}
+                />
+              </div>
+            )}
+
+            {!pricingModelImpliesFeeBasis(pricingModel) && (
+              <div className="sc-projects-fee-fallback">
+                <p className="sc-projects-fee-note">
+                  Detailed pricing capture for this contract type isn&rsquo;t built yet — enter a fee basis for now; you
+                  can configure full contract terms after this is added.
+                </p>
+                <div className="sc-projects-form-row">
+                  <div className="sc-projects-field">
+                    <label htmlFor="sc-proj-fee-basis">Fee basis</label>
+                    <select
+                      id="sc-proj-fee-basis"
+                      className="sc-projects-input sc-projects-field-input"
+                      value={feeBasis}
+                      onChange={(e) => setFeeBasis(e.target.value as FeeBasis)}
+                    >
+                      <option value="percentage">Percentage</option>
+                      <option value="fixed">Fixed amount</option>
+                    </select>
+                  </div>
+                  {feeBasis === "percentage" ? (
+                    <div className="sc-projects-field">
+                      <label htmlFor="sc-proj-fee-pct-fallback">Fee percentage</label>
+                      <input
+                        id="sc-proj-fee-pct-fallback"
+                        type="number"
+                        step="0.01"
+                        className="sc-projects-input sc-projects-field-input"
+                        placeholder="e.g. 15"
+                        value={feePercent}
+                        onChange={(e) => setFeePercent(e.target.value)}
+                      />
+                    </div>
+                  ) : (
+                    <div className="sc-projects-field">
+                      <label htmlFor="sc-proj-fee-fixed-fallback">Fixed fee amount ($)</label>
+                      <input
+                        id="sc-proj-fee-fixed-fallback"
+                        type="number"
+                        step="0.01"
+                        className="sc-projects-input sc-projects-field-input"
+                        value={feeFixedDollars}
+                        onChange={(e) => setFeeFixedDollars(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="sc-projects-field">
+              <label>Initial staff assignments (optional)</label>
+              {staffOptions.length === 0 ? (
+                <p className="sc-projects-empty-inline">No other staff members in this organization yet.</p>
+              ) : (
                 <div className="sc-projects-checkbox-list">
                   {staffOptions.map((opt) => (
                     <label key={opt.id} className="sc-projects-checkbox-item">
@@ -412,15 +674,18 @@ export function ProjectListWorkspace({
                         onChange={() => setSelectedStaffIds((prev) => toggleId(prev, opt.id))}
                       />
                       {opt.name}
+                      {opt.staffFunction ? ` — ${STAFF_FUNCTION_LABELS[opt.staffFunction]}` : ""}
                     </label>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {clientOptions.length > 0 && (
-              <div className="sc-projects-field">
-                <label>Initial client contacts (optional)</label>
+            <div className="sc-projects-field">
+              <label>Initial client contacts (optional)</label>
+              {clientOptions.length === 0 ? (
+                <p className="sc-projects-empty-inline">No client contacts in this organization yet.</p>
+              ) : (
                 <div className="sc-projects-checkbox-list">
                   {clientOptions.map((opt) => (
                     <label key={opt.id} className="sc-projects-checkbox-item">
@@ -433,8 +698,8 @@ export function ProjectListWorkspace({
                     </label>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             <button type="submit" className="sc-projects-btn sc-projects-btn-primary" disabled={createSubmitting}>
               {createSubmitting ? "Creating…" : "Create Project"}
@@ -449,7 +714,9 @@ export function ProjectListWorkspace({
           {projects.length === 0
             ? view === "archived"
               ? "No archived projects."
-              : "No projects yet for this organization."
+              : view === "completed"
+                ? "No completed projects."
+                : "No projects yet for this organization."
             : "No projects match your search/filter."}
         </p>
       ) : (
@@ -483,17 +750,17 @@ export function ProjectListWorkspace({
                     same as BidPackageWorkspace.tsx's own link to
                     /admin/commitments, not a prop-threaded href (this
                     route's shape is fixed, unlike activeProjectsHref/
-                    archivedProjectsHref above which vary by view). Shown
-                    for every active-view row regardless of admin/staff —
-                    the team page itself renders the RLS-accurate
-                    restricted state for a non-admin viewer rather than
-                    this list guessing at that. Hidden in the archived
-                    view (final-review fix wave, I1): an archived
-                    project's team isn't editable, so a "Manage Team" link
-                    here would be a dead end at best and a misleading
-                    write affordance at worst, matching this view's
-                    read-only intent. */}
-                {view === "active" && (
+                    completedProjectsHref/archivedProjectsHref above which
+                    vary by view). Shown for Active and Completed rows
+                    (owner-preview correction round, item 9) regardless of
+                    admin/staff — the team page itself renders the
+                    RLS-accurate restricted state for a non-admin viewer
+                    rather than this list guessing at that. Hidden in the
+                    archived view: an archived project's team isn't
+                    editable, so a "Manage Team" link here would be a dead
+                    end at best and a misleading write affordance at
+                    worst, matching this view's read-only intent. */}
+                {(view === "active" || view === "completed") && (
                   <a href={`/admin/projects/${project.id}/team`} className="sc-projects-btn">
                     Manage Team
                   </a>
@@ -524,15 +791,26 @@ const workspaceStyles = `
 .sc-projects-btn { padding: 8px 14px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; background: ${colors.white}; color: ${colors.ink2}; font-size: ${typography.sizeSm}; cursor: pointer; min-height: ${touchTarget.minSize}; }
 .sc-projects-btn-primary { background: ${colors.sage}; color: ${colors.white}; border-color: ${colors.sage}; }
 .sc-projects-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.sc-projects-btn-sm { padding: 6px 10px; font-size: ${typography.sizeXs}; min-height: auto; white-space: nowrap; }
 
 .sc-projects-create { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.md}; margin-bottom: ${spacing.lg}; background: ${colors.paperDim}; }
 .sc-projects-create h3 { margin: 0 0 ${spacing.sm} 0; font-size: ${typography.sizeMd}; }
-.sc-projects-form { display: flex; flex-direction: column; gap: ${spacing.sm}; align-items: flex-start; }
+.sc-projects-form { display: flex; flex-direction: column; gap: ${spacing.sm}; align-items: flex-start; width: 100%; }
 .sc-projects-form-row { display: flex; flex-wrap: wrap; gap: ${spacing.md}; width: 100%; }
 .sc-projects-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; max-width: 420px; }
+.sc-projects-field-wide { max-width: 100%; width: 100%; }
 .sc-projects-field label { font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
+.sc-projects-field-required { color: ${colors.brick}; margin-left: 3px; }
+.sc-projects-field-help { margin: 0; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; }
+.sc-projects-field-error-inline { margin: 0; font-size: ${typography.sizeXs}; color: ${colors.brick}; }
+.sc-projects-field-inline { display: flex; gap: ${spacing.xs}; align-items: center; }
+.sc-projects-field-inline .sc-projects-field-input { flex: 1; }
+.sc-projects-input.sc-projects-field-input { width: 100%; box-sizing: border-box; }
+.sc-projects-fee-fallback { width: 100%; }
+.sc-projects-fee-note { font-size: ${typography.sizeXs}; color: ${colors.ink2}; background: ${colors.goldTint}; border: 1px solid ${colors.gold}; border-radius: ${radius.sm}; padding: ${spacing.sm}; margin: 0 0 ${spacing.sm} 0; }
 .sc-projects-checkbox-list { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; padding: ${spacing.sm}; background: ${colors.white}; }
 .sc-projects-checkbox-item { display: flex; align-items: center; gap: 6px; font-size: ${typography.sizeSm}; }
+.sc-projects-empty-inline { margin: 0; padding: ${spacing.sm}; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; border: 1px dashed ${colors.line}; border-radius: ${radius.sm}; }
 
 .sc-projects-error { color: ${colors.brick}; font-size: ${typography.sizeXs}; margin: 4px 0; }
 .sc-projects-empty { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
@@ -540,9 +818,9 @@ const workspaceStyles = `
 .sc-projects-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: ${spacing.sm}; }
 .sc-projects-row { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.sm} ${spacing.md}; background: ${colors.white}; display: flex; flex-direction: column; gap: 4px; }
 .sc-projects-row-main { display: flex; align-items: center; gap: ${spacing.sm}; flex-wrap: wrap; }
-.sc-projects-row-name { font-weight: ${typography.weightSemibold}; font-size: ${typography.sizeMd}; }
+.sc-projects-row-name { font-weight: ${typography.weightSemibold}; font-size: ${typography.sizeMd}; overflow-wrap: anywhere; }
 .sc-projects-current-tag { font-size: ${typography.sizeXs}; color: ${colors.sageDeep}; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
-.sc-projects-row-meta { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; }
+.sc-projects-row-meta { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; overflow-wrap: anywhere; }
 .sc-projects-row-actions { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; margin-top: 4px; }
 .sc-projects-row .sc-projects-btn { align-self: flex-start; text-decoration: none; display: inline-block; }
 

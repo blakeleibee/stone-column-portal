@@ -252,6 +252,19 @@ async function main() {
       (teamRoute.status === 307 || teamRoute.status === 308) && (teamRoute.location ?? "").endsWith("/login")
     );
 
+    console.log("\n--- /admin/projects/[id]/setup is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Owner-preview correction round (item 11): new post-create setup
+    // checklist route, same real-backend-only shape and same
+    // requireRole()-before-any-project-id-resolution guard as
+    // /admin/projects/[id]/team above — an arbitrary path segment is
+    // enough to prove the route exists and is protected, without needing
+    // a real project id or a real authenticated session.
+    const setupRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/setup");
+    check(
+      "/admin/projects/[id]/setup redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (setupRoute.status === 307 || setupRoute.status === 308) && (setupRoute.location ?? "").endsWith("/login")
+    );
+
     console.log(
       "\n--- Regression guard (Task 6): /admin/overview and /admin/financials no longer render the fixture project's name in a real session ---"
     );
