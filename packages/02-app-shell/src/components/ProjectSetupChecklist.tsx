@@ -7,25 +7,24 @@
  * ending: ProjectListWorkspace.tsx's handleCreateSubmit now switches to
  * the new project and navigates here instead.
  *
- * This is a lightweight progress checklist, not a wizard — every step
- * beyond "Project identity" is explicitly, visibly inert ("Coming
- * later"): no link, no button, no click handler. None of those steps
- * (estimate/budget, cost codes, selections, QuickBooks, schedule,
- * documents) exist yet as of P3 — they're scoped to later packages
- * (P4.1/P4.3/P4.4/P8/P9 per CLAUDE.md/PRODUCTION-ROADMAP.md) — and this
- * component must never simulate a workflow that doesn't exist, per this
- * task's own brief. Same reasoning NoProjectAccess.tsx documents for
- * itself: kept a plain, small prop interface so a future caller only
- * ever needs to supply the project's own identity plus where "continue"
- * should go.
+ * This is a lightweight progress checklist, not a wizard. "Project
+ * identity" is marked done, and "Client and team" is a real, clickable
+ * link to `/admin/projects/[id]/team` (Task 6, P3) — both genuinely
+ * exist today. Every OTHER step (estimate/budget, cost codes, selections,
+ * QuickBooks, schedule, documents) is explicitly, visibly inert ("Coming
+ * later"): no link, no button, no click handler. Those steps really
+ * don't exist yet as of P3 — they're scoped to later packages
+ * (P4.1/P4.3/P4.4/P8/P9 per CLAUDE.md/PRODUCTION-ROADMAP.md).
  *
- * "Client and team" is listed as "Coming later" here even though
- * `/admin/projects/[id]/team` (Task 6) already exists and works today —
- * deliberate, not an oversight; see this task's own report for the
- * judgment call (the owner named these exact seven steps for this
- * checklist, and the checklist's job is to show a progressive plan, not
- * to re-surface every already-shipped screen as if it were this
- * project's own bespoke setup step).
+ * The rule this component follows cuts both ways: never claim a step is
+ * available when it isn't (the original brief's concern), and never
+ * claim a step is "coming later" when it's actually already shipped and
+ * working (the corrected reading here — an earlier draft of this
+ * component got that second half backwards and labeled "Client and
+ * team" as "Coming later" even though the team-management screen it
+ * would point to was fully functional; that was itself a misleading
+ * label, just in the opposite direction from the one the brief warned
+ * about, so it's fixed here rather than left as a "judgment call").
  */
 import React from "react";
 import { colors, spacing, radius, typography } from "../design/tokens";
@@ -34,7 +33,6 @@ const COMING_LATER_STEPS = [
   "Estimate and budget",
   "Cost codes and project-specific subcategories",
   "Specifications/selections",
-  "Client and team",
   "QuickBooks connection",
   "Schedule",
   "Documents",
@@ -50,10 +48,6 @@ export interface ProjectSetupChecklistProps {
   overviewHref: string;
 }
 
-// `projectId` is kept in the prop interface (see doc comment above) for
-// a future per-step deep link, even though this first version's JSX
-// doesn't read it directly — no linter is configured in this repo yet
-// (CLAUDE.md), so an unused destructured prop is harmless here.
 export function ProjectSetupChecklist({ projectId, projectName, overviewHref }: ProjectSetupChecklistProps) {
   return (
     <div className="sc-setup-checklist">
@@ -72,6 +66,21 @@ export function ProjectSetupChecklist({ projectId, projectName, overviewHref }: 
             </span>
             <span className="sc-setup-item-label">Project identity</span>
             <span className="sc-setup-item-status">Done</span>
+          </li>
+          {/* Real, working link (Task 6, P3) — not a "Coming later" row.
+              See the doc comment at the top of this file for why this one
+              step, alone among the seven the owner named, gets its own
+              treatment: it's already shipped and functional today, so
+              labeling it "Coming later" would be actively misleading in
+              the opposite direction from what the brief warned about. */}
+          <li className="sc-setup-item sc-setup-item-available">
+            <a href={`/admin/projects/${projectId}/team`} className="sc-setup-item-link">
+              <span className="sc-setup-check sc-setup-check-available" aria-hidden="true">
+                →
+              </span>
+              <span className="sc-setup-item-label">Client and team</span>
+              <span className="sc-setup-item-status sc-setup-item-status-available">Manage team</span>
+            </a>
           </li>
           {COMING_LATER_STEPS.map((step) => (
             <li key={step} className="sc-setup-item sc-setup-item-inert" aria-disabled="true">
@@ -109,6 +118,12 @@ const setupChecklistStyles = `
 .sc-setup-item-status { font-size: ${typography.sizeXs}; font-weight: ${typography.weightMedium}; color: ${colors.sageDeep}; text-transform: uppercase; letter-spacing: 0.02em; }
 .sc-setup-item-inert { opacity: 0.72; }
 .sc-setup-item-status-inert { color: ${colors.stoneDark}; }
+
+.sc-setup-item-available { padding: 0; background: ${colors.paperDim}; }
+.sc-setup-item-link { display: flex; align-items: center; gap: ${spacing.sm}; width: 100%; padding: ${spacing.sm} ${spacing.xs}; border-radius: ${radius.sm}; text-decoration: none; color: inherit; box-sizing: border-box; }
+.sc-setup-item-link:hover { background: ${colors.sageTint}; }
+.sc-setup-check-available { background: ${colors.sage}; color: ${colors.white}; }
+.sc-setup-item-status-available { color: ${colors.sageDeep}; }
 
 .sc-setup-continue { display: inline-block; padding: 10px 20px; border-radius: ${radius.sm}; background: ${colors.sage}; color: ${colors.white}; font-weight: ${typography.weightMedium}; font-size: ${typography.sizeSm}; text-decoration: none; }
 .sc-setup-continue:hover { background: ${colors.sageDeep}; }
