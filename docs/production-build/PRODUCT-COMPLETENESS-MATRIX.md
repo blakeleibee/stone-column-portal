@@ -74,7 +74,11 @@ Sources reviewed in full for this document: `PRODUCTION-ROADMAP.md`,
 | Build/edit an estimate by cost code | Owner, PM | P4 | **Live** | |
 | Budget ledger entry/adjustment | Owner, PM, Accounting | P4 | **Live** | Append-only, corrections not edits |
 | QuickBooks Desktop import & reconciliation | Accounting | P4 | **Live** | Mapping profiles, duplicate detection, review gate |
-| Project-specific cost-code breakdown items | Owner, PM, Accounting | P4.1 | Designed, not approved | See `P4.1-DESIGN.md` |
+| Project-specific cost-code breakdown items | Owner, PM, Accounting | P4.1 | Designed, not approved | See `P4.1-DESIGN.md`; confirmed to already satisfy the owner's 2026-08-20 "detailed budget foundation" requirement in full — no redesign |
+| Historical pricing intelligence (avg/range/recent cost, source & confidence, per cost code/child) | Owner, PM, Accounting | P4.2 | Not yet designed | Recorded 2026-08-20; read-only analytical layer, no new source of truth — see `FINANCIAL-ARCHITECTURE.md` |
+| Tiered pricing (Value/Standard/Premium, per cost item) & estimate-generation suggestion engine | Owner, PM | P4.3 | Not yet designed | Recorded 2026-08-20; depends on P4.1's child-item granularity and P4.2's historical data |
+| Controlled QuickBooks budget/estimate export | Accounting, Owner | P4.4 | Not yet designed | Recorded 2026-08-20; QuickBooks Estimate-vs-Budget target explicitly deferred pending real QuickBooks evidence — see Section D |
+| Progressive, savable project-setup workflow (identity → estimate/budget → cost codes → selections → client/team → QuickBooks → schedule → documents) | Owner, PM | P3 (step 1 only) → P4.1/P4.3/P4.4/P8/P9 (remaining steps) | Step 1 live as of P3; remaining steps not built | See `PRODUCT-VISION.md` §3; P3's own setup checklist names future steps "coming later," never simulates them |
 
 ### Procurement & commitments
 
@@ -145,51 +149,30 @@ Sources reviewed in full for this document: `PRODUCTION-ROADMAP.md`,
 
 ## Section C — Foundation gaps to correct before P5 continues
 
-Short list, ranked by how directly each undermines the vision's own
-stated requirements or P5's ability to be previewed and completed
-honestly. These are **not** feature requests for later packages —
-they're gaps in what already exists.
+**Update, 2026-08-20: gaps 1–3 below are RESOLVED as of P3's
+implementation** (kept here, marked resolved, rather than deleted, so
+the record of what was gapped and why stays intact):
 
-1. **No real create/select/switch-project workflow exists in
-   production.** Every admin screen except `/admin/financials` is
-   still fixture-bound to "Hawks Ridge Residence" outside `DEMO_MODE`
-   (per `P1-complete.md`'s own disclosed limitation, unchanged since).
-   This directly contradicts the vision's §3 ("no user is ever trapped
-   in a single hard-coded project") and means every P5 owner preview
-   so far has necessarily been a single-project demonstration, not a
-   real multi-project workflow check. **Recommendation:** decide
-   whether to pull the P2/P3 project-CRUD/switch UI forward as a
-   thin slice before P5's remaining owner previews (Tasks 7–9), or
-   accept single-project previews through the rest of P5 and land
-   project-switching as its own package immediately after. Either is
-   defensible; leaving it undecided is not — every future preview
-   should state explicitly which mode it's operating in.
-
-2. **P2/P3's "remaining scope" has no fully-specified design document.**
-   Every other package (P1, P2.1, P4, P5, P4.1) has an exact-scope
-   `P*-DESIGN.md` with schema/RLS/tests/acceptance criteria. The
-   project-CRUD/team-assignment/vendor-RLS-remainder work that old
-   Package 3 covered is currently only described by cross-reference to
-   the *superseded* old roadmap text. **Recommendation:** write
-   `P2-DESIGN.md`/`P3-DESIGN.md` (or a combined `P2-P3-DESIGN.md`)
-   before starting that work, matching the rigor every other package
-   already has — this is a paperwork gap, not a schema gap, and cheap
-   to close.
-
-3. **`staff_function` role differentiation does not exist at the
-   database level.** `SECURITY-AND-PERMISSIONS-MATRIX.md` itself
-   states this must land "no later than P3" and flags that, today,
-   `audit_log_staff_select` treats `admin` and `staff` identically —
-   a Superintendent can currently read every audited row for every
-   project org-wide, including full financial before/after snapshots.
-   P5 adds bid, commitment, and vendor data to what's audited, which
-   widens the blast radius of this existing gap rather than
-   introducing a new one. **Recommendation:** treat this as due no
-   later than the P2/P3 work in gap #2 above, and explicitly confirm
-   before P5's Task 9 preview whether Superintendent-role accounts
-   will exist in that preview's data (if not, this gap doesn't block
-   the preview itself, only the honesty of what "Superintendent" means
-   in any RLS test claiming isolation).
+1. ~~No real create/select/switch-project workflow~~ — **RESOLVED.**
+   Real project creation, an accessible-project list, `ProjectSwitcher`,
+   and archived-project view all live and independently reviewed; see
+   `P3-DESIGN.md`. A short list of remaining UI/UX completion items
+   (address-field layout, project-type selector, conditional pricing
+   inputs, staff-picker empty state, project-number guidance, filter/
+   label clarity, inline validation, a lightweight post-creation setup
+   checklist) and one remaining security guard (archived-project team
+   management reachable by direct URL) are in progress as of this
+   entry, before final P3 acceptance — not a re-opening of this gap,
+   a completion pass on an already-real feature.
+2. ~~P2/P3's "remaining scope" has no fully-specified design
+   document~~ — **RESOLVED.** `P3-DESIGN.md` is now that document.
+3. ~~`staff_function` role differentiation does not exist at the
+   database level~~ — **RESOLVED.** Built, independently reviewed
+   (twice — once at design stage, once at implementation stage, with
+   two Critical authorization bugs found and fixed before either
+   review closed), and live-verified against the real hosted dev
+   Supabase project. The audit-log over-exposure bug named here is
+   closed.
 
 4. **`project_decision_makers` is not built**, so the Client Approval
    Model (`CLIENT-APPROVAL-MODEL.md`) is a documented design with
@@ -223,6 +206,9 @@ decision on priority and placement.
 | **Medium** | Product-level backup/export/retention policy (per data type, not just Supabase's infrastructure-level managed backups) | Old roadmap's module 35 ("baseline backup/retention from the moment real customer data exists") is not restated with schema/acceptance detail in the new roadmap's P3 section; only the infra layer is covered (`TARGET-ARCHITECTURE.md` §12). | P3 (baseline policy, cheap, should exist before real customer data does) + P14 (self-service export, already named there). |
 | **Low** | Architect/Designer and Read-Only Guest roles | Named in the feature register's role list but have no schema role in any package and no clear demand signal from the actual stated business (a small custom builder). | Owner decision: confirm whether Stone Column's actual workflow needs either role at all before spending a package slot on them — the vision explicitly warns against enterprise complexity a small builder doesn't need. If confirmed needed, home in P14 alongside other long-tail roles. |
 | **Low** | Thin Leads intake, thin Company Templates, website lead-source tagging | Named in the old roadmap's Package 3 with schema-level detail; the new roadmap's P3 section only references them by pointer to the superseded document. | Same as Section C gap #2 — resolve when P2/P3's design doc is finally written; full builds remain correctly homed in P14. |
+| **High, explicitly deferred** | Whether the QuickBooks export target (P4.4) is a QuickBooks Estimate, a job-specific QuickBooks Budget, or both | Recorded 2026-08-20. This is a real-evidence question, not a design question — guessing it now risks building against the wrong QuickBooks object entirely. | P4.4's own design pass, and only after inspecting Stone Column's actual QuickBooks Desktop Enterprise Contractor setup or a representative export (same discipline `WORKBOOK-GAP-ANALYSIS.md` used before P2.1). **Do not decide this in advance of that inspection.** |
+| **Medium** | "Fixed price" pricing model has no real place to capture a total contract amount | Recorded 2026-08-20, found while completing P3's project-creation form. `project_fee_rules` models a builder *fee* (percentage or fixed dollar amount added to cost-plus costs) — it has no column for "the whole job is a single flat contract total," and `create_project_with_defaults()` requires a `fee_basis` regardless of the chosen `pricing_model`. Building a `contract_amount_cents`-style field now would be exactly the "parallel financial model" `FINANCIAL-ARCHITECTURE.md` forbids. | P3's own completion pass keeps `pricing_model='fixed_price'` selectable (a label) but still requires the existing fee-basis capture, honestly labeled as provisional — no new field invented. A real fixed-price contract-amount concept, if the business needs it, is a future architecture decision (likely P6 Billing or a P4.x amendment), not something to guess at now. |
+| **Medium** | `closed_out` and `archived` are two distinct terminal-ish project states in the schema (`schema/008`'s transition trigger) but P3's project list only ever showed two views (active-ish vs. archived), silently folding `closed_out` into the active view | Recorded 2026-08-20, owner-flagged during preview. A completed job showing in the same list as an in-progress one is a real UX gap the schema already has the data to fix. | P3's own completion pass adds a third, distinct "Completed" view for `status='closed_out'`, alongside the existing Active and Archived views — no schema change, this data already exists. |
 
 ## Section E — Contradictions and documentation gaps requiring reconciliation
 

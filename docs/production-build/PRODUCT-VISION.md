@@ -77,27 +77,50 @@ project*. That means, as a permanent product requirement:
   its pricing/fee terms, and build its estimate as part of getting it
   underway.
 - No user is ever trapped in seeded demo data or permanently pointed
-  at a single hard-coded project. (This is a currently-unmet
-  requirement as of this document's drafting — see §9, Foundation Gap 1.)
+  at a single hard-coded project. (Real, live as of P3 — see
+  `PRODUCT-COMPLETENESS-MATRIX.md` for current implementation status.)
+- **Project setup is progressive, not all-or-nothing.** Creating a
+  project begins a multi-step setup a user can save and return to
+  without finishing everything at once — identity, then estimate/
+  budget, cost codes and project-specific subcategories, specifications/
+  selections, client and team, QuickBooks connection, schedule, and
+  documents. Each step belongs to whichever package owns that domain
+  (see `PRODUCTION-ROADMAP.md`'s P3/P4.1/P4.3/P4.4/P8/P9 sections for
+  exactly which package builds which step) — no package pretends a
+  future step already works. A setup checklist may name a step "coming
+  later"; it must never simulate a workflow that isn't real yet.
 
 ## 4. Source of truth discipline
 
-QuickBooks Desktop remains the **system of record for accounting
-transactions.** The portal does not compete with it, replace it, or
-maintain a second books-of-record. Instead the portal provides:
+**The portal — not QuickBooks — is the source of truth for
+estimating and budgeting**: original and revised estimates, allowances,
+detailed cost-code breakdowns (a canonical parent code plus
+project-specific child items), commitments, forecasts, and projected
+final cost. **QuickBooks Desktop Enterprise Contractor remains the
+source of truth for accounting**: bills, checks, credit cards, payroll,
+invoices, payments, and actual job costs. The portal does not compete
+with QuickBooks on accounting, replace it, or maintain a second
+books-of-record — and QuickBooks does not become a second place a
+budget can be edited.
 
-- Controlled, reviewed, one-way synchronization of QuickBooks data
-  into the portal's own construction-management ledger (via the
-  import/mapping/reconciliation pipeline — see `FINANCIAL-ARCHITECTURE.md`).
-- The construction-management detail QuickBooks was never designed to
-  hold: commitments, bids, procurement, schedules, selections, change
-  orders, client/vendor communication, and the day-to-day operational
-  record of the job.
-- A single, explicit, documented answer to **"what is the source of
-  truth for this piece of information"** for every data type the
-  portal touches — QuickBooks for posted accounting transactions, the
-  portal's own append-only ledger for everything derived or
-  construction-specific, never both, never silently duplicated.
+Money moves both directions, each for a different reason, neither ever
+live/automatic:
+
+- **QuickBooks → portal**: actual costs, reviewed and confirmed by
+  staff before they post (the existing import pipeline).
+- **Portal → QuickBooks**: an *approved* budget/estimate snapshot,
+  exported to the mapped QuickBooks Customer:Job so QuickBooks'
+  own reporting reflects the portal's numbers without anyone retyping
+  them — never a draft, never silently overwritten in either direction.
+
+Beyond that boundary, the portal also holds the construction-management
+detail QuickBooks was never designed for: commitments, bids,
+procurement, schedules, selections, change orders, client/vendor
+communication, and the day-to-day operational record of the job. Every
+data type the portal touches has a single, explicit, documented answer
+to **"what is the source of truth for this"** — see
+`FINANCIAL-ARCHITECTURE.md` for the full accounting of which system
+owns which fact.
 
 Where practical, the portal eliminates duplicate entry — staff should
 never have to type the same fact into two systems when one can supply
@@ -128,7 +151,12 @@ is the durable summary.
 - Client visibility requires both `published` status and an explicit
   visibility flag — never one alone. Billability is likewise explicit.
 - Suggested numbers are never official until a human accepts or edits
-  them.
+  them — this governs the estimating system's future use of historical
+  project data and reusable Value/Standard/Premium pricing tiers too: a
+  suggested price is always explainable (its sources, dates, and
+  adjustments shown), always owner-editable, and never silently applied
+  or auto-approved. Pricing tiers apply per cost item or specification,
+  never as a single whole-project multiplier.
 
 **Technical & security** (`TARGET-ARCHITECTURE.md`,
 `SECURITY-AND-PERMISSIONS-MATRIX.md`):
