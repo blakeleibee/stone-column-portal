@@ -317,6 +317,69 @@ async function main() {
         !("error" in result)
       );
     }
+
+    // Fix round 1 (code review finding): assertProjectNotArchived()'s
+    // project lookup used `data?.status === "archived"`, which is FALSE
+    // when `data` is null (row genuinely missing, or RLS-filtered) --
+    // that fell through to "not archived, allow it" instead of
+    // rejecting. makeFakeTeamClient's `maybeSingle()` already returns
+    // `{ data: null, error: null }` for any id not present in the
+    // `projects`/`assignments` maps, so no client changes were needed
+    // to prove the fail-closed fix -- these cases were simply never
+    // exercised before. Reverting the `if (!data) return { error: ... }`
+    // fail-closed check in projectService.ts makes every one of the
+    // next 3 checks fail (the write proceeds instead of rejecting).
+    {
+      const client = makeFakeTeamClient({ projects: {} }); // "project-missing" not in the map
+      const result = await assignStaffToProject(client as never, "project-missing", "profile-1");
+      check(
+        "assignStaffToProject() rejects (fails closed) when the project lookup returns no row (real function, fake client)",
+        "error" in result && /not found|not accessible/i.test(result.error as string)
+      );
+    }
+    {
+      const client = makeFakeTeamClient({
+        projects: {}, // "project-missing" not in the map -- assignment resolves, but its project doesn't
+        assignments: { "assignment-5": { project_id: "project-missing" } },
+      });
+      const result = await revokeStaffAssignment(client as never, "assignment-5");
+      check(
+        "revokeStaffAssignment() rejects (fails closed) when the assignment's project lookup returns no row (real function, fake client)",
+        "error" in result && /not found|not accessible/i.test(result.error as string)
+      );
+    }
+    {
+      const client = makeFakeTeamClient({
+        projects: {},
+        assignments: { "assignment-6": { project_id: "project-missing" } },
+      });
+      const result = await reactivateStaffAssignment(client as never, "assignment-6");
+      check(
+        "reactivateStaffAssignment() rejects (fails closed) when the assignment's project lookup returns no row (real function, fake client)",
+        "error" in result && /not found|not accessible/i.test(result.error as string)
+      );
+    }
+
+    // Deliberate new behavior from the original fix (report's "Judgment
+    // calls" section): resolving project_id from the assignment row
+    // first means an assignmentId that doesn't resolve at all now gets
+    // an explicit rejection, not a silent 0-rows-affected no-op update.
+    {
+      const client = makeFakeTeamClient({ projects: {}, assignments: {} }); // "assignment-missing" not in the map
+      const result = await revokeStaffAssignment(client as never, "assignment-missing");
+      check(
+        "revokeStaffAssignment() rejects cleanly when the assignment id doesn't resolve (real function, fake client)",
+        "error" in result && /assignment.*not found/i.test(result.error as string)
+      );
+    }
+    {
+      const client = makeFakeTeamClient({ projects: {}, assignments: {} });
+      const result = await reactivateStaffAssignment(client as never, "assignment-missing");
+      check(
+        "reactivateStaffAssignment() rejects cleanly when the assignment id doesn't resolve (real function, fake client)",
+        "error" in result && /assignment.*not found/i.test(result.error as string)
+      );
+    }
   }
 
   console.log("\n--- Fixture isolation: getRepository() never returns a fixture repo outside DEMO_MODE ---");

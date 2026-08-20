@@ -38,13 +38,20 @@ export interface NoProjectAccessProps {
   message?: string;
   /** Optional label for the back link; defaults to "Back to your projects". */
   backLabel?: string;
+  /** Optional override for the heading; defaults to the Decision-10
+   *  "no access" wording. Added for reuse in a genuinely-has-access-but-
+   *  blocked-for-another-reason case (e.g. the archived-project block on
+   *  /admin/projects/[id]/team and /admin/projects/[id]/setup) — that
+   *  caller DOES have access, so the default heading would be actively
+   *  wrong for them, not just generic. */
+  heading?: string;
 }
 
-export function NoProjectAccess({ backHref, message, backLabel }: NoProjectAccessProps) {
+export function NoProjectAccess({ backHref, message, backLabel, heading }: NoProjectAccessProps) {
   return (
     <div className="sc-no-access">
       <div className="sc-no-access-card">
-        <h2 className="sc-no-access-title">You don&rsquo;t have access to this project</h2>
+        <h2 className="sc-no-access-title">{heading ?? "You don’t have access to this project"}</h2>
         <p className="sc-no-access-body">
           {message ??
             "This project doesn't exist, or you no longer have access to it. If you believe this is a mistake, contact your administrator."}

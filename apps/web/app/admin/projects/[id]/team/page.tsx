@@ -88,6 +88,7 @@ export default async function ProjectTeamPage({ params }: { params: { id: string
       <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
         <NoProjectAccess
           backHref="/admin/projects"
+          heading="This project is archived"
           message={`${project.name} is archived. Team management isn't available for archived projects.`}
           backLabel="Back to your projects"
         />

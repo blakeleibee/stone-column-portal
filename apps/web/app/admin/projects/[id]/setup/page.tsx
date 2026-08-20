@@ -53,6 +53,27 @@ export default async function ProjectSetupPage({ params }: { params: { id: strin
     );
   }
 
+  // Consistency / belt-and-suspenders with team/page.tsx's own
+  // archived-project guard (P3 owner-preview fix round 1): this route
+  // renders only links today (ProjectSetupChecklist takes no write
+  // Server Action props), so there is no live write reachable from here
+  // for an archived project — but blocking the render outright keeps
+  // this route's behavior consistent with the now-guarded team page
+  // rather than leaving it as the one remaining includeArchived: true
+  // detail route with no archived treatment at all.
+  if (project.status === "archived") {
+    return (
+      <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
+        <NoProjectAccess
+          backHref="/admin/projects"
+          heading="This project is archived"
+          message={`${project.name} is archived. Project setup isn't available for archived projects.`}
+          backLabel="Back to your projects"
+        />
+      </AdminChrome>
+    );
+  }
+
   return (
     <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <ProjectSetupChecklist projectId={project.id} projectName={project.name} overviewHref="/admin/overview" />

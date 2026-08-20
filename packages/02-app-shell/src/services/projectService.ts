@@ -163,7 +163,17 @@ export async function assertProjectNotArchived(
 ): Promise<{ error: string } | null> {
   const { data, error } = await supabase.from("projects").select("status").eq("id", projectId).maybeSingle();
   if (error) return { error: error.message };
-  if (data?.status === "archived") {
+  // Fail closed: maybeSingle() returns { data: null, error: null } both
+  // when the row genuinely doesn't exist AND when RLS filters it out —
+  // a missing row must reject, not fall through to "not archived, so
+  // allow it". (Not exploitable today, since the write policy's
+  // admin-only check and the read policy's unconditional
+  // visibility-for-admins mean anyone who could pass the write check
+  // can always see the row here too — but this function's own job is
+  // to be the security boundary, so it doesn't get to assume that
+  // invariant holds forever.)
+  if (!data) return { error: "Project not found or not accessible." };
+  if (data.status === "archived") {
     return { error: "This project is archived. Team management isn't available for archived projects." };
   }
   return null;
