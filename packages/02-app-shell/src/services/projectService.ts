@@ -101,6 +101,23 @@ export interface CreateProjectParams {
   initialClientProfileIds?: string[];
 }
 
+// project_fee_rules (schema/001) / create_project_with_defaults() (schema/016)
+// can only genuinely represent a cost-plus builder fee — a
+// percentage-of-cost or a flat dollar amount on top of cost. The other
+// four PricingModel values (fixed_price, time_and_materials,
+// hybrid_custom, other) have no real fee model backing them yet.
+// ProjectListWorkspace.tsx's create form only ever sends one of these
+// two through its own <select> (the other four are disabled there —
+// P3 owner-preview round 2, Task D2), but that's a UI-layer restriction
+// only — nothing here, in the RPC, or in a table CHECK constraint
+// independently stops a DIFFERENT caller of this exported function
+// (another UI, a script, or — per CLAUDE.md's AI-readiness
+// non-negotiable — a future AI tool-calling layer calling this exact
+// function) from submitting an unsupported pricingModel with a
+// fee_basis attached to it. This function is the one seam every caller
+// funnels through, so the guard belongs here, not only in the form.
+const FEE_SUPPORTED_PRICING_MODELS: readonly PricingModel[] = ["cost_plus_percentage", "cost_plus_fixed_fee"];
+
 /**
  * Thin wrapper over create_project_with_defaults() (schema/016) — an
  * admin-only RPC (enforced inside the function itself via
@@ -118,6 +135,11 @@ export async function createProject(
 ): Promise<{ id: string } | { error: string }> {
   if (!params.name.trim()) return { error: "Project name is required." };
   if (!params.projectNumber.trim()) return { error: "Project number is required." };
+  if (!FEE_SUPPORTED_PRICING_MODELS.includes(params.pricingModel)) {
+    return {
+      error: "This pricing model isn't fully supported yet — choose Cost-Plus (% Fee) or Cost-Plus (Fixed Fee).",
+    };
+  }
 
   const { data, error } = await supabase.rpc("create_project_with_defaults", {
     p_org_id: params.orgId,
