@@ -5,7 +5,7 @@
   "description": "Stone Column Portal — Package 2 responsive app shell, navigation, and Financials screen (imports the Package 1 financial engine directly; no duplicated formulas).",
   "scripts": {
     "smoke": "tsx test/render_smoke.tsx",
-    "test": "tsx test/render_smoke.tsx && tsx test/estimateTable_field_sync.tsx",
+    "test": "tsx test/render_smoke.tsx && tsx test/estimateTable_field_sync.tsx && tsx test/projectListWorkspace_pricingModel.tsx",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

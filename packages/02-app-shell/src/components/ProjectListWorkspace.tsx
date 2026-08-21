@@ -122,21 +122,35 @@ const ACTIVE_STATUS_FILTERS: { value: ProjectStatus | "all"; label: string }[] =
   { value: "on_hold", label: "On Hold" },
 ];
 
-const PRICING_MODEL_OPTIONS: { value: PricingModel; label: string }[] = [
+/**
+ * Round 2, Task D2 (owner preview): the underlying `project_fee_rules`
+ * table / `create_project_with_defaults()` RPC can only genuinely
+ * represent a cost-plus builder fee — a percentage-of-cost or a flat
+ * dollar amount on top of cost. It has no real concept of a single
+ * flat contract total (fixed_price), hours-plus-materials billing with
+ * no fee (time_and_materials), or either catch-all (hybrid_custom,
+ * other). All four of those used to fall back to the SAME
+ * percentage/fixed-fee picker used for genuine cost-plus jobs — which
+ * the owner correctly flagged as storing a number that LOOKS like a
+ * real fee but doesn't mean what fee_basis/fee_basis_points normally
+ * mean for those contract types (misleading financial data, not a UI
+ * nicety). Fix: these four stay visible (so the owner can see what's
+ * planned) but are `disabled` in the `<select>` (so `pricingModel`
+ * state can in practice only ever hold `cost_plus_percentage` or
+ * `cost_plus_fixed_fee`), and the fallback fee-basis picker that used
+ * to appear for the other four has been deleted entirely, not just
+ * left unreachable — see handleCreateSubmit's `resolvedFeeBasis`,
+ * which now derives the fee basis directly from `pricingModel` with no
+ * fallback state to fall back to.
+ */
+const PRICING_MODEL_OPTIONS: { value: PricingModel; label: string; disabled?: boolean }[] = [
   { value: "cost_plus_percentage", label: "Cost-Plus (% Fee)" },
   { value: "cost_plus_fixed_fee", label: "Cost-Plus (Fixed Fee)" },
-  { value: "fixed_price", label: "Fixed Price" },
-  { value: "time_and_materials", label: "Time & Materials" },
-  { value: "hybrid_custom", label: "Hybrid / Custom" },
-  { value: "other", label: "Other" },
+  { value: "fixed_price", label: "Fixed Price (Coming later)", disabled: true },
+  { value: "time_and_materials", label: "Time & Materials (Coming later)", disabled: true },
+  { value: "hybrid_custom", label: "Hybrid / Custom (Coming later)", disabled: true },
+  { value: "other", label: "Other (Coming later)", disabled: true },
 ];
-
-// A pricing model whose fee capture the RPC can express directly — no
-// separate "fee basis" picker needed, since the model already implies
-// one (owner-preview correction round, item 3).
-function pricingModelImpliesFeeBasis(model: PricingModel): boolean {
-  return model === "cost_plus_percentage" || model === "cost_plus_fixed_fee";
-}
 
 const PROJECT_TYPE_OPTIONS = [
   "New Construction",
@@ -318,7 +332,6 @@ export function ProjectListWorkspace({
   const [projectTypeOther, setProjectTypeOther] = useState("");
   const [pricingModel, setPricingModel] = useState<PricingModel>("cost_plus_percentage");
   const [pricingModelLabel, setPricingModelLabel] = useState("");
-  const [feeBasis, setFeeBasis] = useState<FeeBasis>("percentage");
   const [feePercent, setFeePercent] = useState("");
   const [feeFixedDollars, setFeeFixedDollars] = useState("");
   const [selectedStaffIds, setSelectedStaffIds] = useState<string[]>([]);
@@ -362,7 +375,6 @@ export function ProjectListWorkspace({
     setProjectTypeOther("");
     setPricingModel("cost_plus_percentage");
     setPricingModelLabel("");
-    setFeeBasis("percentage");
     setFeePercent("");
     setFeeFixedDollars("");
     setSelectedStaffIds([]);
@@ -384,12 +396,6 @@ export function ProjectListWorkspace({
     });
   }
 
-  function handlePricingModelChange(value: PricingModel) {
-    setPricingModel(value);
-    if (value === "cost_plus_percentage") setFeeBasis("percentage");
-    else if (value === "cost_plus_fixed_fee") setFeeBasis("fixed");
-  }
-
   async function handleCreateSubmit(e: React.FormEvent) {
     e.preventDefault();
     setNameTouched(true);
@@ -405,14 +411,39 @@ export function ProjectListWorkspace({
 
     const resolvedProjectType =
       projectTypeChoice === "" ? null : projectTypeChoice === "Other" ? projectTypeOther.trim() || null : projectTypeChoice;
-    // The pricing model already implies a fee basis for the two cost-plus
-    // models (item 3) — for every other model, whatever the fallback
-    // picker last set stands.
-    const resolvedFeeBasis: FeeBasis = pricingModelImpliesFeeBasis(pricingModel)
-      ? pricingModel === "cost_plus_percentage"
-        ? "percentage"
-        : "fixed"
-      : feeBasis;
+    // Round 2, Task D2: `pricingModel` can now only ever be one of these
+    // two values in practice (the other four PRICING_MODEL_OPTIONS
+    // entries are disabled in the <select>), so the fee basis is always
+    // fully implied by the pricing model — no fallback state to fall
+    // back to, and no path where a fee gets submitted for one of the
+    // four unsupported models.
+    const resolvedFeeBasis: FeeBasis = pricingModel === "cost_plus_fixed_fee" ? "fixed" : "percentage";
+
+    // Round 2, Task D2 verification item 2: validate and reject a
+    // negative/out-of-range fee client-side, with a friendly message,
+    // rather than letting it fall through to project_fee_rules'
+    // `fee_basis_points_range` (0–10000 bp, i.e. 0–100%) /
+    // `fee_fixed_amount_nonnegative` DB constraints (schema/001) and
+    // surfacing a raw Postgres constraint-violation error. The 0–100
+    // bound mirrors that same DB constraint exactly, not an arbitrary
+    // UI-only limit.
+    let feeBasisPoints: number | null = null;
+    let feeFixedAmountCents: number | null = null;
+    if (resolvedFeeBasis === "percentage") {
+      const pct = Number(feePercent);
+      if (feePercent.trim() === "" || Number.isNaN(pct) || pct < 0 || pct > 100) {
+        setCreateError("Enter a valid fee percentage between 0 and 100.");
+        return;
+      }
+      feeBasisPoints = Math.round(pct * 100);
+    } else {
+      const dollars = Number(feeFixedDollars);
+      if (feeFixedDollars.trim() === "" || Number.isNaN(dollars) || dollars < 0) {
+        setCreateError("Enter a valid fixed fee amount of 0 or more.");
+        return;
+      }
+      feeFixedAmountCents = Math.round(dollars * 100);
+    }
 
     const params: CreateProjectParams = {
       orgId,
@@ -423,21 +454,11 @@ export function ProjectListWorkspace({
       pricingModel,
       pricingModelLabel: pricingModelLabel.trim() || null,
       feeBasis: resolvedFeeBasis,
-      feeBasisPoints: resolvedFeeBasis === "percentage" && feePercent.trim() ? Math.round(Number(feePercent) * 100) : null,
-      feeFixedAmountCents:
-        resolvedFeeBasis === "fixed" && feeFixedDollars.trim() ? Math.round(Number(feeFixedDollars) * 100) : null,
+      feeBasisPoints,
+      feeFixedAmountCents,
       initialStaffProfileIds: selectedStaffIds,
       initialClientProfileIds: selectedClientIds,
     };
-
-    if (resolvedFeeBasis === "percentage" && (params.feeBasisPoints == null || Number.isNaN(params.feeBasisPoints))) {
-      setCreateError("Enter a valid fee percentage.");
-      return;
-    }
-    if (resolvedFeeBasis === "fixed" && (params.feeFixedAmountCents == null || Number.isNaN(params.feeFixedAmountCents))) {
-      setCreateError("Enter a valid fixed fee amount.");
-      return;
-    }
 
     setCreateError(null);
     setCreateSubmitting(true);
@@ -692,10 +713,10 @@ export function ProjectListWorkspace({
                   id="sc-proj-pricing"
                   className="sc-projects-input sc-projects-field-input"
                   value={pricingModel}
-                  onChange={(e) => handlePricingModelChange(e.target.value as PricingModel)}
+                  onChange={(e) => setPricingModel(e.target.value as PricingModel)}
                 >
                   {PRICING_MODEL_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
+                    <option key={opt.value} value={opt.value} disabled={opt.disabled}>
                       {opt.label}
                     </option>
                   ))}
@@ -721,6 +742,8 @@ export function ProjectListWorkspace({
                   id="sc-proj-fee-pct"
                   type="number"
                   step="0.01"
+                  min={0}
+                  max={100}
                   className="sc-projects-input sc-projects-field-input"
                   placeholder="e.g. 15"
                   value={feePercent}
@@ -738,63 +761,11 @@ export function ProjectListWorkspace({
                   id="sc-proj-fee-fixed"
                   type="number"
                   step="0.01"
+                  min={0}
                   className="sc-projects-input sc-projects-field-input"
                   value={feeFixedDollars}
                   onChange={(e) => setFeeFixedDollars(e.target.value)}
                 />
-              </div>
-            )}
-
-            {!pricingModelImpliesFeeBasis(pricingModel) && (
-              <div className="sc-projects-fee-fallback">
-                <p className="sc-projects-fee-note">
-                  Detailed pricing capture for this contract type isn&rsquo;t built yet — enter a fee basis for now; you
-                  can configure full contract terms after this is added.
-                </p>
-                <div className="sc-projects-form-row">
-                  <div className="sc-projects-field">
-                    <label htmlFor="sc-proj-fee-basis">Fee basis</label>
-                    <select
-                      id="sc-proj-fee-basis"
-                      className="sc-projects-input sc-projects-field-input"
-                      value={feeBasis}
-                      onChange={(e) => setFeeBasis(e.target.value as FeeBasis)}
-                    >
-                      <option value="percentage">Percentage</option>
-                      <option value="fixed">Fixed amount</option>
-                    </select>
-                  </div>
-                  {feeBasis === "percentage" ? (
-                    <div className="sc-projects-field">
-                      <label htmlFor="sc-proj-fee-pct-fallback">
-                        Fee percentage<span className="sc-projects-field-required" aria-hidden="true">*</span>
-                      </label>
-                      <input
-                        id="sc-proj-fee-pct-fallback"
-                        type="number"
-                        step="0.01"
-                        className="sc-projects-input sc-projects-field-input"
-                        placeholder="e.g. 15"
-                        value={feePercent}
-                        onChange={(e) => setFeePercent(e.target.value)}
-                      />
-                    </div>
-                  ) : (
-                    <div className="sc-projects-field">
-                      <label htmlFor="sc-proj-fee-fixed-fallback">
-                        Fixed fee amount ($)<span className="sc-projects-field-required" aria-hidden="true">*</span>
-                      </label>
-                      <input
-                        id="sc-proj-fee-fixed-fallback"
-                        type="number"
-                        step="0.01"
-                        className="sc-projects-input sc-projects-field-input"
-                        value={feeFixedDollars}
-                        onChange={(e) => setFeeFixedDollars(e.target.value)}
-                      />
-                    </div>
-                  )}
-                </div>
               </div>
             )}
 
@@ -1002,8 +973,6 @@ const workspaceStyles = `
 .sc-projects-field-inline { display: flex; gap: ${spacing.xs}; align-items: center; }
 .sc-projects-field-inline .sc-projects-field-input { flex: 1; }
 .sc-projects-input.sc-projects-field-input { width: 100%; box-sizing: border-box; }
-.sc-projects-fee-fallback { width: 100%; }
-.sc-projects-fee-note { font-size: ${typography.sizeXs}; color: ${colors.ink2}; background: ${colors.goldTint}; border: 1px solid ${colors.gold}; border-radius: ${radius.sm}; padding: ${spacing.sm}; margin: 0 0 ${spacing.sm} 0; }
 .sc-projects-checkbox-list { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; padding: ${spacing.sm}; background: ${colors.white}; }
 .sc-projects-checkbox-item { display: flex; align-items: center; gap: 6px; font-size: ${typography.sizeSm}; }
 .sc-projects-empty-inline { margin: 0; padding: ${spacing.sm}; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; border: 1px dashed ${colors.line}; border-radius: ${radius.sm}; }
