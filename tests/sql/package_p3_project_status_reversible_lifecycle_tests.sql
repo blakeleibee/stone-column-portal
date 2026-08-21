@@ -124,14 +124,19 @@ reset role;
 select clear_test_user();
 
 -- ---------------------------------------------------------------------
--- SECTION 3 — change_project_status() rejects a non-admin caller.
+-- SECTION 3 — a non-admin caller is rejected on BOTH write paths:
+-- change_project_status() itself, AND a raw UPDATE straight against
+-- `projects` that bypasses the RPC entirely (the actual bypass an
+-- independent review empirically proved against this migration's first
+-- draft — see the FIX ROUND 1 comment below).
+--
 -- pm_a (staff_function=project_manager, assigned to 'project_a' only —
 -- package_p3_project_staff_access_tests.sql) targets 'project_a', a
 -- project pm_a genuinely CAN see, so this specifically exercises the
--- RPC's own is_org_admin_for_org() check, not the earlier
--- "project not visible at all" branch. Rejected regardless of whether
--- the target status/current status pairing would otherwise be a valid
--- transition — the admin check runs before any UPDATE is attempted.
+-- admin check itself, not the earlier "project not visible at all"
+-- branch. Rejected regardless of whether the target status/current
+-- status pairing would otherwise be a valid transition — the admin
+-- check runs before the transition-validity check either way.
 -- ---------------------------------------------------------------------
 select set_test_user((select value from test_fixture_ids where key = 'pm_a'));
 set local role authenticated;
@@ -142,6 +147,35 @@ select assert_raises(
     (select value from test_fixture_ids where key = 'project_a')
   ),
   'change_project_status() rejects a non-admin caller (project_manager pm_a), even against a project they can see and are assigned to'
+);
+
+-- FIX ROUND 1 (independent review, empirically proven against the
+-- pre-fix state of this migration): the actual regression test that
+-- would have caught the real bypass — a non-admin caller issuing a raw
+-- UPDATE directly against `projects`, bypassing change_project_status()
+-- entirely (exactly how a PostgREST caller does
+-- supabase.from("projects").update(...) — no RPC involved at all), used
+-- to SUCCEED even though the RPC above correctly rejected the same
+-- caller. Root cause: projects_staff_update's RLS policy (schema/016
+-- lines 522-525, already deployed, pre-dating this migration) is
+-- `using (is_financial_staff(id))` — admits any non-superintendent
+-- staff (pm_a included, assigned to project_a), not just admins — so
+-- RLS alone let this UPDATE statement through. Only the admin check now
+-- inside enforce_project_status_transition() (schema/017 FIX ROUND 1)
+-- stops it, which is why this is a trigger-level rejection proof, not
+-- an RLS-policy-level one — RLS still legitimately allows pm_a to
+-- UPDATE non-status columns on project_a.
+select assert_raises(
+  format(
+    $sql$update projects set status = 'archived' where id = %L$sql$,
+    (select value from test_fixture_ids where key = 'project_a')
+  ),
+  'a non-admin caller (project_manager pm_a) issuing a raw UPDATE directly against projects — bypassing change_project_status() entirely — is also rejected: the real authorization boundary is the trigger, not the RPC'
+);
+
+select assert_that(
+  (select status from projects where id = (select value from test_fixture_ids where key = 'project_a')) = 'active',
+  'project_a''s status is unchanged after the rejected raw-UPDATE bypass attempt above'
 );
 
 reset role;

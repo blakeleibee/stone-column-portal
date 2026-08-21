@@ -37,15 +37,15 @@
 -- owner, and not a transition this migration's brief asked for; adding
 -- it would be "completing the matrix" beyond the actual ask.
 --
--- Also adds change_project_status(p_project_id, p_new_status): the
--- only sanctioned way for the UI to actually drive a status change.
--- Admin-only (checked explicitly inside the function, same
--- is_org_admin_for_org() pattern as create_project_with_defaults() in
--- schema/016), SECURITY INVOKER (also matching create_project_with_
--- defaults()). The RPC does a plain UPDATE and deliberately does NOT
--- duplicate the transition-validity logic above — the trigger (attached
--- to `projects`, untouched by this migration — only the function body
--- it calls changes) is the single source of truth for which transitions
+-- Also adds change_project_status(p_project_id, p_new_status): a
+-- friendly, admin-only entry point for the UI to drive a status change
+-- (checked explicitly inside the function, same is_org_admin_for_org()
+-- pattern as create_project_with_defaults() in schema/016), SECURITY
+-- INVOKER (also matching create_project_with_defaults()). The RPC does
+-- a plain UPDATE and deliberately does NOT duplicate the
+-- transition-validity logic above — the trigger (attached to
+-- `projects`, untouched by this migration — only the function body it
+-- calls changes) is the single source of truth for which transitions
 -- are valid, and rejects an invalid one with its own exception. No new
 -- audit work is required: audit_projects (schema/006_audit_triggers_
 -- orgs_profiles_projects.sql, `after update on projects ... execute
@@ -53,15 +53,53 @@
 -- `projects` unconditionally, including a plain status change made
 -- through this RPC's own UPDATE statement — confirmed by reading
 -- schema/006 directly, not assumed.
+--
+-- FIX ROUND 1 (independent review, empirically proven, not
+-- theorized): the RPC's own admin check is NOT the real authorization
+-- boundary for who may change a project's status — a project_manager/
+-- accounting/general staff caller (any non-superintendent staff;
+-- is_financial_staff() in schema/016) can reach `projects` directly
+-- through PostgREST (`supabase.from("projects").update(...)`),
+-- bypassing change_project_status() entirely. projects_staff_update's
+-- RLS policy (schema/016 lines 522-525, already deployed, pre-dating
+-- this migration) is `using (is_financial_staff(id))` — admits any
+-- non-superintendent staff, not just admins; only projects_staff_insert
+-- is admin-only (`is_org_admin_for_org(org_id)`), which is why "mirrors
+-- create_project_with_defaults()'s pattern" felt safe but didn't
+-- actually transfer — INSERT and UPDATE are different RLS policies, and
+-- only INSERT was ever admin-gated. Before this migration this
+-- didn't matter much in practice (archival was one-directional and
+-- effectively permanent regardless of who set it); this migration is
+-- what makes it consequential, since a non-admin could now silently
+-- archive OR restore a project via a raw UPDATE. Fixed below by moving
+-- the admin check into enforce_project_status_transition() itself — the
+-- one piece of logic every write path (the RPC, a raw PostgREST
+-- UPDATE, a future direct-SQL admin tool) all funnel through — rather
+-- than relying on the RPC's own check, which only covers callers who
+-- go through the RPC.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
 -- Widen enforce_project_status_transition() (schema/008) to allow the
--- four new transitions listed above. Same signature, same language/
--- set search_path clauses as the original; the trigger itself
+-- four new transitions listed above, AND (FIX ROUND 1) make it the
+-- actual authorization boundary for WHO may change a project's status —
+-- not just WHICH transitions are shaped validly. Same signature, same
+-- language/set search_path clauses as the original; the trigger itself
 -- (projects_status_transition, schema/008) is not redefined here — it
 -- already points at this function by name, so CREATE OR REPLACE is
 -- sufficient to change its behavior.
+--
+-- The admin check is gated on `NEW.status is distinct from OLD.status`
+-- specifically — not on every UPDATE to `projects` — so it doesn't
+-- newly restrict the non-status field writes (e.g. gmp_amount_cents)
+-- that projects_staff_update's RLS policy already legitimately allows
+-- a non-admin financial staff caller to make. `NEW.org_id` is safe to
+-- read here: org_id is never edited (no code path changes it after
+-- insert), so NEW.org_id and OLD.org_id are always equal on this row.
+-- is_org_admin_for_org() is the same helper change_project_status()
+-- below already calls — this closes the same authorization gap at the
+-- one place every write path (the RPC, a raw PostgREST UPDATE, any
+-- future direct-SQL tool) actually funnels through.
 -- ---------------------------------------------------------------------
 create or replace function public.enforce_project_status_transition() returns trigger
 language plpgsql
@@ -70,6 +108,10 @@ as $$
 begin
   if NEW.status = OLD.status then
     return NEW;
+  end if;
+
+  if not is_org_admin_for_org(NEW.org_id) then
+    raise exception 'Only an org admin may change a project''s status.';
   end if;
 
   if not (
@@ -87,13 +129,20 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------
--- change_project_status(): admin-only RPC that performs the actual
--- status-changing UPDATE. Looks the project's org up through the
--- caller's own RLS-scoped session (SECURITY INVOKER, so this SELECT is
--- subject to projects_staff_select same as any other caller query) —
--- a project the caller cannot see at all resolves to a null org id,
--- which is treated as "not found", not silently passed through to the
--- admin check below.
+-- change_project_status(): the sanctioned RPC entry point for the UI to
+-- request a status change. Its own is_org_admin_for_org() check below
+-- is a FRIENDLY pre-check, not the real authorization boundary (FIX
+-- ROUND 1) — it exists purely so a non-admin caller going through this
+-- RPC gets a clear "Only an org admin..." error before ever reaching
+-- the UPDATE, rather than a raw trigger exception. The actual boundary,
+-- enforced identically for this RPC AND any other write path (a raw
+-- PostgREST UPDATE included), is the admin check now inside
+-- enforce_project_status_transition() above. Looks the project's org up
+-- through the caller's own RLS-scoped session (SECURITY INVOKER, so
+-- this SELECT is subject to projects_staff_select same as any other
+-- caller query) — a project the caller cannot see at all resolves to a
+-- null org id, which is treated as "not found", not silently passed
+-- through to the admin check below.
 -- ---------------------------------------------------------------------
 create or replace function public.change_project_status(
   p_project_id uuid,

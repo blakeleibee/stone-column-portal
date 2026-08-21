@@ -75,6 +75,18 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
  * specifically for archived -> active (the reversibility fix), even
  * though on_hold -> active is also "Mark as Active", since the two read
  * very differently to an admin looking at the row.
+ *
+ * MAINTENANCE NOTE (Minor finding, FIX ROUND 1 review): this is a
+ * hand-maintained TypeScript copy of the SQL matrix in
+ * enforce_project_status_transition() — nothing enforces the two stay
+ * in sync. schema/017_project_status_reversible_lifecycle.sql's `if not
+ * (...)` condition is the actual source of truth (offering a
+ * destination here that the trigger would reject just surfaces the
+ * trigger's own error after a wasted round trip; the reverse — the
+ * trigger silently allowing more than this list offers — is the
+ * meaner failure mode, since it'd be invisible in the UI). If a future
+ * migration widens or narrows that condition again, update this object
+ * to match in the same change.
  */
 const STATUS_TRANSITIONS: Record<ProjectStatus, { status: ProjectStatus; label: string }[]> = {
   draft: [{ status: "active", label: "Mark as Active" }],
@@ -251,10 +263,17 @@ export interface ProjectListWorkspaceProps {
   createProject: (params: CreateProjectParams) => Promise<{ id: string } | { error: string }>;
   switchProject: (projectId: string) => Promise<{ id: string } | { error: string }>;
   /** statusAction.ts's wrapper over change_project_status() (schema/017,
-   *  Task D1) — admin-only at the RPC layer (the real boundary); this
-   *  component only hides the control for non-admins as a UI
-   *  convenience, same "UI hiding is cosmetic" framing used throughout
-   *  this package. */
+   *  Task D1). The RPC's own admin check is a friendly pre-check, not
+   *  the real boundary (FIX ROUND 1, independent review, empirically
+   *  proven) — a non-admin can bypass this RPC entirely with a raw
+   *  `supabase.from("projects").update(...)` call, since
+   *  projects_staff_update's RLS policy (schema/016) admits any
+   *  non-superintendent staff. The actual boundary is the admin check
+   *  now inside enforce_project_status_transition() (schema/017 FIX
+   *  ROUND 1), a database trigger every write path funnels through.
+   *  This component only hides the control for non-admins as a UI
+   *  convenience, same "UI hiding is cosmetic, the trigger is real"
+   *  framing used throughout this package. */
   changeProjectStatus: (projectId: string, newStatus: ProjectStatus) => Promise<{ error: string } | {}>;
   activeProjectsHref: string;
   completedProjectsHref: string;
@@ -889,16 +908,24 @@ export function ProjectListWorkspace({
               </div>
 
               {/* Task D1 (P3 owner-preview round 2): status-change
-                  control, admin-only in the UI (the RPC's own
-                  is_org_admin_for_org() check is the real boundary —
-                  same "UI hiding is cosmetic" framing used throughout
-                  this package). Shown in every view, including
-                  Archived — this is the actual fix for both gaps the
-                  owner found: no UI path INTO archived, and archival
-                  being effectively permanent. Click -> inline "are you
-                  sure?" state -> confirm/cancel, mirroring
-                  ProjectTeamWorkspace.tsx's Revoke confirm exactly,
-                  never a native confirm() dialog. */}
+                  control, admin-only in the UI. The real boundary is
+                  the admin check inside enforce_project_status_
+                  transition() (schema/017 FIX ROUND 1) — a database
+                  trigger enforced identically for this control's RPC
+                  call AND any other write path (a raw PostgREST
+                  UPDATE included), not the RPC's own is_org_admin_
+                  for_org() check alone (that check is a friendly
+                  pre-check only — FIX ROUND 1, independent review,
+                  empirically proved a non-admin could bypass the RPC
+                  with a raw `.update()` before the trigger fix landed).
+                  Same "UI hiding is cosmetic, the trigger is real"
+                  framing used throughout this package. Shown in every
+                  view, including Archived — this is the actual fix for
+                  both gaps the owner found: no UI path INTO archived,
+                  and archival being effectively permanent. Click ->
+                  inline "are you sure?" state -> confirm/cancel,
+                  mirroring ProjectTeamWorkspace.tsx's Revoke confirm
+                  exactly, never a native confirm() dialog. */}
               {isAdmin &&
                 (statusConfirm?.projectId === project.id ? (
                   <div className="sc-projects-status-confirm">

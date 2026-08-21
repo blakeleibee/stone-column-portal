@@ -399,6 +399,18 @@ export async function changeProjectStatus(
     p_new_status: newStatus,
   });
   if (error) {
+    // MAINTENANCE NOTE (Minor finding, FIX ROUND 1 review): both regexes
+    // match against raw `raise exception` text — the first from
+    // enforce_project_status_transition()'s transition-validity check
+    // (the actual source of most rejections post-FIX-ROUND-1, since
+    // that trigger now runs on every write path, not just this RPC's),
+    // the second from either that same trigger's admin check or this
+    // RPC's own friendly pre-check (both raise the identical string,
+    // by design). Brittle: if schema/017's wording ever changes, these
+    // silently stop matching and the caller falls through to the raw
+    // Postgres error instead. Keep these two strings in sync with
+    // schema/017_project_status_reversible_lifecycle.sql's actual
+    // `raise exception` text if either is ever reworded.
     if (/Invalid project status transition/.test(error.message)) {
       return { error: `That status change isn't allowed from the project's current status.` };
     }
