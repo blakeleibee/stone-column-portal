@@ -17,11 +17,23 @@
  * shows "Manage Team" since staffing cleanup on a just-finished job is
  * plausible), and `view="archived"` (fully read-only — no create form,
  * no switch action, no "Manage Team" link). This is purely a UI-
- * affordance choice: `enforce_project_status_transition()` (schema/008)
- * only guards the validity of `projects.status`'s own transitions, not
+ * affordance choice: `enforce_project_status_transition()` (schema/008,
+ * widened by schema/017 — P3 owner-preview round 2, Task D1) only
+ * guards the validity of `projects.status`'s own transitions, not
  * writes to an archived project's child tables (cost codes, budget
  * entries, staff assignments, etc.) — no such DB-level write guard
  * exists yet.
+ *
+ * Every row (in every view, including Archived) also renders a
+ * status-change control (Task D1) showing only the transitions
+ * actually valid FROM that row's current status — this is how a
+ * project actually reaches `archived` in the first place, and how it
+ * comes back out again (`archived -> active` / `archived ->
+ * closed_out`), closing the two gaps the owner's second preview round
+ * found: no UI path into Archived, and archival being effectively
+ * permanent. This one control is deliberately NOT gated by `view` the
+ * way "Manage Team"/"Switch to this project" are — status changes are
+ * exactly what moves a row between views.
  *
  * After a successful create, this component switches to the new project
  * and navigates straight to its setup checklist (owner-preview
@@ -50,6 +62,39 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
   on_hold: "On Hold",
   closed_out: "Closed Out",
   archived: "Archived",
+};
+
+/**
+ * The full transition matrix change_project_status() (schema/017) will
+ * actually accept, keyed by the row's CURRENT status — mirrors
+ * enforce_project_status_transition()'s widened condition exactly
+ * (schema/017_project_status_reversible_lifecycle.sql), so this list
+ * never offers a destination the RPC would reject. Labels match the
+ * owner's own naming ("Mark as Completed" / "Mark as Active" /
+ * "Archive" / "Restore from Archive") — "Restore from Archive" is used
+ * specifically for archived -> active (the reversibility fix), even
+ * though on_hold -> active is also "Mark as Active", since the two read
+ * very differently to an admin looking at the row.
+ */
+const STATUS_TRANSITIONS: Record<ProjectStatus, { status: ProjectStatus; label: string }[]> = {
+  draft: [{ status: "active", label: "Mark as Active" }],
+  active: [
+    { status: "on_hold", label: "Put On Hold" },
+    { status: "closed_out", label: "Mark as Completed" },
+    { status: "archived", label: "Archive" },
+  ],
+  on_hold: [
+    { status: "active", label: "Mark as Active" },
+    { status: "closed_out", label: "Mark as Completed" },
+  ],
+  closed_out: [
+    { status: "active", label: "Mark as Active" },
+    { status: "archived", label: "Archive" },
+  ],
+  archived: [
+    { status: "active", label: "Restore from Archive" },
+    { status: "closed_out", label: "Mark as Completed" },
+  ],
 };
 
 // `closed_out` deliberately excluded (owner-preview correction round,
@@ -205,6 +250,12 @@ export interface ProjectListWorkspaceProps {
   initialCreateOpen?: boolean;
   createProject: (params: CreateProjectParams) => Promise<{ id: string } | { error: string }>;
   switchProject: (projectId: string) => Promise<{ id: string } | { error: string }>;
+  /** statusAction.ts's wrapper over change_project_status() (schema/017,
+   *  Task D1) — admin-only at the RPC layer (the real boundary); this
+   *  component only hides the control for non-admins as a UI
+   *  convenience, same "UI hiding is cosmetic" framing used throughout
+   *  this package. */
+  changeProjectStatus: (projectId: string, newStatus: ProjectStatus) => Promise<{ error: string } | {}>;
   activeProjectsHref: string;
   completedProjectsHref: string;
   archivedProjectsHref: string;
@@ -224,6 +275,7 @@ export function ProjectListWorkspace({
   initialCreateOpen,
   createProject,
   switchProject,
+  changeProjectStatus,
   activeProjectsHref,
   completedProjectsHref,
   archivedProjectsHref,
@@ -255,6 +307,13 @@ export function ProjectListWorkspace({
 
   const [switchingId, setSwitchingId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+
+  // Status-change control (Task D1) — single pending confirm across all
+  // rows at once, same "one inline confirm at a time" shape as
+  // ProjectTeamWorkspace.tsx's revokeConfirmId.
+  const [statusConfirm, setStatusConfirm] = useState<{ projectId: string; newStatus: ProjectStatus } | null>(null);
+  const [statusSubmittingId, setStatusSubmittingId] = useState<string | null>(null);
+  const [statusErrors, setStatusErrors] = useState<Record<string, string | null>>({});
 
   const suggestedProjectNumber = useMemo(() => suggestNextProjectNumber(allProjectNumbers), [allProjectNumbers]);
 
@@ -407,6 +466,32 @@ export function ProjectListWorkspace({
       router.refresh();
     } finally {
       setSwitchingId(null);
+    }
+  }
+
+  function handleStatusOptionClick(projectId: string, newStatus: ProjectStatus) {
+    setStatusErrors((prev) => ({ ...prev, [projectId]: null }));
+    setStatusConfirm({ projectId, newStatus });
+  }
+
+  function handleStatusCancel() {
+    setStatusConfirm(null);
+  }
+
+  async function handleStatusConfirm() {
+    if (!statusConfirm) return;
+    const { projectId, newStatus } = statusConfirm;
+    setStatusSubmittingId(projectId);
+    try {
+      const result = await changeProjectStatus(projectId, newStatus);
+      if ("error" in result) {
+        setStatusErrors((prev) => ({ ...prev, [projectId]: result.error }));
+        return;
+      }
+      setStatusConfirm(null);
+      router.refresh();
+    } finally {
+      setStatusSubmittingId(null);
     }
   }
 
@@ -802,6 +887,54 @@ export function ProjectListWorkspace({
                   </a>
                 )}
               </div>
+
+              {/* Task D1 (P3 owner-preview round 2): status-change
+                  control, admin-only in the UI (the RPC's own
+                  is_org_admin_for_org() check is the real boundary —
+                  same "UI hiding is cosmetic" framing used throughout
+                  this package). Shown in every view, including
+                  Archived — this is the actual fix for both gaps the
+                  owner found: no UI path INTO archived, and archival
+                  being effectively permanent. Click -> inline "are you
+                  sure?" state -> confirm/cancel, mirroring
+                  ProjectTeamWorkspace.tsx's Revoke confirm exactly,
+                  never a native confirm() dialog. */}
+              {isAdmin &&
+                (statusConfirm?.projectId === project.id ? (
+                  <div className="sc-projects-status-confirm">
+                    <p>
+                      Change status of &ldquo;{project.name}&rdquo; from {STATUS_LABELS[project.status]} to{" "}
+                      {STATUS_LABELS[statusConfirm.newStatus]}?
+                    </p>
+                    <div className="sc-projects-status-confirm-actions">
+                      <button
+                        type="button"
+                        className="sc-projects-btn sc-projects-btn-primary"
+                        disabled={statusSubmittingId === project.id}
+                        onClick={handleStatusConfirm}
+                      >
+                        {statusSubmittingId === project.id ? "Saving…" : "Yes, change status"}
+                      </button>
+                      <button type="button" className="sc-projects-btn" onClick={handleStatusCancel}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="sc-projects-status-actions">
+                    {STATUS_TRANSITIONS[project.status].map((option) => (
+                      <button
+                        key={option.status}
+                        type="button"
+                        className="sc-projects-btn sc-projects-btn-sm"
+                        onClick={() => handleStatusOptionClick(project.id, option.status)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+              {statusErrors[project.id] && <div className="sc-projects-error">{statusErrors[project.id]}</div>}
             </li>
           ))}
         </ul>
@@ -858,6 +991,10 @@ const workspaceStyles = `
 .sc-projects-current-tag { font-size: ${typography.sizeXs}; color: ${colors.sageDeep}; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
 .sc-projects-row-meta { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; overflow-wrap: anywhere; }
 .sc-projects-row-actions { display: flex; flex-wrap: wrap; gap: ${spacing.sm}; margin-top: 4px; }
+.sc-projects-status-actions { display: flex; flex-wrap: wrap; gap: ${spacing.xs}; margin-top: 4px; }
+.sc-projects-status-confirm { background: ${colors.brickTint}; border-radius: ${radius.md}; padding: ${spacing.sm}; margin-top: 4px; display: flex; flex-direction: column; gap: ${spacing.xs}; align-items: flex-start; max-width: 420px; }
+.sc-projects-status-confirm p { margin: 0; font-size: ${typography.sizeXs}; color: ${colors.ink}; }
+.sc-projects-status-confirm-actions { display: flex; gap: ${spacing.xs}; }
 .sc-projects-row .sc-projects-btn { align-self: flex-start; text-decoration: none; display: inline-block; }
 
 .sc-projects-badge { display: inline-block; padding: 2px 8px; border-radius: ${radius.pill}; font-size: 10px; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }

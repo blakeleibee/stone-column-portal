@@ -370,6 +370,46 @@ export async function listProjectStaffAssignments(
   }));
 }
 
+/**
+ * Thin wrapper over change_project_status() (schema/017 —
+ * P3 owner-preview round 2, Task D1). The RPC is admin-only (enforced
+ * inside the function itself via is_org_admin_for_org() on the
+ * project's own org, same pattern as create_project_with_defaults())
+ * and delegates every transition-validity decision to
+ * enforce_project_status_transition() (schema/008, widened by
+ * schema/017) — this function does not duplicate that logic, it only
+ * normalizes the RPC's raw error into this repo's { error: string }
+ * convention, same as createProject/assignStaffToProject above.
+ *
+ * Deliberately does NOT call assertProjectNotArchived() first — unlike
+ * assignStaffToProject/revokeStaffAssignment/reactivateStaffAssignment,
+ * an archived project is exactly one of the valid states this function
+ * needs to transition INTO and OUT OF (active -> archived,
+ * archived -> active, archived -> closed_out), so "reject when the
+ * project is currently archived" would break this function's own
+ * purpose. The trigger's transition matrix is the only gate.
+ */
+export async function changeProjectStatus(
+  supabase: SupabaseClient,
+  projectId: string,
+  newStatus: ProjectStatus
+): Promise<{ error: string } | {}> {
+  const { error } = await supabase.rpc("change_project_status", {
+    p_project_id: projectId,
+    p_new_status: newStatus,
+  });
+  if (error) {
+    if (/Invalid project status transition/.test(error.message)) {
+      return { error: `That status change isn't allowed from the project's current status.` };
+    }
+    if (/Only an org admin/.test(error.message)) {
+      return { error: "Only an org admin can change a project's status." };
+    }
+    return { error: error.message };
+  }
+  return {};
+}
+
 export interface ProjectMemberRow {
   id: string;
   projectId: string;

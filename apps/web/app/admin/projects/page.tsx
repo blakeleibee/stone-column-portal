@@ -9,6 +9,7 @@ import { resolveSelectedProject } from "../../../src/server/project/resolveSelec
 import type { ProjectSwitcherData } from "../../../src/server/project/switcherDataAction";
 import { createProject } from "./createAction";
 import { switchProject } from "./switchAction";
+import { changeProjectStatus } from "./statusAction";
 
 /**
  * Real project list (Task 4) — replaces the previous stub, which
@@ -134,6 +135,7 @@ export default async function AdminProjectsPage({
         initialCreateOpen={searchParams.new === "1"}
         createProject={createProject}
         switchProject={switchProject}
+        changeProjectStatus={changeProjectStatus}
         activeProjectsHref="/admin/projects"
         completedProjectsHref="/admin/projects?view=completed"
         archivedProjectsHref="/admin/projects?view=archived"

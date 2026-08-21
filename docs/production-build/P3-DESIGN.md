@@ -334,9 +334,12 @@ before it reaches the raw CHECK constraint.
    self-referential subquery in a `WITH CHECK` clause entirely is the
    safer reading of the original author's warning). No `DELETE` policy
    is added — projects are never hard-deleted in this system
-   (`status='archived'` is the terminal state), matching every table's
-   own established archive-not-delete convention, and none existed
-   before this package either.
+   (`status='archived'` was originally the terminal state; schema/017
+   — owner-preview round 2, Task D1 — made `archived` reversible via
+   `archived -> active` / `archived -> closed_out`, but archival still
+   never *deletes* the row), matching every table's own established
+   archive-not-delete convention, and none existed before this package
+   either.
 
 8. **The last-selected project is stored in a plain cookie, set by a
    Server Action on every successful switch — never in `localStorage`,
@@ -359,10 +362,27 @@ before it reaches the raw CHECK constraint.
    with a separate, explicit "Completed / Archived" view (any role
    that could access the project can still open it in that view) —
    matching `enforce_project_status_transition`'s own treatment of
-   `archived` as terminal. Every write Server Action re-checks the
+   `archived` as read-only for every other table's write policies
+   (unchanged by schema/017). Every write Server Action re-checks the
    project's current `status` server-side before proceeding (never
    trusts that the UI hid the edit control), so a stale tab pointed at
    a since-archived project cannot mutate it.
+
+   **Amendment (owner-preview round 2, Task D1 — schema/017):** this
+   decision originally also treated `archived` as a *terminal* status
+   for `projects.status` itself, with no UI path to ever reach it and
+   no way back out. The owner's second preview round correctly flagged
+   both as real gaps, not polish: there was no control that actually
+   set `status='archived'`, and once set it could never be reversed.
+   schema/017 widens `enforce_project_status_transition()` to allow
+   `active -> archived` (direct), `archived -> active`, `archived ->
+   closed_out`, and `closed_out -> active`, and adds an admin-only
+   `change_project_status()` RPC that ProjectListWorkspace.tsx's row
+   actions call (behind an inline confirm step). This decision's
+   original point — archived projects stay read-only in every OTHER
+   table's write policies, and stay visible/switchable, just clearly
+   labeled — is unchanged; only `projects.status`'s own transition
+   matrix became reversible.
 
 10. **Direct links to an inaccessible, revoked-access, or nonexistent
     project all render the same explicit "You don't have access to

@@ -59,13 +59,25 @@ begin
   );
 end $$;
 
+-- NOTE: this used to assert active -> archived is rejected ("must go
+-- through closed_out first"). schema/017_project_status_reversible_
+-- lifecycle.sql (P3 owner-preview round 2) deliberately widened the
+-- trigger to allow active -> archived directly (plus three other new
+-- transitions) — see tests/sql/package_p3_project_status_reversible_
+-- lifecycle_tests.sql for full coverage of that change, including the
+-- regression proof that the widening didn't open anything broader than
+-- intended. This assertion is retargeted to active -> draft, which
+-- remains invalid under the widened matrix too, so it still proves
+-- "an arbitrary still-invalid transition from active is rejected"
+-- without leaving project_a archived for every later section/file in
+-- this run.
 select assert_raises(
   format(
     'update projects set status = %L where id = %L',
-    'archived',
+    'draft',
     (select value from test_fixture_ids where key = 'project_a')
   ),
-  'active -> archived must be rejected (must go through closed_out first)'
+  'active -> draft must be rejected (no such transition exists)'
 );
 
 reset role;

@@ -34,6 +34,7 @@ const FILES = [
   "schema/014_import_amount_canonicalization_and_audit_attribution.sql",
   "schema/015_commitments_bids_procurement.sql",
   "schema/016_project_staff_access_foundation.sql",
+  "schema/017_project_status_reversible_lifecycle.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",
@@ -41,6 +42,7 @@ const FILES = [
   "tests/sql/package_p5_commitments_bids_procurement_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
   "tests/sql/package_p3_project_staff_access_tests.sql",
+  "tests/sql/package_p3_project_status_reversible_lifecycle_tests.sql",
 ];
 
 // `schema/0NN_*.sql` is the single source of truth; `supabase/migrations/
