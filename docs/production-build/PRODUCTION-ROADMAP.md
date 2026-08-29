@@ -508,6 +508,42 @@ explicitly **not** part of P3 as redefined; see
 
 ---
 
+## Package P3.1 — Project Intake & Employee Handoff
+
+**Status: Design drafted, independently reviewed, awaiting owner
+approval as of 2026-08-26.** Not implemented. An amendment to P3's
+own project-creation screen — found while P3 sat at its owner-preview
+checkpoint — not a new standalone package number, matching the `P2.1`
+sub-package convention. Full design record:
+**`docs/production-build/P3.1-DESIGN.md`**, which supersedes this
+paragraph with exact schema/RLS/task detail; this entry exists only so
+P3.1 appears in the package sequence.
+
+Reframes P3's create-project screen from a contract-pricing form into a
+project-intake/handoff workflow: database-generated sequential project
+numbers (`SC-YYYY-###`, never typed or suggested by the browser);
+pricing/fee terms made fully optional at creation and movable to a new
+post-creation "Contract & Pricing Terms" step; a minimal required-field
+set at creation (name, type, optional primary contact, location or "not
+established," a short concept, optional staff); a new project-brief and
+site-information intake surface (concept/scope, property/permitting/
+utilities, target budget range explicitly labeled preliminary and
+non-contractual); a lightweight, informational-only decision-maker flag
+on the existing `project_clients` table (explicitly not a substitute for
+P7's real `project_decision_makers`/`CLIENT-APPROVAL-MODEL.md` work);
+handoff-note fields on `project_staff_assignments` (requested work,
+priority, due date, next action, instructions); and a revised,
+derived-status setup checklist. Documents storage remains deferred to P9
+(OneDrive/SharePoint) — this package adds no upload mechanism. Dependencies:
+P3 (design, not the `p3-complete` tag — the two are expected to land
+together). Explicit exclusions: same list as P3.1-DESIGN.md §11 —
+`project_decision_makers`, document upload, notification infrastructure,
+real permitting workflow, QuickBooks per-project connection, cost-code
+breakdown, leads-pipeline analytics, and a binding contract-amount concept
+all remain in their existing future packages, untouched.
+
+---
+
 ## Packages P4 and onward
 
 Each following package inherits the same required-field structure;
@@ -864,6 +900,60 @@ way.
 - **Dependencies:** P3.
 - **Exclusions:** No vendor-facing schedule confirmation UI yet (P11).
 
+### Package P9.5 — Application-Wide Product Design & UX Refinement
+
+**Status: Planned, not yet designed.** Positioned here — after the
+major day-to-day operational workflows (P5 Commitments/Bids, P6
+Billing/Draws, P7 Change Orders, P8 Selections, P9 Scheduling/Field
+Ops/Documents) are built and working end-to-end, and before the more
+peripheral roles and packages (P10–P14) that can then inherit a
+maturer design system — rather than after everything, per the owner's
+own placement instruction (2026-08-27).
+
+**Why this exists as its own package:** the shared design-system layer
+built during P3.1's visual-modernization pass
+(`packages/02-app-shell/src/components/ui/`, `docs/production-build/VISUAL-MODERNIZATION-PLAN.md`)
+was explicitly accepted as "a working visual foundation... clean enough
+to continue, but not the final product-quality design." The owner's
+own words: a deliberate, scoped opportunity to revisit visual/UX
+maturity once the core operational surface (P5–P9) exists to actually
+evaluate holistically, rather than continuously re-polishing a UI that
+is still growing new screens every package.
+
+**Standing constraint until this package runs** (owner instruction,
+2026-08-27, also recorded in `CLAUDE.md`): every package between now
+and P9.5 must reuse the existing shared design-system primitives
+(`Button`, `TextInput`/`Textarea`/`Select`/`Checkbox`, `FormField`/
+`FormGrid`, `Card`, `PageHeader`, `Badge`/`StatusBadge`, `Alert`,
+`EmptyState`, `Tabs`, `ProgressBar`, `ChecklistItem`, `MenuButton`) for
+every new screen — new screens must stay visually consistent,
+responsive, and accessible, but no package should spend discretionary
+effort on additional cosmetic polish beyond what's required for
+usability. Real usability problems (a confusing control, a genuine
+accessibility gap, an inconsistent height/spacing that actively harms
+scanning) are still worth fixing as part of whatever package touches
+that screen — this constraint is about discretionary redesign effort,
+not about tolerating real usability defects.
+
+**Expected scope (to be designed when this package starts):** a full
+audit of every screen built since the P3.1 modernization pass (P5–P9's
+own UI, plus anything P3.1 didn't reach), a genuine product-design pass
+(not just a component-consistency pass) informed by real usage of the
+now-complete operational workflows, and likely an expansion of the
+`ui/` primitive library itself (a `Table` primitive was repeatedly
+deferred during P3.1 for lack of one — every list/table screen since
+has used ad-hoc `<table>` markup restyled with tokens rather than a
+real shared primitive; this is a natural candidate for P9.5 to finally
+build).
+
+- **Dependencies:** P5, P6, P7, P8, P9 (the operational workflows this
+  package is meant to evaluate against).
+- **Exclusions:** No functional/architectural change — this is a
+  visual/UX package only, same boundary P3.1's own modernization pass
+  held (see `VISUAL-MODERNIZATION-PLAN.md`'s "Implementation boundary").
+  Does not redesign the accepted P3.1 visual direction (palette,
+  overall layout) from scratch — refines/completes it.
+
 ### Package P10 — Client Communication & Approvals (Conversations)
 
 - **Scope:** `conversation_threads`, `messages`; later, captured-email
@@ -1052,6 +1142,8 @@ P3 (real projects + vendor RLS foundation) ────────────�
  │      └─→ P8 (Selections & Allowances)
  │
  ├─→ P9 (Scheduling/Field Ops/Documents/RFIs/Meetings/Safety/Calendar)
+ │      └─→ P9.5 (Application-Wide Product Design & UX Refinement —
+ │             after P5–P9's operational workflows exist to evaluate)
  │
  └─→ P10 (Conversations + Email-to-Project Capture)
 

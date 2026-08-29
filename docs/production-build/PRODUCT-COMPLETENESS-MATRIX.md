@@ -78,7 +78,7 @@ Sources reviewed in full for this document: `PRODUCTION-ROADMAP.md`,
 | Historical pricing intelligence (avg/range/recent cost, source & confidence, per cost code/child) | Owner, PM, Accounting | P4.2 | Not yet designed | Recorded 2026-08-20; read-only analytical layer, no new source of truth — see `FINANCIAL-ARCHITECTURE.md` |
 | Tiered pricing (Value/Standard/Premium, per cost item) & estimate-generation suggestion engine | Owner, PM | P4.3 | Not yet designed | Recorded 2026-08-20; depends on P4.1's child-item granularity and P4.2's historical data |
 | Controlled QuickBooks budget/estimate export | Accounting, Owner | P4.4 | Not yet designed | Recorded 2026-08-20; QuickBooks Estimate-vs-Budget target explicitly deferred pending real QuickBooks evidence — see Section D |
-| Progressive, savable project-setup workflow (identity → estimate/budget → cost codes → selections → client/team → QuickBooks → schedule → documents) | Owner, PM | P3 (step 1 only) → P4.1/P4.3/P4.4/P8/P9 (remaining steps) | Step 1 live as of P3; remaining steps not built | See `PRODUCT-VISION.md` §3; P3's own setup checklist names future steps "coming later," never simulates them |
+| Progressive, savable project-setup workflow (identity/intake/handoff → brief & site info → estimate/budget → cost codes → selections → contract/pricing terms → QuickBooks → schedule → documents) | Owner, PM | P3+P3.1 (identity, intake, handoff, brief, site info, deferred pricing) → P4.1/P4.3/P4.4/P8/P9 (remaining steps) | P3.1 design drafted, not yet implemented; step 1 (identity only) live as of P3 | See `PRODUCT-VISION.md` §3 and `P3.1-DESIGN.md`; setup checklist names future steps "coming later," never simulates them |
 
 ### Procurement & commitments
 
@@ -181,7 +181,13 @@ the record of what was gapped and why stays intact):
    package assuming decision-maker enforcement exists (P7, P8) needs
    it built first. **Recommendation:** no action needed before P5
    continues; flag as a hard prerequisite check before P7 design
-   begins.
+   begins. **Note (P3.1 design, 2026-08-26):** `P3.1-DESIGN.md` proposes
+   an `is_decision_maker` boolean on `project_clients` — informational
+   only (tells staff who to ask), no approval authority, no
+   effective-dated history. This is explicitly not an early version of
+   this item's real model; P7 still needs to build
+   `project_decision_makers` from scratch, using the flagged rows as a
+   natural migration seed at most.
 
 Items intentionally **not** listed here because they're already
 correctly scoped to a later package rather than being foundation
