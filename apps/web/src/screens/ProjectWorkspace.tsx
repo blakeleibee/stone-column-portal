@@ -1,13 +1,22 @@
 "use client";
 
 import React, { useState } from "react";
-import { colors, spacing, radius, typography, touchTarget } from "../../../../packages/02-app-shell/src/design/tokens";
-import { projectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
+import { colors, radius, typography, touchTarget } from "../../../../packages/02-app-shell/src/design/tokens";
+import { projectMeta as demoProjectMeta } from "../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { formatCents } from "../../../../packages/01-financial-engine/src/money";
 import { AdminFinancialsScreen } from "../../../../packages/02-app-shell/src/screens/AdminFinancialsScreen";
 import type { AdminFinancialsViewModel } from "../../../../packages/02-app-shell/src/viewmodels/types";
 import { ScheduleRail } from "../components/ScheduleRail";
 import { Badge, statusTone, PhotoPlaceholder } from "../components/Badge";
+// `PageHeader`/`Tabs` are the shared ui/ primitives (styled once via
+// AppShell's own `uiStyles` injection — see AppShell.tsx) used across
+// every other modernized real screen (e.g. ProjectListWorkspace.tsx's
+// Active/Completed/Archived tabs). This file's own header/tab-nav CSS
+// (formerly `.sc-workspace-head`/`.sc-workspace-tabs`/`.sc-workspace-tab`
+// in a local <style>) is replaced by these primitives; the six tabs'
+// OWN inner content below is deliberately left alone (preview-only
+// fixture data, out of scope for this visual pass).
+import { PageHeader, Tabs } from "../../../../packages/02-app-shell/src/components/ui";
 import { SCHEDULE, SELECTIONS, DOCUMENTS, UPDATES, CONVERSATIONS } from "../data/sampleContent";
 
 export type ProjectTab = "overview" | "financials" | "schedule" | "selections" | "documents" | "updates" | "conversations";
@@ -22,29 +31,38 @@ const TABS: { key: ProjectTab; label: string }[] = [
   { key: "conversations", label: "Conversations" },
 ];
 
+/** Task 5: the only fields the header actually renders — deliberately
+ *  narrower than ProjectRow (or the fixture's projectMeta) so a caller
+ *  can pass either a real resolved ProjectRow or (in demo mode) the
+ *  fixture's projectMeta without adapting either shape. */
+export interface ProjectWorkspaceHeaderProject {
+  name: string;
+  address: string | null;
+}
+
 export function ProjectWorkspace({
   adminViewModel,
   initialTab,
+  project,
 }: {
   adminViewModel: AdminFinancialsViewModel;
   initialTab?: ProjectTab;
+  /** The resolved project whose name/address the header renders. Demo
+   *  callers keep passing the fixture's `projectMeta`; real-session
+   *  callers pass the project resolveSelectedProject() resolved. */
+  project: ProjectWorkspaceHeaderProject;
 }) {
   const [tab, setTab] = useState<ProjectTab>(initialTab ?? "overview");
 
   return (
     <div className="sc-workspace">
-      <header className="sc-workspace-head">
-        <h1>{projectMeta.name}</h1>
-        <p>{projectMeta.address}</p>
-      </header>
-
-      <nav className="sc-workspace-tabs" aria-label="Project sections">
-        {TABS.map((t) => (
-          <button key={t.key} className="sc-workspace-tab" data-active={tab === t.key} aria-current={tab === t.key ? "page" : undefined} onClick={() => setTab(t.key)}>
-            {t.label}
-          </button>
-        ))}
-      </nav>
+      <PageHeader title={project.name} subtitle={project.address}>
+        <Tabs
+          aria-label="Project sections"
+          activeKey={tab}
+          items={TABS.map((t) => ({ key: t.key, label: t.label, onClick: () => setTab(t.key) }))}
+        />
+      </PageHeader>
 
       <div className="sc-workspace-content">
         {tab === "overview" && <ProjectOverviewTab />}
@@ -55,14 +73,6 @@ export function ProjectWorkspace({
         {tab === "updates" && <UpdatesTab isClient={false} />}
         {tab === "conversations" && <ConversationsTab />}
       </div>
-
-      <style>{`
-        .sc-workspace-head h1 { font-family: ${typography.fontFamilyDisplay}; font-weight: 500; font-size: ${typography.sizeXl}; margin: 0; color: ${colors.ink}; }
-        .sc-workspace-head p { color: ${colors.stoneDark}; margin: 4px 0 ${spacing.md} 0; font-size: 12.5px; }
-        .sc-workspace-tabs { display: flex; gap: 4px; overflow-x: auto; border-bottom: 1px solid ${colors.line}; margin-bottom: ${spacing.md}; padding-bottom: 2px; }
-        .sc-workspace-tab { flex-shrink: 0; min-height: ${touchTarget.minSize}; padding: 0 ${spacing.sm}; background: none; border: none; border-bottom: 2px solid transparent; color: ${colors.stoneDark}; font-size: 13px; white-space: nowrap; }
-        .sc-workspace-tab[data-active="true"] { color: ${colors.ink}; border-bottom-color: ${colors.sage}; font-weight: 600; }
-      `}</style>
     </div>
   );
 }
@@ -72,12 +82,19 @@ function PreviewTag({ label }: { label: string }) {
 }
 
 function ProjectOverviewTab() {
+  // Deliberately still the fixture's narrative copy, not the real
+  // project passed to the header above: this whole tab is explicitly
+  // marked preview-only ("Full scope... will live on this tab once
+  // Package 3 is built") — there is no real scope/allowance/closeout
+  // data behind it yet in any mode, so there is nothing real to thread
+  // through here. Only the header (name/address) reflects the real
+  // resolved project; see ProjectWorkspace's own prop doc comment.
   return (
     <div>
       <PreviewTag label="Package 3" />
       <p className="sc-tab-intro">
-        {projectMeta.name} is a custom home project for {projectMeta.clientNames}, currently in the{" "}
-        {projectMeta.phase.toLowerCase()} phase under a {projectMeta.pricingLabel.toLowerCase()} agreement. Full scope,
+        {demoProjectMeta.name} is a custom home project for {demoProjectMeta.clientNames}, currently in the{" "}
+        {demoProjectMeta.phase.toLowerCase()} phase under a {demoProjectMeta.pricingLabel.toLowerCase()} agreement. Full scope,
         allowances, and closeout tracking will live on this tab once Package 3 is built.
       </p>
       <div className="sc-card">
@@ -87,7 +104,15 @@ function ProjectOverviewTab() {
           detached studio. Currently in framing with dry-in targeted for late summer.
         </p>
       </div>
-      <style>{tabSharedStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{tabSharedStyles}</style> —
+          the same hydration-mismatch bug class already fixed elsewhere
+          in this app: tabSharedStyles interpolates
+          typography.fontFamilyDisplay, which contains literal
+          apostrophes ('Fraunces', Georgia), and React's plain-children
+          <style> rendering HTML-escapes them on the server while the
+          browser's raw-text <style> parsing never decodes them back,
+          producing a client/server text mismatch on every hydration. */}
+      <style dangerouslySetInnerHTML={{ __html: tabSharedStyles }} />
     </div>
   );
 }
@@ -111,7 +136,15 @@ function ScheduleTab() {
           ))}
         </div>
       </div>
-      <style>{tabSharedStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{tabSharedStyles}</style> —
+          the same hydration-mismatch bug class already fixed elsewhere
+          in this app: tabSharedStyles interpolates
+          typography.fontFamilyDisplay, which contains literal
+          apostrophes ('Fraunces', Georgia), and React's plain-children
+          <style> rendering HTML-escapes them on the server while the
+          browser's raw-text <style> parsing never decodes them back,
+          producing a client/server text mismatch on every hydration. */}
+      <style dangerouslySetInnerHTML={{ __html: tabSharedStyles }} />
     </div>
   );
 }
@@ -159,7 +192,15 @@ export function SelectionsTab({ isClient }: { isClient: boolean }) {
           );
         })}
       </div>
-      <style>{tabSharedStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{tabSharedStyles}</style> —
+          the same hydration-mismatch bug class already fixed elsewhere
+          in this app: tabSharedStyles interpolates
+          typography.fontFamilyDisplay, which contains literal
+          apostrophes ('Fraunces', Georgia), and React's plain-children
+          <style> rendering HTML-escapes them on the server while the
+          browser's raw-text <style> parsing never decodes them back,
+          producing a client/server text mismatch on every hydration. */}
+      <style dangerouslySetInnerHTML={{ __html: tabSharedStyles }} />
     </div>
   );
 }
@@ -186,7 +227,15 @@ export function DocumentsTab({ isClient }: { isClient: boolean }) {
           </div>
         ))}
       </div>
-      <style>{tabSharedStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{tabSharedStyles}</style> —
+          the same hydration-mismatch bug class already fixed elsewhere
+          in this app: tabSharedStyles interpolates
+          typography.fontFamilyDisplay, which contains literal
+          apostrophes ('Fraunces', Georgia), and React's plain-children
+          <style> rendering HTML-escapes them on the server while the
+          browser's raw-text <style> parsing never decodes them back,
+          producing a client/server text mismatch on every hydration. */}
+      <style dangerouslySetInnerHTML={{ __html: tabSharedStyles }} />
     </div>
   );
 }
@@ -215,7 +264,15 @@ export function UpdatesTab({ isClient }: { isClient: boolean }) {
           </div>
         </div>
       ))}
-      <style>{tabSharedStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{tabSharedStyles}</style> —
+          the same hydration-mismatch bug class already fixed elsewhere
+          in this app: tabSharedStyles interpolates
+          typography.fontFamilyDisplay, which contains literal
+          apostrophes ('Fraunces', Georgia), and React's plain-children
+          <style> rendering HTML-escapes them on the server while the
+          browser's raw-text <style> parsing never decodes them back,
+          producing a client/server text mismatch on every hydration. */}
+      <style dangerouslySetInnerHTML={{ __html: tabSharedStyles }} />
     </div>
   );
 }
@@ -237,7 +294,15 @@ export function ConversationsTab() {
           </div>
         ))}
       </div>
-      <style>{tabSharedStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{tabSharedStyles}</style> —
+          the same hydration-mismatch bug class already fixed elsewhere
+          in this app: tabSharedStyles interpolates
+          typography.fontFamilyDisplay, which contains literal
+          apostrophes ('Fraunces', Georgia), and React's plain-children
+          <style> rendering HTML-escapes them on the server while the
+          browser's raw-text <style> parsing never decodes them back,
+          producing a client/server text mismatch on every hydration. */}
+      <style dangerouslySetInnerHTML={{ __html: tabSharedStyles }} />
     </div>
   );
 }

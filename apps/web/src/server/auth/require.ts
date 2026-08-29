@@ -24,9 +24,12 @@ export async function requireRole(roles: AppRole[], client?: SupabaseLike): Prom
   return user;
 }
 
-/** Confirms the current user can access the given project — staff/admin
- *  org-wide, or client/vendor via their own project_members row —
- *  through a REAL query subject to RLS, not a JWT-claim shortcut. */
+/** Confirms the current user can access the given project — admin and
+ *  accounting/general staff org-wide, project_manager/superintendent
+ *  staff only when assigned via project_staff_assignments (schema/016,
+ *  P3 — no longer org-wide for those two staff_function values), or
+ *  client/vendor via their own project_members row — through a REAL
+ *  query subject to RLS, not a JWT-claim shortcut. */
 export async function requireProjectAccess(projectId: string, client?: SupabaseLike): Promise<AppUser> {
   const supabase = client ?? (await createServerSupabaseClient());
   const user = await requireAuthenticatedUser(supabase);

@@ -10,6 +10,8 @@
     "test": "tsx test/route_smoke.ts",
     "test:auth": "tsx test/auth_smoke.ts",
     "test:authz": "tsx test/authorization_unit.ts",
+    "test:project-service": "tsx test/projectService_unit.ts",
+    "test:project-intake-service": "tsx test/projectIntakeService_unit.ts",
     "test:estimate": "tsx test/estimate_actions_unit.ts",
     "test:import-parse": "tsx test/import_parse_unit.ts"
   },

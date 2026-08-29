@@ -6,6 +6,7 @@
  * Run with `npx tsx test/route_smoke.ts`.
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAdminVM, loadClientVM } from "../src/data/loadViewModels";
@@ -34,6 +35,47 @@ function buttonTagFor(html: string, textFragment: string): string | null {
   const openTagEnd = html.indexOf(">", openTagStart);
   if (openTagStart === -1 || openTagEnd === -1) return null;
   return html.slice(openTagStart, openTagEnd + 1);
+}
+
+/**
+ * Task 6 (P3) regression guard for Task 5's overview/financials fix —
+ * see this function's call sites below for the full "why a source-level
+ * check, not an HTTP one" reasoning. Confirms `fixtureIdentifiers` (the
+ * fixture bindings imported at the top of `filePath`, e.g.
+ * `demoProjectMeta`) are referenced ONLY inside the file's
+ * `if (isDemoMode()) { ... }` branch — i.e. the real (non-demo) code
+ * path that runs for an actual authenticated session cannot reach the
+ * fixture import at all, because it's lexically unreachable once that
+ * branch's block has returned. Brace-counts from the first `{` after
+ * `if (isDemoMode())` to find that block's matching `}`, then checks
+ * the fixture identifiers don't appear anywhere after it.
+ */
+function checkNoFixtureReferenceOutsideDemoBlock(filePath: string, fixtureIdentifiers: string[], label: string) {
+  const source = fs.readFileSync(filePath, "utf8");
+  const demoBlockStart = source.indexOf("if (isDemoMode())");
+  if (demoBlockStart === -1) {
+    throw new Error(`${label}: expected an "if (isDemoMode())" branch guarding fixture usage — found none in ${filePath}.`);
+  }
+  const braceStart = source.indexOf("{", demoBlockStart);
+  let depth = 0;
+  let i = braceStart;
+  for (; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") {
+      depth--;
+      if (depth === 0) break;
+    }
+  }
+  if (depth !== 0) {
+    throw new Error(`${label}: could not find the matching closing brace for its "if (isDemoMode())" block in ${filePath}.`);
+  }
+  const afterDemoBlock = source.slice(i + 1);
+  for (const id of fixtureIdentifiers) {
+    check(
+      `${label}'s real (non-demo) code path never references the fixture binding \`${id}\` (Task 5 fix, Task 6 regression guard)`,
+      !afterDemoBlock.includes(id)
+    );
+  }
 }
 
 function startServer(): ChildProcess {
@@ -116,10 +158,6 @@ async function main() {
     check("/admin/overview responds 200", overview.status === 200);
     check("/admin/overview shows the project name", overview.html.includes("Hawks Ridge"));
 
-    const projects = await getHtml("/admin/projects");
-    check("/admin/projects responds 200", projects.status === 200);
-    check("/admin/projects renders the project workspace tabs", projects.html.includes(">Financials<"));
-
     console.log("\n--- Financials figure comes from the real engine, not a hardcoded value ---");
     const financials = await getHtml("/admin/financials");
     check("/admin/financials responds 200", financials.status === 200);
@@ -185,6 +223,155 @@ async function main() {
     check(
       "/admin/bids redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
       (bidsRoute.status === 307 || bidsRoute.status === 308) && (bidsRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Task 4 (P3): AdminProjectsPage now always calls requireRole()
+    // regardless of DEMO_MODE, replacing the old stub that unconditionally
+    // rendered loadAdminVM()'s fixture project via ProjectWorkspace
+    // (ignoring DEMO_MODE entirely — the bug this task's brief flagged).
+    // Projects are org-scoped real data with no fixture-repository
+    // equivalent, same as /admin/import and /admin/bids above, so under
+    // this test's DEMO_MODE=true env with no real session cookie it must
+    // redirect to /login rather than render.
+    const projectsRoute = await getHtml("/admin/projects");
+    check(
+      "/admin/projects redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (projectsRoute.status === 307 || projectsRoute.status === 308) && (projectsRoute.location ?? "").endsWith("/login")
+    );
+
+    // final-review fix wave, Minor finding 5: the ?view=completed view
+    // (the distinct `status='closed_out'` list — Important finding 1's
+    // ProjectSwitcher fix is what made it reachable from the header) had
+    // no route_smoke coverage of its own; same shape as the base
+    // /admin/projects check above — requireRole() runs before the view
+    // query param is even read, so this only needs to prove the route
+    // still redirects to /login unauthenticated, same as every other
+    // real-backend-only screen in this file.
+    const projectsCompletedRoute = await getHtml("/admin/projects?view=completed");
+    check(
+      "/admin/projects?view=completed redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (projectsCompletedRoute.status === 307 || projectsCompletedRoute.status === 308) &&
+        (projectsCompletedRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/team is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Task 6 (P3): new per-project team-assignment screen, same
+    // real-backend-only shape as every block above — requireRole() runs
+    // before any project id is resolved, so an arbitrary path segment is
+    // enough to prove the route exists and is protected, without needing
+    // a real project id or a real authenticated session.
+    const teamRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/team");
+    check(
+      "/admin/projects/[id]/team redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (teamRoute.status === 307 || teamRoute.status === 308) && (teamRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/setup is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Owner-preview correction round (item 11): new post-create setup
+    // checklist route, same real-backend-only shape and same
+    // requireRole()-before-any-project-id-resolution guard as
+    // /admin/projects/[id]/team above — an arbitrary path segment is
+    // enough to prove the route exists and is protected, without needing
+    // a real project id or a real authenticated session.
+    const setupRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/setup");
+    check(
+      "/admin/projects/[id]/setup redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (setupRoute.status === 307 || setupRoute.status === 308) && (setupRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/contacts is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // P3.1 Task 6: new per-project contacts-management screen
+    // (project_clients homeowners/decision-makers/professional
+    // contacts), same real-backend-only shape and same
+    // requireRole()-before-any-project-id-resolution guard as
+    // /admin/projects/[id]/team and /setup above — an arbitrary path
+    // segment is enough to prove the route exists and is protected,
+    // without needing a real project id or a real authenticated
+    // session.
+    const contactsRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/contacts");
+    check(
+      "/admin/projects/[id]/contacts redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (contactsRoute.status === 307 || contactsRoute.status === 308) && (contactsRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/pricing is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // P3.1 Task 8: new per-project "Contract & Pricing Terms" screen
+    // (calls set_project_fee_terms()), same real-backend-only shape and
+    // same requireRole()-before-any-project-id-resolution guard as
+    // /admin/projects/[id]/team, /setup, and /contacts above — an
+    // arbitrary path segment is enough to prove the route exists and is
+    // protected, without needing a real project id or a real
+    // authenticated session.
+    const pricingRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/pricing");
+    check(
+      "/admin/projects/[id]/pricing redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (pricingRoute.status === 307 || pricingRoute.status === 308) && (pricingRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/brief is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // P3.1 Task 5: new per-project intake screen — "Concept & Scope"
+    // (project_briefs + projects.phase/start_date/target_completion_date)
+    // and "Property & Site Info" (project_site_info), reached via
+    // /admin/projects/[id]/brief (default tab) and
+    // /admin/projects/[id]/brief?tab=site-info. Same real-backend-only
+    // shape and same requireRole()-before-any-project-id-resolution
+    // guard as /admin/projects/[id]/team, /setup, /contacts, and
+    // /pricing above — an arbitrary path segment is enough to prove both
+    // URLs exist and are protected, without needing a real project id or
+    // a real authenticated session.
+    const briefRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/brief");
+    check(
+      "/admin/projects/[id]/brief (Concept & Scope) redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (briefRoute.status === 307 || briefRoute.status === 308) && (briefRoute.location ?? "").endsWith("/login")
+    );
+    const siteInfoRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/brief?tab=site-info");
+    check(
+      "/admin/projects/[id]/brief?tab=site-info (Property & Site Info) redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (siteInfoRoute.status === 307 || siteInfoRoute.status === 308) && (siteInfoRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log(
+      "\n--- Regression guard (Task 6): /admin/overview and /admin/financials no longer render the fixture project's name in a real session ---"
+    );
+    // Task 5 fixed both pages to stop unconditionally rendering
+    // loadAdminVM()'s hardcoded Hawks Ridge fixture in a real session
+    // (they now branch on isDemoMode() and only use the fixture inside
+    // that branch), but added no regression guard for it. The natural
+    // HTTP-level guard — fetch the route under a real authenticated
+    // session and assert "Hawks Ridge" is absent — is not achievable in
+    // THIS harness: unlike the DEMO_MODE=true checks above (which
+    // legitimately assert the fixture DOES render — that's demo mode's
+    // own contract), there is no mechanism anywhere in this test suite
+    // (see auth_smoke.ts, which only ever proves unauthenticated
+    // requests redirect) for establishing a real, non-demo, authenticated
+    // Supabase session — no seeded test user, no login flow driven here.
+    // Faking that with a stubbed session would test the stub, not the
+    // app. The honest, achievable substitute: statically prove the real
+    // (non-demo) code path in each page's own source can never reach the
+    // fixture import in the first place (see
+    // checkNoFixtureReferenceOutsideDemoBlock above) — a real session
+    // literally cannot render "Hawks Ridge" because the only code that
+    // reads `demoProjectMeta`/`demoExpenses` is lexically inside the
+    // `if (isDemoMode())` block, unreachable once DEMO_MODE is false.
+    checkNoFixtureReferenceOutsideDemoBlock(
+      path.join(APP_DIR, "app/admin/overview/page.tsx"),
+      // "loadAdminVM(" (with the trailing paren, so it doesn't
+      // false-positive against loadAdminVMFor(...)) is the actual
+      // original Task 5 bug, not just the fixture bindings: the real
+      // (non-demo) path used to call the zero-arg, fixture-backed
+      // loadAdminVM() unconditionally instead of
+      // loadAdminVMFor(project.id, repo). A future edit reverting that
+      // one call site back to loadAdminVM() would reintroduce the bug
+      // without ever touching demoProjectMeta/demoExpenses, so it needs
+      // its own check, not just the fixture identifiers.
+      ["demoProjectMeta", "demoExpenses", "loadAdminVM("],
+      "/admin/overview"
+    );
+    checkNoFixtureReferenceOutsideDemoBlock(
+      path.join(APP_DIR, "app/admin/financials/page.tsx"),
+      ["demoProjectMeta", "loadAdminVM("],
+      "/admin/financials"
     );
 
     console.log("\n--- Every client route responds 200, correctly labeled ---");

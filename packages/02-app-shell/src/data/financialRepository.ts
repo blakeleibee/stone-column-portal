@@ -86,7 +86,14 @@ export interface FinancialRepository {
   getExpenses(projectId: string): Promise<Expense[]>;
   getCommittedCosts(projectId: string): Promise<CommittedCost[]>;
   getForecastEntries(projectId: string): Promise<ForecastEntry[]>;
-  getFeeRule(projectId: string): Promise<FeeRule>;
+  /** `null` means the project genuinely has no active fee rule yet — a
+   *  project may legitimately exist with pricing "to be determined"
+   *  (P3.1 makes fee terms optional at creation; see
+   *  buildAdminFinancialsViewModel.ts for how this flows into
+   *  AdminFinancialsViewModel.feeSummary). Never throw for "zero rows";
+   *  a real error (RLS denial, network failure, etc.) should still
+   *  reject the promise as before. */
+  getFeeRule(projectId: string): Promise<FeeRule | null>;
   getFeeLedgerEntries(projectId: string): Promise<FeeLedgerEntry[]>;
 
   /** Independently-sourced control total for reconciliation — e.g. a

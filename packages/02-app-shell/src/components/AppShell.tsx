@@ -1,8 +1,12 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { colors, spacing, radius, typography, touchTarget } from "../design/tokens";
+import { colors, spacing, radius, typography, touchTarget, shadow } from "../design/tokens";
 import { AppRole, NavItem, navForRole, clientMoreNav } from "../nav/navigation";
+import { ProjectSwitcher } from "./ProjectSwitcher";
+import { Button } from "./ui/Button";
+import { uiStyles } from "./ui/styles";
+import type { ProjectRow } from "../services/projectService";
 
 const LOGO_SRC = "/assets/logo.jpg";
 
@@ -41,12 +45,36 @@ function IconPlaceholder({ name }: { name: string }) {
   );
 }
 
+/**
+ * Task 4: the data + mutation ProjectSwitcher needs, threaded through as
+ * one optional prop bundle rather than several loose ones. Optional
+ * (not required) so every existing caller/test that doesn't supply it
+ * (render_smoke.tsx, ClientChrome.tsx) keeps rendering exactly as
+ * before — the header simply falls back to the old plain `projectName`
+ * text when this is absent. When present, it REPLACES that plain text
+ * (ProjectSwitcher itself shows the current project's name + badge), so
+ * a caller should pass one or the other, not rely on both rendering
+ * together.
+ */
+export interface AppShellProjectSwitcherProps {
+  currentProject: ProjectRow | null;
+  otherProjects: ProjectRow[];
+  hasArchivedProjects: boolean;
+  onSwitch: (projectId: string) => Promise<{ id: string } | { error: string }>;
+  isAdmin: boolean;
+  allProjectsHref: string;
+  completedProjectsHref: string;
+  archivedProjectsHref: string;
+  createProjectHref: string;
+}
+
 export interface AppShellProps {
   role: AppRole;
   activeKey: string;
   onNavigate: (key: string) => void;
   userName: string;
   projectName?: string;
+  projectSwitcher?: AppShellProjectSwitcherProps;
   isPreviewingAsClient?: boolean;
   onExitPreview?: () => void;
   children: React.ReactNode;
@@ -60,6 +88,7 @@ export function AppShell({
   onNavigate,
   userName,
   projectName,
+  projectSwitcher,
   isPreviewingAsClient,
   onExitPreview,
   children,
@@ -116,15 +145,24 @@ export function AppShell({
             <span className="sc-preview-banner-short">Client preview</span>
             <span className="sc-preview-banner-long"> — Exit preview to return to your admin view.</span>
           </span>
-          <button className="sc-preview-exit" onClick={onExitPreview}>
+          <Button
+            className="sc-preview-exit"
+            variant="secondary"
+            size="sm"
+            onClick={onExitPreview}
+          >
             Exit preview
-          </button>
+          </Button>
         </div>
       )}
 
       <header className="sc-topbar">
         <div className="sc-topbar-brand">
-          {projectName && <span className="sc-topbar-project">{projectName}</span>}
+          {projectSwitcher ? (
+            <ProjectSwitcher {...projectSwitcher} />
+          ) : (
+            projectName && <span className="sc-topbar-project">{projectName}</span>
+          )}
         </div>
         <div className="sc-topbar-user">
           {role === "admin" && !isPreviewingAsClient ? (
@@ -230,7 +268,49 @@ export function AppShell({
         </div>
       )}
 
-      <style>{shellStyles}</style>
+      {/* dangerouslySetInnerHTML, not <style>{shellStyles}</style> — the
+          same hydration-mismatch class found and fixed in
+          BidPackageWorkspace.tsx (commit 565a615): shellStyles
+          interpolates typography.fontFamily, which contains literal
+          apostrophes ('Inter', 'Segoe UI'), and React's plain-children
+          <style> text escaping differs between server and client render
+          for that content. This was a latent, not-yet-reported instance
+          of the exact same bug in this exact file, fixed here while
+          already touching AppShell.tsx for Task 4. */}
+      <style dangerouslySetInnerHTML={{ __html: shellStyles }} />
+
+      {/* Application-wide visual modernization: the shared ui/ primitive
+          layer's stylesheet (Button, TextInput, FormField, Card, Badge,
+          MenuButton, ...), injected here because AppShell is the one
+          component every authenticated screen renders inside — this is
+          genuinely "once per page load," not once per component
+          instance, since AppShell itself is only ever mounted once per
+          page (it's the outermost wrapper every route renders through —
+          `apps/web/src/shell/AdminChrome.tsx` and `ClientChrome.tsx`,
+          the only two places in this repo that mount <AppShell>, each
+          render exactly one <AppShell> per page, never nested or
+          repeated within a single render tree).
+
+          Deliberately a SEPARATE <style> tag from shellStyles above,
+          not merged into one combined string:
+            - Smaller, safer diff — this task's only sanctioned edit to
+              an existing file is adding this one block; folding
+              shellStyles and uiStyles together would mean rewriting a
+              working, already-tested string instead of appending next
+              to it.
+            - Different lifecycles/ownership: shellStyles is this file's
+              own chrome (topbar/sidebar/drawer/nav) and changes only
+              when AppShell.tsx itself changes; uiStyles is the new
+              primitive layer, versioned and edited independently in
+              ui/styles.ts as primitives are added in later phases.
+              Keeping them separate means a future ui/ change never
+              risks re-triggering the exact fontFamily-apostrophe
+              hydration hazard the comment above this block documents by
+              re-touching shellStyles' own interpolation.
+            - Same dangerouslySetInnerHTML pattern as shellStyles (never
+              a raw <style>{...}</style> JSX child) for the identical
+              reason: uiStyles also interpolates typography.fontFamily. */}
+      <style dangerouslySetInnerHTML={{ __html: uiStyles }} />
     </div>
   );
 }
@@ -297,40 +377,50 @@ function NavButtonLight({ item, active, onNavigate }: { item: NavItem; active: b
 const shellStyles = `
 .sc-shell { font-family: ${typography.fontFamily}; color: ${colors.ink2}; background: ${colors.paper}; min-height: 100vh; display: flex; flex-direction: column; }
 
-.sc-preview-banner { background: ${colors.goldTint}; color: ${colors.gold}; padding: 8px ${spacing.md}; display: flex; justify-content: space-between; align-items: center; gap: ${spacing.sm}; font-size: ${typography.sizeSm}; }
-.sc-preview-banner-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-preview-banner { background: ${colors.goldTint}; color: ${colors.gold}; padding: 8px ${spacing.md}; display: flex; justify-content: space-between; align-items: center; gap: ${spacing.sm}; font-size: ${typography.sizeSm}; border-bottom: 1px solid ${colors.gold}; }
+.sc-preview-banner-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: ${typography.weightMedium}; }
 .sc-preview-banner-long { display: none; }
-.sc-preview-exit { background: none; border: 1px solid ${colors.gold}; border-radius: ${radius.sm}; padding: 4px 10px; color: ${colors.gold}; font-weight: ${typography.weightMedium}; min-height: ${touchTarget.minSize}; }
+.sc-preview-exit { flex-shrink: 0; }
 
-.sc-topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid ${colors.line}; background: ${colors.white}; }
+.sc-topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid ${colors.line}; background: ${colors.white}; box-shadow: ${shadow.sm}; position: relative; z-index: 5; }
 .sc-topbar-project { font-size: ${typography.sizeSm}; color: ${colors.ink2}; }
 .sc-topbar-user { font-size: 11.5px; color: ${colors.stoneDark}; display: none; }
 .sc-topbar-preview-hint { color: ${colors.stoneDark}; }
-.sc-topbar-menu-trigger { display: inline-flex; min-width: ${touchTarget.minSize}; min-height: ${touchTarget.minSize}; align-items: center; justify-content: center; background: none; border: none; }
+.sc-topbar-menu-trigger { display: inline-flex; min-width: ${touchTarget.minSize}; min-height: ${touchTarget.minSize}; align-items: center; justify-content: center; background: none; border: none; border-radius: ${radius.sm}; transition: background-color 0.15s ease; }
+.sc-topbar-menu-trigger:hover { background: ${colors.paperDim}; }
+.sc-topbar-menu-trigger:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: -2px; }
 
 .sc-body { display: flex; flex: 1; min-width: 0; }
 .sc-content { flex: 1; min-width: 0; padding: 20px; padding-bottom: 80px; max-width: 1180px; }
 
 .sc-sidebar { display: none; }
 
-.sc-nav-item { display: flex; align-items: center; gap: ${spacing.sm}; min-height: ${touchTarget.minSize}; padding: 0 10px; background: none; border: none; border-radius: 6px; color: #B7BAC0; font-size: ${typography.sizeSm}; text-align: left; font-weight: 500; }
-.sc-nav-item[data-active="true"] { background: ${colors.inkSoft}; color: ${colors.white}; font-weight: 600; }
+.sc-nav-item { display: flex; align-items: center; gap: ${spacing.sm}; min-height: ${touchTarget.minSize}; padding: 0 10px; background: none; border: none; border-radius: 6px; color: #B7BAC0; font-size: ${typography.sizeSm}; text-align: left; font-weight: 500; box-shadow: inset 0 0 0 0 ${colors.gold}; transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease; }
+.sc-nav-item:hover:not([data-active="true"]) { background: rgba(255,255,255,0.06); color: ${colors.white}; }
+.sc-nav-item[data-active="true"] { background: ${colors.inkSoft}; color: ${colors.white}; font-weight: 600; box-shadow: inset 3px 0 0 0 ${colors.gold}; }
+.sc-nav-item:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: -2px; }
 .sc-nav-item--vertical { width: 100%; margin-bottom: 2px; }
 .sc-nav-item--light { color: ${colors.ink2}; }
-.sc-nav-item--light[data-active="true"] { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
+.sc-nav-item--light:hover:not([data-active="true"]) { background: ${colors.paperDim}; color: ${colors.ink}; }
+.sc-nav-item--light[data-active="true"] { background: ${colors.sageTint}; color: ${colors.sageDeep}; box-shadow: inset 3px 0 0 0 ${colors.sage}; }
 
-.sc-bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-around; background: ${colors.white}; border-top: 1px solid ${colors.line}; padding: 4px 0; z-index: 10; }
-.sc-nav-item--horizontal { flex-direction: column; gap: 2px; min-width: ${touchTarget.minSize}; font-size: 10.5px; background: none; border: none; color: ${colors.stoneDark}; }
-.sc-nav-item--horizontal[data-active="true"] { color: ${colors.sageDeep}; background: none; font-weight: 600; }
+.sc-bottom-nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: space-around; background: ${colors.white}; border-top: 1px solid ${colors.line}; box-shadow: 0 -2px 8px rgba(34,38,43,0.06); padding: 4px 0; z-index: 10; }
+.sc-nav-item--horizontal { flex-direction: column; gap: 2px; min-width: ${touchTarget.minSize}; font-size: 10.5px; background: none; border: none; color: ${colors.stoneDark}; box-shadow: none; }
+.sc-nav-item--horizontal:hover:not([data-active="true"]) { color: ${colors.ink2}; background: none; }
+.sc-nav-item--horizontal[data-active="true"] { color: ${colors.sageDeep}; background: none; font-weight: 600; box-shadow: none; }
+.sc-nav-item--horizontal:focus-visible { outline-offset: -1px; }
 
 .sc-overlay { position: fixed; inset: 0; z-index: 50; display: flex; }
 .sc-overlay-backdrop { position: absolute; inset: 0; background: rgba(34,38,43,0.5); }
-.sc-drawer { position: relative; width: 240px; max-width: 82vw; background: ${colors.ink}; height: 100%; padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.sc-drawer { position: relative; width: 240px; max-width: 82vw; background: ${colors.ink}; height: 100%; padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; box-shadow: ${shadow.lg}; }
 .sc-drawer-brand { padding: 0 6px 14px; }
-.sc-sheet { position: relative; margin-top: auto; width: 100%; background: ${colors.white}; border-radius: ${radius.lg} ${radius.lg} 0 0; padding: ${spacing.md}; display: flex; flex-direction: column; gap: 2px; }
+.sc-sheet { position: relative; margin-top: auto; width: 100%; background: ${colors.white}; border-radius: ${radius.lg} ${radius.lg} 0 0; padding: ${spacing.md}; display: flex; flex-direction: column; gap: 2px; box-shadow: ${shadow.lg}; }
 .sc-overlay-head { display: flex; justify-content: space-between; align-items: center; padding: 0 6px ${spacing.sm}; font-weight: ${typography.weightSemibold}; color: ${colors.paper}; }
 .sc-sheet .sc-overlay-head { color: ${colors.ink}; }
-.sc-overlay-close { background: none; border: none; font-size: 20px; min-width: ${touchTarget.minSize}; min-height: ${touchTarget.minSize}; color: inherit; }
+.sc-overlay-close { background: none; border: none; border-radius: ${radius.sm}; font-size: 20px; min-width: ${touchTarget.minSize}; min-height: ${touchTarget.minSize}; color: inherit; transition: background-color 0.15s ease; }
+.sc-overlay-close:hover { background: rgba(255,255,255,0.08); }
+.sc-sheet .sc-overlay-close:hover { background: ${colors.paperDim}; }
+.sc-overlay-close:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: -2px; }
 
 .sc-sidebar-brand { padding: 0 6px 18px; border-bottom: 1px solid ${colors.inkSoft}; margin-bottom: 14px; }
 .sc-sidebar-logo { width: 100%; height: auto; display: block; margin-bottom: 10px; border-radius: 4px; }
@@ -341,7 +431,7 @@ const shellStyles = `
   .sc-topbar-menu-trigger { display: none; }
   .sc-topbar { padding: 14px 32px; }
   .sc-preview-banner-long { display: inline; }
-  .sc-sidebar { display: flex; flex-direction: column; width: 228px; flex-shrink: 0; padding: 22px 16px; background: ${colors.ink}; }
+  .sc-sidebar { display: flex; flex-direction: column; width: 228px; flex-shrink: 0; padding: 22px 16px; background: ${colors.ink}; border-right: 1px solid ${colors.inkSoft}; }
   .sc-sidebar-nav { flex: 1; }
   .sc-content { padding: 28px 32px 60px; }
   .sc-bottom-nav { display: none; }

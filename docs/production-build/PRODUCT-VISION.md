@@ -1,12 +1,17 @@
 # Stone Column Portal — Product Vision
 
-**Status: DRAFT.** Produced at the owner's request as a candidate
-permanent north-star document. Not yet approved. Do not treat this as
-a binding project instruction, and do not cite it as settled policy in
-any future package design, until the owner has reviewed it and the
-open reconciliation items at the bottom of this document are resolved.
-Once approved, this document should be referenced from `CLAUDE.md`
-alongside the other `docs/production-build/` standing records.
+**Status: Approved in principle (2026-08-19).** This is now a
+permanent standing record, referenced from `CLAUDE.md` alongside the
+other `docs/production-build/` documents. The open reconciliation
+items originally listed below are resolved as of this revision: the
+create/select/switch-project gap is being actively closed by
+`docs/production-build/P3-DESIGN.md` ("Project & Staff Access
+Foundation," pulled forward ahead of P5 Task 7); the P2/P3
+specification gap is closed by that same document; `staff_function`
+differentiation is designed there too, pending its own independent
+review and owner approval before implementation. Amendments from here
+require the same explicit-approval bar as any other architecture
+document (§9).
 
 This document is the **permanent, durable statement of what the
 portal is for.** It changes rarely and only with explicit owner
@@ -72,27 +77,50 @@ project*. That means, as a permanent product requirement:
   its pricing/fee terms, and build its estimate as part of getting it
   underway.
 - No user is ever trapped in seeded demo data or permanently pointed
-  at a single hard-coded project. (This is a currently-unmet
-  requirement as of this document's drafting — see §9, Foundation Gap 1.)
+  at a single hard-coded project. (Real, live as of P3 — see
+  `PRODUCT-COMPLETENESS-MATRIX.md` for current implementation status.)
+- **Project setup is progressive, not all-or-nothing.** Creating a
+  project begins a multi-step setup a user can save and return to
+  without finishing everything at once — identity, then estimate/
+  budget, cost codes and project-specific subcategories, specifications/
+  selections, client and team, QuickBooks connection, schedule, and
+  documents. Each step belongs to whichever package owns that domain
+  (see `PRODUCTION-ROADMAP.md`'s P3/P4.1/P4.3/P4.4/P8/P9 sections for
+  exactly which package builds which step) — no package pretends a
+  future step already works. A setup checklist may name a step "coming
+  later"; it must never simulate a workflow that isn't real yet.
 
 ## 4. Source of truth discipline
 
-QuickBooks Desktop remains the **system of record for accounting
-transactions.** The portal does not compete with it, replace it, or
-maintain a second books-of-record. Instead the portal provides:
+**The portal — not QuickBooks — is the source of truth for
+estimating and budgeting**: original and revised estimates, allowances,
+detailed cost-code breakdowns (a canonical parent code plus
+project-specific child items), commitments, forecasts, and projected
+final cost. **QuickBooks Desktop Enterprise Contractor remains the
+source of truth for accounting**: bills, checks, credit cards, payroll,
+invoices, payments, and actual job costs. The portal does not compete
+with QuickBooks on accounting, replace it, or maintain a second
+books-of-record — and QuickBooks does not become a second place a
+budget can be edited.
 
-- Controlled, reviewed, one-way synchronization of QuickBooks data
-  into the portal's own construction-management ledger (via the
-  import/mapping/reconciliation pipeline — see `FINANCIAL-ARCHITECTURE.md`).
-- The construction-management detail QuickBooks was never designed to
-  hold: commitments, bids, procurement, schedules, selections, change
-  orders, client/vendor communication, and the day-to-day operational
-  record of the job.
-- A single, explicit, documented answer to **"what is the source of
-  truth for this piece of information"** for every data type the
-  portal touches — QuickBooks for posted accounting transactions, the
-  portal's own append-only ledger for everything derived or
-  construction-specific, never both, never silently duplicated.
+Money moves both directions, each for a different reason, neither ever
+live/automatic:
+
+- **QuickBooks → portal**: actual costs, reviewed and confirmed by
+  staff before they post (the existing import pipeline).
+- **Portal → QuickBooks**: an *approved* budget/estimate snapshot,
+  exported to the mapped QuickBooks Customer:Job so QuickBooks'
+  own reporting reflects the portal's numbers without anyone retyping
+  them — never a draft, never silently overwritten in either direction.
+
+Beyond that boundary, the portal also holds the construction-management
+detail QuickBooks was never designed for: commitments, bids,
+procurement, schedules, selections, change orders, client/vendor
+communication, and the day-to-day operational record of the job. Every
+data type the portal touches has a single, explicit, documented answer
+to **"what is the source of truth for this"** — see
+`FINANCIAL-ARCHITECTURE.md` for the full accounting of which system
+owns which fact.
 
 Where practical, the portal eliminates duplicate entry — staff should
 never have to type the same fact into two systems when one can supply
@@ -123,7 +151,12 @@ is the durable summary.
 - Client visibility requires both `published` status and an explicit
   visibility flag — never one alone. Billability is likewise explicit.
 - Suggested numbers are never official until a human accepts or edits
-  them.
+  them — this governs the estimating system's future use of historical
+  project data and reusable Value/Standard/Premium pricing tiers too: a
+  suggested price is always explainable (its sources, dates, and
+  adjustments shown), always owner-editable, and never silently applied
+  or auto-approved. Pricing tiers apply per cost item or specification,
+  never as a single whole-project multiplier.
 
 **Technical & security** (`TARGET-ARCHITECTURE.md`,
 `SECURITY-AND-PERMISSIONS-MATRIX.md`):
@@ -207,20 +240,17 @@ package currently in flight.
   conflict, the conflict is surfaced to the owner explicitly — neither
   document silently overrides the other.
 
-## Open reconciliation items — pending owner decision
+## Status of items this vision originally flagged as unresolved
 
 This vision was drafted by reviewing the full existing document set,
-and that review surfaced real gaps and documentation conflicts that
-should be resolved before this document is adopted as permanent. They
-are not restated here in full — see
-`docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md`, sections
-**"Foundation gaps to correct before P5 continues"** and
-**"Contradictions and documentation gaps requiring reconciliation."**
-In short: (1) no real create/select/switch-project workflow exists in
-production yet, which §3 above states as a firm requirement; (2) the
-new P0–P15 roadmap's P2/P3 sections are not yet fully specified the
-way every other package is; (3) staff-role differentiation
-(PM/Superintendent/Accounting) does not yet exist at the database
-level, which understates §5's isolation guarantee for those three
-roles today. None of these invalidate the vision — they are exactly
-the kind of gap this document exists to make visible.
+and that review surfaced real gaps that needed resolving before this
+document could be adopted as permanent. As of this revision: the
+create/select/switch-project gap (§3), the missing P2/P3 design
+specification, and the missing staff-role differentiation (§5) are all
+in active resolution via `docs/production-build/P3-DESIGN.md` — not
+yet implemented, but designed, independently reviewed for
+authorization/migration risk, and awaiting the owner's implementation
+go-ahead. `docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md`
+remains the living tracker for this and every other package's
+completeness status — consult it, not this document, for current
+implementation state.
