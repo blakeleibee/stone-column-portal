@@ -8,6 +8,8 @@ import { createServerSupabaseClient } from "../../../../../src/server/supabase/s
 import { SELECTED_PROJECT_COOKIE_NAME } from "../../../../../src/server/project/resolveSelectedProject";
 import type { ProjectSwitcherData } from "../../../../../src/server/project/switcherDataAction";
 import { listAccessibleProjects } from "../../../../../../../packages/02-app-shell/src/services/projectService";
+import { getProjectSetupChecklist } from "../../../../../../../packages/02-app-shell/src/services/projectIntakeService";
+import { switchProject } from "../../switchAction";
 
 /**
  * Owner-preview correction round, item 11: the screen a newly-created
@@ -21,6 +23,13 @@ import { listAccessibleProjects } from "../../../../../../../packages/02-app-she
  * same shape as every other /admin/projects/** route, so this always
  * requires a real authenticated admin/staff session regardless of
  * DEMO_MODE.
+ *
+ * P3.1 Task 7: now also fetches getProjectSetupChecklist(project.id) — the
+ * real, derived-status computation the revised ProjectSetupChecklist
+ * component renders (design §9) — and passes down the same switchProject
+ * Server Action /admin/projects/page.tsx already uses, needed for the
+ * "Preliminary estimating" link (see that component's own header comment
+ * for why that one link needs it and the others don't).
  */
 export default async function ProjectSetupPage({ params }: { params: { id: string } }) {
   const user = await requireRole(["admin", "staff"]);
@@ -55,12 +64,15 @@ export default async function ProjectSetupPage({ params }: { params: { id: strin
 
   // Consistency / belt-and-suspenders with team/page.tsx's own
   // archived-project guard (P3 owner-preview fix round 1): this route
-  // renders only links today (ProjectSetupChecklist takes no write
-  // Server Action props), so there is no live write reachable from here
-  // for an archived project — but blocking the render outright keeps
-  // this route's behavior consistent with the now-guarded team page
-  // rather than leaving it as the one remaining includeArchived: true
-  // detail route with no archived treatment at all.
+  // renders only links and a project-switch cookie action (the
+  // "Preliminary estimating" link's switchProject call, P3.1 Task 7 —
+  // that action only re-validates project access and sets the
+  // selected-project cookie, it doesn't mutate project data), so there
+  // is no live data write reachable from here for an archived project —
+  // but blocking the render outright keeps this route's behavior
+  // consistent with the now-guarded team page rather than leaving it as
+  // the one remaining includeArchived: true detail route with no
+  // archived treatment at all.
   if (project.status === "archived") {
     return (
       <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
@@ -74,9 +86,17 @@ export default async function ProjectSetupPage({ params }: { params: { id: strin
     );
   }
 
+  const checklist = await getProjectSetupChecklist(supabase, project.id);
+
   return (
     <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-      <ProjectSetupChecklist projectId={project.id} projectName={project.name} overviewHref="/admin/overview" />
+      <ProjectSetupChecklist
+        projectId={project.id}
+        projectName={project.name}
+        overviewHref="/admin/overview"
+        checklist={checklist}
+        switchProject={switchProject}
+      />
     </AdminChrome>
   );
 }

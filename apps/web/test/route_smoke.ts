@@ -280,6 +280,57 @@ async function main() {
       (setupRoute.status === 307 || setupRoute.status === 308) && (setupRoute.location ?? "").endsWith("/login")
     );
 
+    console.log("\n--- /admin/projects/[id]/contacts is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // P3.1 Task 6: new per-project contacts-management screen
+    // (project_clients homeowners/decision-makers/professional
+    // contacts), same real-backend-only shape and same
+    // requireRole()-before-any-project-id-resolution guard as
+    // /admin/projects/[id]/team and /setup above — an arbitrary path
+    // segment is enough to prove the route exists and is protected,
+    // without needing a real project id or a real authenticated
+    // session.
+    const contactsRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/contacts");
+    check(
+      "/admin/projects/[id]/contacts redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (contactsRoute.status === 307 || contactsRoute.status === 308) && (contactsRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/pricing is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // P3.1 Task 8: new per-project "Contract & Pricing Terms" screen
+    // (calls set_project_fee_terms()), same real-backend-only shape and
+    // same requireRole()-before-any-project-id-resolution guard as
+    // /admin/projects/[id]/team, /setup, and /contacts above — an
+    // arbitrary path segment is enough to prove the route exists and is
+    // protected, without needing a real project id or a real
+    // authenticated session.
+    const pricingRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/pricing");
+    check(
+      "/admin/projects/[id]/pricing redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (pricingRoute.status === 307 || pricingRoute.status === 308) && (pricingRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/projects/[id]/brief is reachable, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // P3.1 Task 5: new per-project intake screen — "Concept & Scope"
+    // (project_briefs + projects.phase/start_date/target_completion_date)
+    // and "Property & Site Info" (project_site_info), reached via
+    // /admin/projects/[id]/brief (default tab) and
+    // /admin/projects/[id]/brief?tab=site-info. Same real-backend-only
+    // shape and same requireRole()-before-any-project-id-resolution
+    // guard as /admin/projects/[id]/team, /setup, /contacts, and
+    // /pricing above — an arbitrary path segment is enough to prove both
+    // URLs exist and are protected, without needing a real project id or
+    // a real authenticated session.
+    const briefRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/brief");
+    check(
+      "/admin/projects/[id]/brief (Concept & Scope) redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (briefRoute.status === 307 || briefRoute.status === 308) && (briefRoute.location ?? "").endsWith("/login")
+    );
+    const siteInfoRoute = await getHtml("/admin/projects/00000000-0000-0000-0000-000000000000/brief?tab=site-info");
+    check(
+      "/admin/projects/[id]/brief?tab=site-info (Property & Site Info) redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (siteInfoRoute.status === 307 || siteInfoRoute.status === 308) && (siteInfoRoute.location ?? "").endsWith("/login")
+    );
+
     console.log(
       "\n--- Regression guard (Task 6): /admin/overview and /admin/financials no longer render the fixture project's name in a real session ---"
     );

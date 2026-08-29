@@ -26,7 +26,9 @@
  * supply where "back to my projects" should point.
  */
 import React from "react";
-import { colors, spacing, radius, typography } from "../design/tokens";
+import { spacing, typography } from "../design/tokens";
+import { Card } from "./ui/Card";
+import { EmptyState } from "./ui/EmptyState";
 
 export interface NoProjectAccessProps {
   /** Link back to the current user's own real accessible-project list
@@ -50,16 +52,27 @@ export interface NoProjectAccessProps {
 export function NoProjectAccess({ backHref, message, backLabel, heading }: NoProjectAccessProps) {
   return (
     <div className="sc-no-access">
-      <div className="sc-no-access-card">
-        <h2 className="sc-no-access-title">{heading ?? "You don’t have access to this project"}</h2>
-        <p className="sc-no-access-body">
-          {message ??
-            "This project doesn't exist, or you no longer have access to it. If you believe this is a mistake, contact your administrator."}
-        </p>
-        <a href={backHref} className="sc-no-access-link">
-          {backLabel ?? "Back to your projects"}
-        </a>
-      </div>
+      <Card className="sc-no-access-card">
+        <EmptyState
+          title={heading ?? "You don’t have access to this project"}
+          description={
+            message ??
+            "This project doesn't exist, or you no longer have access to it. If you believe this is a mistake, contact your administrator."
+          }
+          action={
+            // Reuses the shared Button primitive's own visual classes
+            // directly (rather than the Button component itself, which
+            // only renders a <button>) — this is real cross-page
+            // navigation, so it must stay a genuine <a href>, not a
+            // client-side click handler. The classes are plain CSS
+            // selectors (see ui/styles.ts's `.sc-ui-btn`), so applying
+            // them to an anchor gets byte-identical styling for free.
+            <a href={backHref} className="sc-ui-btn sc-ui-btn-primary">
+              {backLabel ?? "Back to your projects"}
+            </a>
+          }
+        />
+      </Card>
       <style dangerouslySetInnerHTML={{ __html: noAccessStyles }} />
     </div>
   );
@@ -67,9 +80,5 @@ export function NoProjectAccess({ backHref, message, backLabel, heading }: NoPro
 
 const noAccessStyles = `
 .sc-no-access { display: flex; justify-content: center; padding: ${spacing.xxl} ${spacing.md}; font-family: ${typography.fontFamily}; }
-.sc-no-access-card { max-width: 420px; text-align: center; background: ${colors.white}; border: 1px solid ${colors.line}; border-radius: ${radius.lg}; padding: ${spacing.xl} ${spacing.lg}; }
-.sc-no-access-title { margin: 0 0 ${spacing.sm} 0; font-size: ${typography.sizeLg}; color: ${colors.ink}; }
-.sc-no-access-body { margin: 0 0 ${spacing.lg} 0; color: ${colors.ink2}; font-size: ${typography.sizeSm}; line-height: 1.5; }
-.sc-no-access-link { display: inline-block; padding: 9px 16px; border-radius: ${radius.sm}; background: ${colors.sage}; color: ${colors.white}; font-weight: ${typography.weightMedium}; font-size: ${typography.sizeSm}; text-decoration: none; }
-.sc-no-access-link:hover { background: ${colors.sageDeep}; }
+.sc-no-access-card { max-width: 420px; width: 100%; box-sizing: border-box; }
 `;

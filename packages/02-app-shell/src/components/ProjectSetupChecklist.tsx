@@ -1,41 +1,104 @@
 "use client";
 
 /**
- * `/admin/projects/[id]/setup` (owner-preview correction round, item 11)
- * — the landing screen right after a project is created. Replaces the
- * old create-project flow's plain "close the form and refresh the list"
- * ending: ProjectListWorkspace.tsx's handleCreateSubmit now switches to
- * the new project and navigates here instead.
+ * `/admin/projects/[id]/setup` — the landing screen right after a project
+ * is created, and a durable reference screen a staffer can come back to
+ * any time to see what's still outstanding on a project's intake.
  *
- * This is a lightweight progress checklist, not a wizard. "Project
- * identity" is marked done, and "Client and team" is a real, clickable
- * link to `/admin/projects/[id]/team` (Task 6, P3) — both genuinely
- * exist today. Every OTHER step (estimate/budget, cost codes, selections,
- * QuickBooks, schedule, documents) is explicitly, visibly inert ("Coming
- * later"): no link, no button, no click handler. Those steps really
- * don't exist yet as of P3 — they're scoped to later packages
- * (P4.1/P4.3/P4.4/P8/P9 per CLAUDE.md/PRODUCTION-ROADMAP.md).
+ * P3.1 Task 7: revises this component from its P3-era static two-item
+ * structure (one hardcoded "done" row, one real link, six hardcoded
+ * "Coming later" rows) to the full 11-item table in
+ * `docs/production-build/P3.1-DESIGN.md` §9, with every item's status
+ * derived from real data at read time via
+ * `getProjectSetupChecklist()` (`projectIntakeService.ts`) — never a
+ * separately stored flag that can drift out of sync, matching that
+ * function's own framing. This component only RENDERS the
+ * already-computed `ChecklistItemState` per item; it does no derivation
+ * of its own.
  *
- * The rule this component follows cuts both ways: never claim a step is
- * available when it isn't (the original brief's concern), and never
- * claim a step is "coming later" when it's actually already shipped and
- * working (the corrected reading here — an earlier draft of this
- * component got that second half backwards and labeled "Client and
- * team" as "Coming later" even though the team-management screen it
- * would point to was fully functional; that was itself a misleading
- * label, just in the opposite direction from the one the brief warned
- * about, so it's fixed here rather than left as a "judgment call").
+ * Visual modernization pass: the 11 rows and the overall completion
+ * indicator now render through the shared `ui/` primitives
+ * (`ChecklistItem`/`ProgressBar`/`Card`) built for exactly this screen,
+ * in place of this file's own hand-rolled `sc-setup-item`/`sc-setup-check`
+ * markup+CSS. This is a markup/styling change only — every behavioral
+ * distinction below (the three item kinds, the estimate-link
+ * switch-then-navigate sequencing, the derived-only progress count)
+ * is unchanged.
+ *
+ * Three item kinds, rendered three different ways (see
+ * `projectIntakeService.ts`'s own header comment for the full contract):
+ *   - `{kind:"derived"}` (7 items, including "Project identity," which is
+ *     always statically `"complete"`): a real, clickable link showing
+ *     Not started / In progress / Complete.
+ *   - `{kind:"available"}` (1 item — "Preliminary estimating," P4's
+ *     already-built, already-live estimate screen): a real, clickable
+ *     link with NO completion-status badge — there is no completeness
+ *     signal to derive one from, and showing a status here would imply a
+ *     precision this checklist doesn't have for this item. (This screen
+ *     still surfaces "Available"/"Opening…" as the control's own action
+ *     label, matching the original design — that's the control's state,
+ *     not a derived completion status.)
+ *   - `{kind:"coming_later"}` (3 items): genuinely inert — no href, no
+ *     onClick, `aria-disabled="true"` — exactly the pattern the P3-era
+ *     version of this file already used for its six placeholder items.
+ *
+ * "Preliminary estimating" is special-cased among the real links: unlike
+ * every other real link, `/admin/estimate` is not itself project-scoped
+ * by URL (verified by reading apps/web/app/admin/estimate/page.tsx) — it
+ * always renders whichever project resolveProjectAndSwitcherData() finds
+ * as "the current project" for the session (cookie-selected, or the
+ * first accessible one). This checklist screen, by contrast, always
+ * describes `projectId` from the URL, which is not guaranteed to be the
+ * cookie-selected project (e.g. a staffer viewing this page for a
+ * DIFFERENT project's setup than whichever one they last switched to).
+ * A plain `<a href="/admin/estimate">` here would silently show the
+ * WRONG project's estimate table in that case. So this one link switches
+ * the session to `projectId` first (via the same `switchProject` Server
+ * Action `ProjectSwitcher.tsx`/`ProjectListWorkspace.tsx` already use for
+ * exactly this "make the cookie agree with what the user is about to
+ * see" purpose) and only then navigates — not a new mechanism, the
+ * existing one applied to a spot that needed it.
  */
-import React from "react";
-import { colors, spacing, radius, typography } from "../design/tokens";
+import React, { useState } from "react";
+import { useRouter } from "next/navigation";
+import { colors, spacing, typography } from "../design/tokens";
+import { Card, ProgressBar, ChecklistItem } from "./ui";
+import type {
+  ProjectSetupChecklist as ProjectSetupChecklistData,
+  ChecklistDerivedStatus,
+} from "../services/projectIntakeService";
 
-const COMING_LATER_STEPS = [
-  "Estimate and budget",
-  "Cost codes and project-specific subcategories",
-  "Specifications/selections",
-  "QuickBooks connection",
-  "Schedule",
-  "Documents",
+const STATUS_LABELS: Record<ChecklistDerivedStatus, string> = {
+  not_started: "Not started",
+  in_progress: "In progress",
+  complete: "Complete",
+};
+
+interface ChecklistItemDef {
+  key: keyof ProjectSetupChecklistData;
+  label: string;
+  /** Present only for items with a real, project-scoped-by-URL link
+   *  (everything real except "Preliminary estimating," handled
+   *  separately below). */
+  href?: (projectId: string) => string;
+}
+
+// Order and labels match P3.1-DESIGN.md §9's table exactly, row by row.
+const ITEMS: ChecklistItemDef[] = [
+  { key: "projectIdentity", label: "Project identity" },
+  { key: "homeownersDecisionMakers", label: "Homeowners & decision-makers", href: (id) => `/admin/projects/${id}/contacts` },
+  { key: "conceptScope", label: "Concept & scope", href: (id) => `/admin/projects/${id}/brief` },
+  { key: "propertySiteInfo", label: "Property & site info", href: (id) => `/admin/projects/${id}/brief?tab=site-info` },
+  { key: "plansDocuments", label: "Plans & documents" },
+  { key: "staffResponsibilities", label: "Staff & responsibilities", href: (id) => `/admin/projects/${id}/team` },
+  { key: "preliminaryEstimating", label: "Preliminary estimating" },
+  // "Links into the site-info section's permitting group" (design §9) —
+  // same destination as "Property & site info," a narrower group of
+  // fields within the same form, not a separate route.
+  { key: "permitting", label: "Permitting", href: (id) => `/admin/projects/${id}/brief?tab=site-info` },
+  { key: "quickbooksConnection", label: "QuickBooks connection" },
+  { key: "contractPricingTerms", label: "Contract & pricing terms", href: (id) => `/admin/projects/${id}/pricing` },
+  { key: "schedule", label: "Schedule" },
 ];
 
 export interface ProjectSetupChecklistProps {
@@ -46,57 +109,128 @@ export interface ProjectSetupChecklistProps {
    *  ProjectListWorkspace.tsx's handleCreateSubmit), so this is a plain
    *  static href, not something this component resolves itself. */
   overviewHref: string;
+  /** Task 2's derived-status computation (getProjectSetupChecklist),
+   *  passed in already-resolved by the Server Component route — this
+   *  component never fetches or derives, only renders. */
+  checklist: ProjectSetupChecklistData;
+  /** Re-validates project access and sets the selected-project cookie
+   *  (same Server Action ProjectSwitcher.tsx/ProjectListWorkspace.tsx
+   *  use) — needed only for the "Preliminary estimating" link; see the
+   *  file header comment for why that one link can't be a plain href. */
+  switchProject: (projectId: string) => Promise<{ id: string } | { error: string }>;
 }
 
-export function ProjectSetupChecklist({ projectId, projectName, overviewHref }: ProjectSetupChecklistProps) {
+export function ProjectSetupChecklist({ projectId, projectName, overviewHref, checklist, switchProject }: ProjectSetupChecklistProps) {
+  const router = useRouter();
+  const [estimateSwitching, setEstimateSwitching] = useState(false);
+  const [estimateError, setEstimateError] = useState<string | null>(null);
+
+  async function handleGoToEstimate() {
+    if (estimateSwitching) return;
+    setEstimateError(null);
+    setEstimateSwitching(true);
+    try {
+      const result = await switchProject(projectId);
+      if ("error" in result) {
+        setEstimateError(result.error);
+        return;
+      }
+      router.push("/admin/estimate");
+    } finally {
+      setEstimateSwitching(false);
+    }
+  }
+
+  // Overall completion-progress indicator (design §3): counts only the
+  // `{kind:"derived"}` items (7 of 11 — "available"/"coming_later" items
+  // have no completion signal to count at all, so including them would
+  // make the denominator meaningless). "Project identity" is itself a
+  // `{kind:"derived"}` item (always "complete"), so it counts toward both
+  // the numerator and denominator here, same as every other derived item
+  // — it is a real, if trivial, completed section, not a special case.
+  const derivedItems = ITEMS.filter((item) => checklist[item.key].kind === "derived");
+  const completedCount = derivedItems.filter((item) => {
+    const state = checklist[item.key];
+    return state.kind === "derived" && state.status === "complete";
+  }).length;
+
   return (
     <div className="sc-setup-checklist">
-      <div className="sc-setup-card">
+      <Card className="sc-setup-card">
         <p className="sc-setup-eyebrow">Project created</p>
         <h2 className="sc-setup-title">{projectName}</h2>
         <p className="sc-setup-intro">
-          Here&rsquo;s what&rsquo;s set up so far, and what&rsquo;s coming as this portal grows. You can leave this page
-          any time — nothing here needs to be finished before you start working in the project.
+          Here&rsquo;s what&rsquo;s set up so far, and what&rsquo;s still outstanding. You can leave this page any time
+          — nothing here needs to be finished before you start working in the project.
         </p>
+        <ProgressBar
+          value={completedCount}
+          max={derivedItems.length}
+          label={`${completedCount} of ${derivedItems.length} sections complete`}
+          className="sc-setup-progress"
+        />
 
         <ul className="sc-setup-list">
-          <li className="sc-setup-item sc-setup-item-done">
-            <span className="sc-setup-check" aria-hidden="true">
-              ✓
-            </span>
-            <span className="sc-setup-item-label">Project identity</span>
-            <span className="sc-setup-item-status">Done</span>
-          </li>
-          {/* Real, working link (Task 6, P3) — not a "Coming later" row.
-              See the doc comment at the top of this file for why this one
-              step, alone among the seven the owner named, gets its own
-              treatment: it's already shipped and functional today, so
-              labeling it "Coming later" would be actively misleading in
-              the opposite direction from what the brief warned about. */}
-          <li className="sc-setup-item sc-setup-item-available">
-            <a href={`/admin/projects/${projectId}/team`} className="sc-setup-item-link">
-              <span className="sc-setup-check sc-setup-check-available" aria-hidden="true">
-                →
-              </span>
-              <span className="sc-setup-item-label">Client and team</span>
-              <span className="sc-setup-item-status sc-setup-item-status-available">Manage team</span>
-            </a>
-          </li>
-          {COMING_LATER_STEPS.map((step) => (
-            <li key={step} className="sc-setup-item sc-setup-item-inert" aria-disabled="true">
-              <span className="sc-setup-check sc-setup-check-inert" aria-hidden="true">
-                ○
-              </span>
-              <span className="sc-setup-item-label">{step}</span>
-              <span className="sc-setup-item-status sc-setup-item-status-inert">Coming later</span>
-            </li>
-          ))}
+          {ITEMS.map((item) => {
+            const state = checklist[item.key];
+
+            if (item.key === "preliminaryEstimating") {
+              // {kind:"available"} — a real, already-built, clickable
+              // feature (P4), but with no completeness signal of its own
+              // to derive a status badge from. Rendered via onClick (not
+              // href) because reaching it correctly requires the
+              // switch-then-navigate sequence above — see the file header
+              // comment.
+              return (
+                <React.Fragment key={item.key}>
+                  <ChecklistItem
+                    id="sc-setup-item-estimate"
+                    label={item.label}
+                    status="available"
+                    statusLabel={estimateSwitching ? "Opening…" : "Available"}
+                    onClick={handleGoToEstimate}
+                    disabled={estimateSwitching}
+                  />
+                  {estimateError && (
+                    <li className="sc-setup-item-error-row" role="alert">
+                      <p className="sc-setup-item-error">{estimateError}</p>
+                    </li>
+                  )}
+                </React.Fragment>
+              );
+            }
+
+            if (state.kind === "coming_later") {
+              return <ChecklistItem key={item.key} label={item.label} status="inert" statusLabel="Coming later" />;
+            }
+
+            // {kind:"derived"} — real, clickable link regardless of
+            // status (including "not_started": the point of a checklist
+            // is to click through and start it, not to hide the link
+            // until something exists). Every remaining item after the
+            // preliminaryEstimating/coming_later branches above really is
+            // "derived" (design §9's table has no other kind left), but
+            // TypeScript can't narrow that from `item.key` alone since
+            // `checklist[item.key]`'s type is the full ChecklistItemState
+            // union for every key — this guard makes the narrowing
+            // explicit instead of asserting past it.
+            if (state.kind !== "derived") return null;
+            const status = state.status;
+            const href = item.href ? item.href(projectId) : undefined;
+            // "Project identity" only: no href, always complete — a
+            // static summary row (design §9 row 1 — "Static summary,"
+            // matching the P3-era version's own "Project identity"
+            // treatment). ChecklistItem renders exactly this shape
+            // (check + label + status, no link/button wrapper) whenever
+            // neither href nor onClick is supplied.
+            return <ChecklistItem key={item.key} label={item.label} status={status} statusLabel={STATUS_LABELS[status]} href={href} />;
+          })}
         </ul>
 
-        <a href={overviewHref} className="sc-setup-continue">
+        <a href={overviewHref} className="sc-ui-btn sc-ui-btn-primary sc-setup-continue">
           Go to Overview
         </a>
-      </div>
+      </Card>
       <style dangerouslySetInnerHTML={{ __html: setupChecklistStyles }} />
     </div>
   );
@@ -104,27 +238,15 @@ export function ProjectSetupChecklist({ projectId, projectName, overviewHref }: 
 
 const setupChecklistStyles = `
 .sc-setup-checklist { display: flex; justify-content: center; padding: ${spacing.xl} ${spacing.md}; font-family: ${typography.fontFamily}; color: ${colors.ink}; }
-.sc-setup-card { width: 100%; max-width: 560px; background: ${colors.white}; border: 1px solid ${colors.line}; border-radius: ${radius.lg}; padding: ${spacing.xl} ${spacing.lg}; }
+.sc-setup-card { width: 100%; max-width: 560px; }
 .sc-setup-eyebrow { margin: 0 0 4px 0; font-size: ${typography.sizeXs}; font-weight: ${typography.weightSemibold}; text-transform: uppercase; letter-spacing: 0.04em; color: ${colors.sageDeep}; }
 .sc-setup-title { margin: 0 0 ${spacing.sm} 0; font-size: ${typography.sizeXl}; }
-.sc-setup-intro { margin: 0 0 ${spacing.lg} 0; color: ${colors.ink2}; font-size: ${typography.sizeSm}; line-height: 1.6; }
+.sc-setup-intro { margin: 0 0 ${spacing.md} 0; color: ${colors.ink2}; font-size: ${typography.sizeSm}; line-height: 1.6; }
+.sc-setup-progress { margin-bottom: ${spacing.lg}; }
 
 .sc-setup-list { list-style: none; margin: 0 0 ${spacing.xl} 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-.sc-setup-item { display: flex; align-items: center; gap: ${spacing.sm}; padding: ${spacing.sm} ${spacing.xs}; border-radius: ${radius.sm}; }
-.sc-setup-item-done { background: ${colors.sageTint}; }
-.sc-setup-check { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 999px; font-size: 13px; font-weight: ${typography.weightSemibold}; background: ${colors.sage}; color: ${colors.white}; flex-shrink: 0; }
-.sc-setup-check-inert { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
-.sc-setup-item-label { flex: 1; font-size: ${typography.sizeSm}; }
-.sc-setup-item-status { font-size: ${typography.sizeXs}; font-weight: ${typography.weightMedium}; color: ${colors.sageDeep}; text-transform: uppercase; letter-spacing: 0.02em; }
-.sc-setup-item-inert { opacity: 0.72; }
-.sc-setup-item-status-inert { color: ${colors.stoneDark}; }
+.sc-setup-item-error-row { list-style: none; }
+.sc-setup-item-error { margin: 4px ${spacing.xs} 0 ${spacing.xs}; font-size: ${typography.sizeXs}; color: ${colors.brick}; }
 
-.sc-setup-item-available { padding: 0; background: ${colors.paperDim}; }
-.sc-setup-item-link { display: flex; align-items: center; gap: ${spacing.sm}; width: 100%; padding: ${spacing.sm} ${spacing.xs}; border-radius: ${radius.sm}; text-decoration: none; color: inherit; box-sizing: border-box; }
-.sc-setup-item-link:hover { background: ${colors.sageTint}; }
-.sc-setup-check-available { background: ${colors.sage}; color: ${colors.white}; }
-.sc-setup-item-status-available { color: ${colors.sageDeep}; }
-
-.sc-setup-continue { display: inline-block; padding: 10px 20px; border-radius: ${radius.sm}; background: ${colors.sage}; color: ${colors.white}; font-weight: ${typography.weightMedium}; font-size: ${typography.sizeSm}; text-decoration: none; }
-.sc-setup-continue:hover { background: ${colors.sageDeep}; }
+.sc-setup-continue { width: fit-content; }
 `;

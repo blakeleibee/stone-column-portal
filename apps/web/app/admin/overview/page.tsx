@@ -7,6 +7,13 @@ import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
 import { projectMeta as demoProjectMeta, expenses as demoExpenses } from "../../../../../packages/01-financial-engine/fixtures/hawksRidge";
+import {
+  getMyActiveAssignmentForProject,
+  getProjectBriefForStaff,
+  getProjectSetupChecklist,
+} from "../../../../../packages/02-app-shell/src/services/projectIntakeService";
+import type { MyAssignmentCardData } from "../../../src/screens/AdminOverviewScreen";
+import type { StaffFunction } from "../../../../../packages/02-app-shell/src/services/projectService";
 
 export default async function AdminOverviewPage() {
   if (isDemoMode()) {
@@ -45,10 +52,32 @@ export default async function AdminOverviewPage() {
   // /admin/estimate/page.tsx already uses for its own repo reads, and it
   // avoids widening AdminFinancialsViewModel's shape (used by other
   // screens/tests) for one screen's "Recently Imported" list.
-  const [adminVM, realExpenses] = await Promise.all([
+  const [adminVM, realExpenses, myActiveAssignment] = await Promise.all([
     loadAdminVMFor(project.id, repo),
     repo.getExpenses(project.id),
+    // Task 9 (P3.1 design §8) — "Your assignment" card. Checked first,
+    // on its own, before fetching anything else the card needs (brief
+    // summary/staff_function/checklist): most sessions viewing this page
+    // (e.g. an admin who isn't personally staffed on the project) have
+    // no active assignment at all, and there's no reason to pay for 3
+    // more queries just to discover the card won't render.
+    getMyActiveAssignmentForProject(supabase, project.id),
   ]);
+
+  let myAssignment: MyAssignmentCardData | null = null;
+  if (myActiveAssignment) {
+    const [briefRow, checklist, profileResult] = await Promise.all([
+      getProjectBriefForStaff(supabase, project.id),
+      getProjectSetupChecklist(supabase, project.id),
+      supabase.from("profiles").select("staff_function").eq("id", user.id).maybeSingle(),
+    ]);
+    myAssignment = {
+      staffFunction: (profileResult.data?.staff_function as StaffFunction | null) ?? null,
+      briefSummary: briefRow?.summary ?? null,
+      assignment: myActiveAssignment,
+      checklist,
+    };
+  }
 
   // adminVM.projectMeta already carries real name/phase/pricingLabel/address
   // from SupabaseFinancialRepository.getProjectMeta() (that method's own
@@ -61,7 +90,7 @@ export default async function AdminOverviewPage() {
   // gracefully, not as "undefined".
   return (
     <AdminChrome activeKey="overview" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-      <AdminOverviewScreen adminVM={adminVM} project={adminVM.projectMeta} expenses={realExpenses} />
+      <AdminOverviewScreen adminVM={adminVM} project={adminVM.projectMeta} expenses={realExpenses} myAssignment={myAssignment} />
     </AdminChrome>
   );
 }

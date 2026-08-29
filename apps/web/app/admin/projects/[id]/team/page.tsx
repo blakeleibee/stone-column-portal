@@ -14,6 +14,7 @@ import {
   type ProjectStaffAssignmentRow,
 } from "../../../../../../../packages/02-app-shell/src/services/projectService";
 import { assignStaff, revokeAssignment, reactivateAssignment, refreshAssignments } from "./actions";
+import { updateStaffAssignmentHandoff } from "../../handoffAction";
 
 /**
  * Task 6 (P3): per-project team-management screen. Reached from
@@ -137,6 +138,7 @@ export default async function ProjectTeamPage({ params }: { params: { id: string
         revokeAssignment={revokeAssignment}
         reactivateAssignment={reactivateAssignment}
         refreshAssignments={refreshAssignments}
+        updateHandoff={updateStaffAssignmentHandoff}
       />
     </AdminChrome>
   );

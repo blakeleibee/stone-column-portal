@@ -1,4 +1,5 @@
 import { FinancialRepository, ProjectMeta, ProjectClientVisibilitySettings } from "./financialRepository";
+import type { FeeRule } from "../../../01-financial-engine/src/types";
 
 /**
  * Real implementation, wired to the schema/001-010 tables/views. Every
@@ -127,14 +128,22 @@ export class SupabaseFinancialRepository implements FinancialRepository {
     }));
   }
 
-  async getFeeRule(projectId: string) {
+  /**
+   * `.maybeSingle()`, not `.single()` — a project may legitimately have
+   * zero active fee rules (pricing left "to be determined" at creation,
+   * P3.1). `.single()` throws on zero rows, which previously crashed
+   * every caller of buildAdminFinancialsViewModel for such a project.
+   * A real query error (not "no rows") still rejects below, unchanged.
+   */
+  async getFeeRule(projectId: string): Promise<FeeRule | null> {
     const { data, error } = await this.client
       .from("project_fee_rules")
       .select("*")
       .eq("project_id", projectId)
       .is("effective_to", null)
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return null;
     return {
       id: data.id,
       projectId: data.project_id,

@@ -34,10 +34,38 @@
  * non-admin caller (the page passes `[]` deliberately without querying,
  * see the page's own comment) and renders an explicit restricted-access
  * message instead of the empty-list state whenever `isAdmin` is false.
+ *
+ * Visual modernization pass: rebuilt on the shared `ui/` primitives
+ * (`PageHeader`/`Card`/`StatusBadge`/`Badge`/`Alert`/`Button`/
+ * `MenuButton`/`FormField`/`FormGrid`/`Select`/`TextInput`/`Textarea`/
+ * `EmptyState`) in place of this file's own `sc-team-*`/`sc-handoff-*`
+ * hand-rolled markup+CSS. Markup/styling only — every state variable,
+ * handler, and Server Action call below is unchanged, and in particular:
+ *   - the revoke flow is still click "Revoke" -> inline confirm ("Yes,
+ *     revoke" / "Cancel") -> submit; nothing became a single-click
+ *     destructive action.
+ *   - the assign/revoke/reactivate/edit-handoff controls (and the
+ *     admin-only restricted message) are still gated on the exact same
+ *     `isAdmin` prop, in the same place.
+ *   - "Edit handoff" and the revoke/reactivate lifecycle action are now
+ *     grouped as one primary `Button` ("Edit handoff"/"Close", the
+ *     highest-frequency action on this row) plus one secondary action
+ *     behind a `MenuButton` ("Revoke" or "Reactivate," gated the same
+ *     way as before) instead of two separately-placed buttons — see the
+ *     inline comment above the actions cell for the reasoning.
  */
 import React, { useState } from "react";
 import { colors, spacing, typography, radius } from "../design/tokens";
-import type { ProjectStaffAssignmentRow, ProjectMemberRow, StaffFunction } from "../services/projectService";
+import { Card, PageHeader, Badge, StatusBadge, Alert, Button, MenuButton, FormField, FormGrid, Select, TextInput, Textarea, EmptyState } from "./ui";
+import type { BadgeTone } from "./ui";
+import type {
+  ProjectStaffAssignmentRow,
+  ProjectMemberRow,
+  StaffFunction,
+  StaffRequestType,
+  HandoffPriority,
+} from "../services/projectService";
+import type { StaffAssignmentHandoffFields } from "../services/projectIntakeService";
 
 export interface StaffCandidate {
   id: string;
@@ -45,12 +73,68 @@ export interface StaffCandidate {
   staffFunction: StaffFunction | null;
 }
 
-const STAFF_FUNCTION_LABELS: Record<StaffFunction, string> = {
+// Exported (not just module-local) so AdminOverviewScreen.tsx's "Your
+// assignment" card (Task 9, design §8) can render the same humanized
+// labels for staff_function/requested_work/priority without a second,
+// drifting copy of these three lookup tables.
+export const STAFF_FUNCTION_LABELS: Record<StaffFunction, string> = {
   project_manager: "Project Manager",
   superintendent: "Superintendent",
   accounting: "Accounting",
   general: "General",
 };
+
+// Task 9 (P3.1 design §8) — the 7 requested_work values / 4 priority
+// values, matching schema/018 Step 4's staff_request_type/handoff_priority
+// enums exactly.
+export const REQUESTED_WORK_LABELS: Record<StaffRequestType, string> = {
+  estimating: "Estimating",
+  planning: "Planning",
+  site_review: "Site review",
+  permitting: "Permitting",
+  scheduling: "Scheduling",
+  vendor_pricing: "Vendor pricing",
+  other: "Other",
+};
+const REQUESTED_WORK_OPTIONS = Object.keys(REQUESTED_WORK_LABELS) as StaffRequestType[];
+
+export const PRIORITY_LABELS: Record<HandoffPriority, string> = {
+  low: "Low",
+  normal: "Normal",
+  high: "High",
+  urgent: "Urgent",
+};
+const PRIORITY_OPTIONS = Object.keys(PRIORITY_LABELS) as HandoffPriority[];
+
+// Same tone-per-priority mapping the old sc-handoff-priority-* classes
+// encoded (low -> muted neutral, high -> gold, urgent -> brick) — only
+// consulted when priority !== "normal" (see the handoff-summary cell
+// below), so "normal" is never actually looked up, but is listed for
+// completeness against the full HandoffPriority union.
+const PRIORITY_BADGE_TONE: Record<HandoffPriority, BadgeTone> = {
+  low: "neutral",
+  normal: "neutral",
+  high: "gold",
+  urgent: "brick",
+};
+
+interface HandoffDraft {
+  requestedWork: StaffRequestType | "";
+  priority: HandoffPriority;
+  targetDueDate: string;
+  nextAction: string;
+  internalInstructions: string;
+}
+
+function draftFromAssignment(a: ProjectStaffAssignmentRow): HandoffDraft {
+  return {
+    requestedWork: a.requestedWork ?? "",
+    priority: a.priority,
+    targetDueDate: a.targetDueDate ?? "",
+    nextAction: a.nextAction ?? "",
+    internalInstructions: a.internalInstructions ?? "",
+  };
+}
 
 const MEMBER_ROLE_LABELS: Record<ProjectMemberRow["memberRole"], string> = {
   client: "Client",
@@ -89,6 +173,13 @@ export interface ProjectTeamWorkspaceProps {
   revokeAssignment: (assignmentId: string) => Promise<{ error?: string }>;
   reactivateAssignment: (assignmentId: string) => Promise<{ error?: string }>;
   refreshAssignments: (projectId: string) => Promise<{ assignments?: ProjectStaffAssignmentRow[]; error?: string }>;
+  /** Task 9 (P3.1 design §8) — updates only the 5 handoff-note columns
+   *  on an existing assignment row. Same admin-only write policy as
+   *  assign/revoke/reactivate (project_staff_assignments_admin_manage) —
+   *  the form this drives is only ever rendered inside the `isAdmin`
+   *  branch below, matching every other write control in this
+   *  component. */
+  updateHandoff: (assignmentId: string, fields: StaffAssignmentHandoffFields) => Promise<{} | { error: string }>;
 }
 
 export function ProjectTeamWorkspace({
@@ -102,6 +193,7 @@ export function ProjectTeamWorkspace({
   revokeAssignment,
   reactivateAssignment,
   refreshAssignments,
+  updateHandoff,
 }: ProjectTeamWorkspaceProps) {
   const [staffAssignments, setStaffAssignments] = useState<ProjectStaffAssignmentRow[]>(initialStaffAssignments);
   const [listError, setListError] = useState<string | null>(null);
@@ -116,6 +208,15 @@ export function ProjectTeamWorkspace({
 
   const [reactivateSubmitting, setReactivateSubmitting] = useState<Record<string, boolean>>({});
   const [reactivateErrors, setReactivateErrors] = useState<Record<string, string | null>>({});
+
+  // Task 9 (P3.1 design §8) — handoff-note inline edit. Only one row's
+  // form is ever open at a time (same single-active-editor shape as
+  // revokeConfirmId above), so a single draft object (not a Record keyed
+  // by id) is enough.
+  const [handoffEditId, setHandoffEditId] = useState<string | null>(null);
+  const [handoffDraft, setHandoffDraft] = useState<HandoffDraft | null>(null);
+  const [handoffSubmitting, setHandoffSubmitting] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
 
   // Never patches state in place — every successful mutation is
   // followed by a full re-fetch whose result wholesale-replaces
@@ -191,148 +292,338 @@ export function ProjectTeamWorkspace({
     }
   }
 
+  function handleHandoffEditToggle(a: ProjectStaffAssignmentRow) {
+    if (handoffEditId === a.id) {
+      setHandoffEditId(null);
+      setHandoffDraft(null);
+      return;
+    }
+    setHandoffEditId(a.id);
+    setHandoffDraft(draftFromAssignment(a));
+    setHandoffError(null);
+  }
+
+  function handleHandoffCancel() {
+    setHandoffEditId(null);
+    setHandoffDraft(null);
+    setHandoffError(null);
+  }
+
+  async function handleHandoffSave(assignmentId: string) {
+    if (!handoffDraft) return;
+    setHandoffError(null);
+    setHandoffSubmitting(true);
+    try {
+      const result = await updateHandoff(assignmentId, {
+        requestedWork: handoffDraft.requestedWork === "" ? null : handoffDraft.requestedWork,
+        priority: handoffDraft.priority,
+        targetDueDate: handoffDraft.targetDueDate === "" ? null : handoffDraft.targetDueDate,
+        nextAction: handoffDraft.nextAction.trim() === "" ? null : handoffDraft.nextAction,
+        internalInstructions: handoffDraft.internalInstructions.trim() === "" ? null : handoffDraft.internalInstructions,
+      });
+      if ("error" in result && result.error) {
+        setHandoffError(result.error);
+        return;
+      }
+      setHandoffEditId(null);
+      setHandoffDraft(null);
+      await reload();
+    } finally {
+      setHandoffSubmitting(false);
+    }
+  }
+
   const assignedProfileIds = new Set(staffAssignments.map((a) => a.profileId));
   const availableCandidates = candidateStaff.filter((c) => !assignedProfileIds.has(c.id));
+  const assignHint =
+    availableCandidates.length === 0 && candidateStaff.length > 0
+      ? "Every staff member in your organization already has a record for this project."
+      : candidateStaff.length === 0
+        ? "No other staff members exist in your organization yet."
+        : undefined;
 
   return (
     <div className="sc-team-workspace">
-      <h2>{projectName} — Team</h2>
+      <PageHeader title={`${projectName} — Team`} />
 
-      <section className="sc-team-section">
-        <h3>Staff assignments</h3>
+      <Card className="sc-team-section">
+        <h3 className="sc-team-section-title">Staff assignments</h3>
         {!isAdmin ? (
-          <p className="sc-team-restricted">
+          <Alert tone="info">
             Staff assignments are visible to admins only. Ask an admin if you need to see or change who&rsquo;s
             assigned to this project.
-          </p>
+          </Alert>
         ) : (
           <>
-            {listError && <div className="sc-team-error">{listError}</div>}
+            {listError && (
+              <Alert tone="error" className="sc-team-section-alert">
+                {listError}
+              </Alert>
+            )}
             {staffAssignments.length === 0 ? (
-              <p className="sc-team-empty">No staff assigned yet.</p>
+              <EmptyState title="No staff assigned yet." />
             ) : (
-              <table className="sc-team-table">
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: "left" }}>Name</th>
-                    <th style={{ textAlign: "left" }}>Function</th>
-                    <th style={{ textAlign: "left" }}>Status</th>
-                    <th style={{ textAlign: "left" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {staffAssignments.map((a) => (
-                    <tr key={a.id}>
-                      <td>{a.profileName}</td>
-                      <td>{a.staffFunction ? STAFF_FUNCTION_LABELS[a.staffFunction] : "—"}</td>
-                      <td>
-                        {a.revokedAt ? (
-                          <span className="sc-team-badge sc-team-badge-revoked">
-                            Revoked {formatDateTime(a.revokedAt)}
-                            {a.revokedByName ? ` by ${a.revokedByName}` : ""}
-                          </span>
-                        ) : (
-                          <span className="sc-team-badge sc-team-badge-active">
-                            Active since {formatDateTime(a.assignedAt)}
-                            {a.assignedByName ? ` (by ${a.assignedByName})` : ""}
-                          </span>
-                        )}
-                      </td>
-                      <td>
-                        {a.revokedAt ? (
-                          <button
-                            type="button"
-                            className="sc-team-btn"
-                            disabled={!!reactivateSubmitting[a.id]}
-                            onClick={() => handleReactivate(a.id)}
-                          >
-                            {reactivateSubmitting[a.id] ? "Reactivating…" : "Reactivate"}
-                          </button>
-                        ) : revokeConfirmId === a.id ? (
-                          <div className="sc-team-confirm">
-                            <p>Revoke this assignment for {a.profileName}?</p>
-                            <button
-                              type="button"
-                              className="sc-team-btn sc-team-btn-danger"
-                              disabled={!!revokeSubmitting[a.id]}
-                              onClick={() => handleRevokeConfirm(a.id)}
-                            >
-                              {revokeSubmitting[a.id] ? "Revoking…" : "Yes, revoke"}
-                            </button>
-                            <button type="button" className="sc-team-btn" onClick={handleRevokeCancel}>
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button type="button" className="sc-team-btn" onClick={() => handleRevokeClick(a.id)}>
-                            Revoke
-                          </button>
-                        )}
-                        {revokeErrors[a.id] && <div className="sc-team-error">{revokeErrors[a.id]}</div>}
-                        {reactivateErrors[a.id] && <div className="sc-team-error">{reactivateErrors[a.id]}</div>}
-                      </td>
+              <div className="sc-team-table-wrap">
+                <table className="sc-team-table">
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Name</th>
+                      <th style={{ textAlign: "left" }}>Function</th>
+                      <th style={{ textAlign: "left" }}>Status</th>
+                      <th style={{ textAlign: "left" }}>Handoff</th>
+                      <th style={{ textAlign: "left" }}>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {staffAssignments.map((a) => (
+                      <React.Fragment key={a.id}>
+                        <tr>
+                          <td>{a.profileName}</td>
+                          <td>{a.staffFunction ? STAFF_FUNCTION_LABELS[a.staffFunction] : "—"}</td>
+                          <td>
+                            {a.revokedAt ? (
+                              <StatusBadge
+                                tone="brick"
+                                label={`Revoked ${formatDateTime(a.revokedAt)}${a.revokedByName ? ` by ${a.revokedByName}` : ""}`}
+                              />
+                            ) : (
+                              <StatusBadge
+                                tone="sage"
+                                label={`Active since ${formatDateTime(a.assignedAt)}${a.assignedByName ? ` (by ${a.assignedByName})` : ""}`}
+                              />
+                            )}
+                          </td>
+                          <td>
+                            <div className="sc-handoff-summary">
+                              {a.priority !== "normal" && (
+                                <Badge tone={PRIORITY_BADGE_TONE[a.priority]} className="sc-handoff-priority-badge">
+                                  {PRIORITY_LABELS[a.priority]}
+                                </Badge>
+                              )}
+                              <div>{a.requestedWork ? REQUESTED_WORK_LABELS[a.requestedWork] : "No request set"}</div>
+                              {a.targetDueDate && <div className="sc-handoff-due">Due {a.targetDueDate}</div>}
+                              {a.nextAction && <div className="sc-handoff-next">{a.nextAction}</div>}
+                            </div>
+                          </td>
+                          <td>
+                            {/* One primary action ("Edit handoff" — the
+                                highest-frequency, non-destructive action
+                                on this row, available regardless of
+                                active/revoked state) plus one secondary
+                                lifecycle action behind a MenuButton
+                                ("Revoke" while active, "Reactivate" while
+                                revoked) — collapses what used to be two
+                                separately-placed buttons (one in this
+                                cell, one in the Handoff cell) into a
+                                single hierarchy. The revoke confirm step
+                                is unchanged: choosing "Revoke" from the
+                                menu only arms `revokeConfirmId`, it never
+                                submits directly — the actual write still
+                                requires the explicit "Yes, revoke" click
+                                below. */}
+                            {revokeConfirmId === a.id ? (
+                              <Alert tone="warning" className="sc-team-confirm">
+                                <p className="sc-team-confirm-question">Revoke this assignment for {a.profileName}?</p>
+                                <div className="sc-team-confirm-actions">
+                                  <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    loading={!!revokeSubmitting[a.id]}
+                                    loadingText="Revoking…"
+                                    onClick={() => handleRevokeConfirm(a.id)}
+                                  >
+                                    Yes, revoke
+                                  </Button>
+                                  <Button variant="secondary" size="sm" onClick={handleRevokeCancel}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </Alert>
+                            ) : (
+                              <div className="sc-team-actions">
+                                <Button size="sm" variant="secondary" onClick={() => handleHandoffEditToggle(a)}>
+                                  {handoffEditId === a.id ? "Close" : "Edit handoff"}
+                                </Button>
+                                <MenuButton
+                                  label="More"
+                                  align="end"
+                                  items={
+                                    a.revokedAt
+                                      ? [
+                                          {
+                                            key: "reactivate",
+                                            label: reactivateSubmitting[a.id] ? "Reactivating…" : "Reactivate",
+                                            onClick: () => handleReactivate(a.id),
+                                            disabled: !!reactivateSubmitting[a.id],
+                                          },
+                                        ]
+                                      : [
+                                          {
+                                            key: "revoke",
+                                            label: "Revoke",
+                                            onClick: () => handleRevokeClick(a.id),
+                                          },
+                                        ]
+                                  }
+                                />
+                              </div>
+                            )}
+                            {revokeErrors[a.id] && (
+                              <Alert tone="error" className="sc-team-row-alert">
+                                {revokeErrors[a.id]}
+                              </Alert>
+                            )}
+                            {reactivateErrors[a.id] && (
+                              <Alert tone="error" className="sc-team-row-alert">
+                                {reactivateErrors[a.id]}
+                              </Alert>
+                            )}
+                          </td>
+                        </tr>
+                        {handoffEditId === a.id && handoffDraft && (
+                          <tr>
+                            <td colSpan={5}>
+                              <div className="sc-handoff-form-wrap">
+                                <FormGrid columns={2}>
+                                  <FormField label="Requested work">
+                                    <Select
+                                      value={handoffDraft.requestedWork}
+                                      onChange={(e) =>
+                                        setHandoffDraft((prev) =>
+                                          prev ? { ...prev, requestedWork: e.target.value as StaffRequestType | "" } : prev
+                                        )
+                                      }
+                                    >
+                                      <option value="">— none —</option>
+                                      {REQUESTED_WORK_OPTIONS.map((v) => (
+                                        <option key={v} value={v}>
+                                          {REQUESTED_WORK_LABELS[v]}
+                                        </option>
+                                      ))}
+                                    </Select>
+                                  </FormField>
+                                  <FormField label="Priority">
+                                    <Select
+                                      value={handoffDraft.priority}
+                                      onChange={(e) =>
+                                        setHandoffDraft((prev) => (prev ? { ...prev, priority: e.target.value as HandoffPriority } : prev))
+                                      }
+                                    >
+                                      {PRIORITY_OPTIONS.map((v) => (
+                                        <option key={v} value={v}>
+                                          {PRIORITY_LABELS[v]}
+                                        </option>
+                                      ))}
+                                    </Select>
+                                  </FormField>
+                                  <FormField label="Target due date">
+                                    <TextInput
+                                      type="date"
+                                      value={handoffDraft.targetDueDate}
+                                      onChange={(e) => setHandoffDraft((prev) => (prev ? { ...prev, targetDueDate: e.target.value } : prev))}
+                                    />
+                                  </FormField>
+                                  <FormField label="Next action">
+                                    <TextInput
+                                      type="text"
+                                      value={handoffDraft.nextAction}
+                                      onChange={(e) => setHandoffDraft((prev) => (prev ? { ...prev, nextAction: e.target.value } : prev))}
+                                      placeholder="e.g. Confirm vendor pricing by Friday"
+                                    />
+                                  </FormField>
+                                  <FormField label="Internal instructions" className="sc-handoff-field-full">
+                                    <Textarea
+                                      rows={3}
+                                      value={handoffDraft.internalInstructions}
+                                      onChange={(e) =>
+                                        setHandoffDraft((prev) => (prev ? { ...prev, internalInstructions: e.target.value } : prev))
+                                      }
+                                    />
+                                  </FormField>
+                                </FormGrid>
+                                <div className="sc-handoff-form-actions">
+                                  <Button loading={handoffSubmitting} loadingText="Saving…" onClick={() => handleHandoffSave(a.id)}>
+                                    Save handoff
+                                  </Button>
+                                  <Button variant="secondary" onClick={handleHandoffCancel}>
+                                    Cancel
+                                  </Button>
+                                </div>
+                                {handoffError && <Alert tone="error">{handoffError}</Alert>}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
 
-            <form onSubmit={handleAssign} className="sc-team-inline-form">
-              <select
-                className="sc-team-input"
-                value={assignProfileId}
-                onChange={(e) => setAssignProfileId(e.target.value)}
-                aria-label="Staff member to assign"
-              >
-                <option value="">— select a staff member —</option>
-                {availableCandidates.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                    {c.staffFunction ? ` — ${STAFF_FUNCTION_LABELS[c.staffFunction]}` : ""}
-                  </option>
-                ))}
-              </select>
-              <button type="submit" className="sc-team-btn sc-team-btn-primary" disabled={assignSubmitting}>
-                {assignSubmitting ? "Assigning…" : "Assign"}
-              </button>
+            <form onSubmit={handleAssign} className="sc-team-assign-form">
+              <FormGrid columns={2}>
+                <FormField label="Assign a staff member" hint={assignHint} error={assignError ?? undefined}>
+                  <Select value={assignProfileId} onChange={(e) => setAssignProfileId(e.target.value)}>
+                    <option value="">— select a staff member —</option>
+                    {availableCandidates.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {c.staffFunction ? ` — ${STAFF_FUNCTION_LABELS[c.staffFunction]}` : ""}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+                <div className="sc-team-assign-action">
+                  {/* Height-matched to FormField's own label row so the
+                      button's top edge lines up with the select's top
+                      edge in the FormGrid row, even though this action
+                      has no label of its own. */}
+                  <span className="sc-team-assign-action-spacer" aria-hidden="true" />
+                  <Button type="submit" loading={assignSubmitting} loadingText="Assigning…">
+                    Assign
+                  </Button>
+                </div>
+              </FormGrid>
             </form>
-            {availableCandidates.length === 0 && candidateStaff.length > 0 && (
-              <p className="sc-team-hint">Every staff member in your organization already has a record for this project.</p>
-            )}
-            {candidateStaff.length === 0 && <p className="sc-team-hint">No other staff members exist in your organization yet.</p>}
-            {assignError && <div className="sc-team-error">{assignError}</div>}
           </>
         )}
-      </section>
+      </Card>
 
-      <section className="sc-team-section">
-        <h3>Client &amp; vendor contacts</h3>
+      <Card className="sc-team-section">
+        <h3 className="sc-team-section-title">Client &amp; vendor contacts</h3>
         {members.length === 0 ? (
-          <p className="sc-team-empty">No client or vendor contacts on this project yet.</p>
+          <EmptyState title="No client or vendor contacts on this project yet." />
         ) : (
-          <table className="sc-team-table">
-            <thead>
-              <tr>
-                <th style={{ textAlign: "left" }}>Name</th>
-                <th style={{ textAlign: "left" }}>Role</th>
-                <th style={{ textAlign: "left" }}>Added</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((m) => (
-                <tr key={m.id}>
-                  <td>
-                    {m.userName}
-                    {m.isPrimary && <span className="sc-team-primary-tag">Primary</span>}
-                  </td>
-                  <td>{MEMBER_ROLE_LABELS[m.memberRole]}</td>
-                  <td>{formatDateTime(m.addedAt)}</td>
+          <div className="sc-team-table-wrap">
+            <table className="sc-team-table">
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Name</th>
+                  <th style={{ textAlign: "left" }}>Role</th>
+                  <th style={{ textAlign: "left" }}>Added</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.id}>
+                    <td>
+                      {m.userName}
+                      {m.isPrimary && (
+                        <Badge tone="gold" className="sc-team-primary-tag">
+                          Primary
+                        </Badge>
+                      )}
+                    </td>
+                    <td>{MEMBER_ROLE_LABELS[m.memberRole]}</td>
+                    <td>{formatDateTime(m.addedAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </section>
+      </Card>
 
       <style dangerouslySetInnerHTML={{ __html: workspaceStyles }} />
     </div>
@@ -340,27 +631,33 @@ export function ProjectTeamWorkspace({
 }
 
 const workspaceStyles = `
-.sc-team-workspace { font-family: ${typography.fontFamily}; color: ${colors.ink}; }
-.sc-team-workspace h2 { margin: 0 0 ${spacing.lg} 0; }
-.sc-team-section { margin-bottom: ${spacing.xl}; padding-bottom: ${spacing.lg}; border-bottom: 1px solid ${colors.line}; }
-.sc-team-section h3 { margin: 0 0 ${spacing.sm} 0; }
-.sc-team-restricted { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; background: ${colors.paperDim}; border-radius: ${radius.md}; padding: ${spacing.sm} ${spacing.md}; max-width: 520px; }
-.sc-team-empty { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
-.sc-team-hint { color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; margin: ${spacing.xs} 0 0 0; }
-.sc-team-error { color: ${colors.brick}; font-size: ${typography.sizeXs}; margin-top: 4px; }
-.sc-team-table { width: 100%; border-collapse: collapse; font-size: ${typography.sizeSm}; margin-bottom: ${spacing.md}; }
-.sc-team-table th { padding: 6px 8px; border-bottom: 1px solid ${colors.line}; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; text-transform: uppercase; letter-spacing: 0.02em; }
-.sc-team-table td { padding: 6px 8px; border-bottom: 1px solid ${colors.paperDim}; vertical-align: top; }
-.sc-team-inline-form { display: flex; flex-wrap: wrap; align-items: flex-start; gap: ${spacing.sm}; }
-.sc-team-input { padding: 6px 8px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; font-family: ${typography.fontFamily}; font-size: ${typography.sizeSm}; color: ${colors.ink}; background: ${colors.white}; min-width: 260px; }
-.sc-team-btn { padding: 7px 13px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; background: ${colors.white}; color: ${colors.ink2}; font-size: ${typography.sizeSm}; cursor: pointer; }
-.sc-team-btn-primary { background: ${colors.sage}; color: ${colors.white}; border-color: ${colors.sage}; }
-.sc-team-btn-danger { background: ${colors.brick}; color: ${colors.white}; border-color: ${colors.brick}; }
-.sc-team-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.sc-team-confirm { background: ${colors.brickTint}; border-radius: ${radius.md}; padding: ${spacing.sm}; display: flex; flex-direction: column; gap: ${spacing.xs}; align-items: flex-start; max-width: 360px; }
-.sc-team-confirm p { margin: 0; font-size: ${typography.sizeXs}; color: ${colors.ink}; }
-.sc-team-badge { display: inline-block; padding: 2px 8px; border-radius: ${radius.pill}; font-size: ${typography.sizeXs}; font-weight: ${typography.weightMedium}; }
-.sc-team-badge-active { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
-.sc-team-badge-revoked { background: ${colors.brickTint}; color: ${colors.brick}; }
-.sc-team-primary-tag { margin-left: 6px; font-size: ${typography.sizeXs}; color: ${colors.sageDeep}; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
+.sc-team-workspace { font-family: ${typography.fontFamily}; color: ${colors.ink}; display: flex; flex-direction: column; gap: ${spacing.lg}; }
+.sc-team-section-title { margin: 0 0 ${spacing.md} 0; font-size: ${typography.sizeMd}; }
+.sc-team-section-alert { margin-bottom: ${spacing.md}; }
+
+.sc-team-table-wrap { overflow-x: auto; margin-bottom: ${spacing.md}; }
+.sc-team-table { width: 100%; border-collapse: collapse; font-size: ${typography.sizeSm}; }
+.sc-team-table th { padding: ${spacing.xs} ${spacing.sm}; border-bottom: 1px solid ${colors.line}; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; text-transform: uppercase; letter-spacing: 0.02em; white-space: nowrap; }
+.sc-team-table td { padding: ${spacing.sm}; border-bottom: 1px solid ${colors.paperDim}; vertical-align: top; }
+
+.sc-team-actions { display: flex; align-items: center; gap: ${spacing.xs}; }
+.sc-team-row-alert { margin-top: ${spacing.xs}; max-width: 320px; }
+.sc-team-confirm { display: flex; flex-direction: column; gap: ${spacing.xs}; align-items: flex-start; max-width: 320px; }
+.sc-team-confirm-question { margin: 0; }
+.sc-team-confirm-actions { display: flex; gap: ${spacing.xs}; }
+
+.sc-team-primary-tag { margin-left: ${spacing.xs}; }
+
+.sc-handoff-summary { font-size: ${typography.sizeXs}; color: ${colors.ink2}; display: flex; flex-direction: column; gap: 3px; max-width: 220px; }
+.sc-handoff-priority-badge { width: fit-content; }
+.sc-handoff-due { color: ${colors.stoneDark}; }
+.sc-handoff-next { color: ${colors.ink}; font-style: italic; }
+
+.sc-handoff-form-wrap { background: ${colors.paperDim}; border-radius: ${radius.md}; padding: ${spacing.md}; }
+.sc-handoff-field-full { grid-column: 1 / -1; }
+.sc-handoff-form-actions { display: flex; gap: ${spacing.sm}; margin-top: ${spacing.md}; }
+
+.sc-team-assign-form { margin-top: ${spacing.sm}; }
+.sc-team-assign-action { display: flex; flex-direction: column; gap: ${spacing["2xs"]}; }
+.sc-team-assign-action-spacer { height: ${typography.sizeXs}; line-height: 1.4; }
 `;

@@ -20,6 +20,25 @@ export type ProjectStatus = "draft" | "active" | "on_hold" | "closed_out" | "arc
 // Matches schema/016's `staff_function` enum exactly.
 export type StaffFunction = "project_manager" | "superintendent" | "accounting" | "general";
 
+// Matches schema/018 Step 3's `project_phase` enum exactly (design §5).
+export type ProjectPhase = "lead" | "feasibility" | "preconstruction" | "pricing" | "contract_pending" | "ready_to_start";
+
+// Matches schema/018 Step 4's `staff_request_type`/`handoff_priority` enums
+// exactly (P3.1 design §8). Duplicated (not imported) from
+// projectIntakeService.ts's identical definitions to avoid a circular
+// module dependency (projectIntakeService.ts already imports from this
+// file) — same "no shared generated-types file yet" convention already
+// used for every other enum-backed type in both files.
+export type StaffRequestType =
+  | "estimating"
+  | "planning"
+  | "site_review"
+  | "permitting"
+  | "scheduling"
+  | "vendor_pricing"
+  | "other";
+export type HandoffPriority = "low" | "normal" | "high" | "urgent";
+
 export interface ProjectRow {
   id: string;
   orgId: string;
@@ -86,12 +105,23 @@ export async function listAccessibleProjects(
 export interface CreateProjectParams {
   orgId: string;
   name: string;
-  projectNumber: string;
+  // project_number is server-generated (generate_project_number(),
+  // schema/018 — SC-YYYY-### per-org-per-year atomic counter) as of
+  // P3.1; the RPC no longer accepts a caller-supplied number at all, so
+  // there is no field for it here. See P3.1-DESIGN.md §1.
   address?: string | null;
   projectType?: string | null;
-  pricingModel: PricingModel;
+  // Optional as of P3.1 (design §2/§3): a project can be created with
+  // pricing entirely undetermined (pricing_model stays NULL, "to be
+  // decided later") — the progressive-creation workflow only requires
+  // identity/assignment fields up front. When a pricingModel IS
+  // supplied, it must still be one of the two fee-supported values (see
+  // FEE_SUPPORTED_PRICING_MODELS below) and feeBasis becomes meaningful
+  // alongside it; setProjectFeeTerms() below is the new way to fill
+  // pricing in later.
+  pricingModel?: PricingModel | null;
   pricingModelLabel?: string | null;
-  feeBasis: FeeBasis;
+  feeBasis?: FeeBasis | null;
   // bigint/integer RPC params map to plain `number`, same convention as
   // every other *_cents field in this package (see budgetService.ts;
   // packages/01-financial-engine/src/types.ts's `Cents = number`).
@@ -119,13 +149,17 @@ export interface CreateProjectParams {
 const FEE_SUPPORTED_PRICING_MODELS: readonly PricingModel[] = ["cost_plus_percentage", "cost_plus_fixed_fee"];
 
 /**
- * Thin wrapper over create_project_with_defaults() (schema/016) — an
- * admin-only RPC (enforced inside the function itself via
- * is_org_admin_for_org()) that creates the project row, seeds
- * project_fee_rules, applies the standard cost-code template, and
- * inserts the initial staff/client assignments in one transaction. This
- * function does not re-implement any of that logic; it only maps camelCase
- * params to the RPC's p_-prefixed positional/named args and normalizes
+ * Thin wrapper over create_project_with_defaults() (schema/016, revised
+ * by schema/018 for P3.1) — an admin-only RPC (enforced inside the
+ * function itself via is_org_admin_for_org()) that creates the project
+ * row (generating its project_number internally via
+ * generate_project_number(), schema/018), conditionally seeds
+ * project_fee_rules (only when a fee-supported pricingModel AND feeBasis
+ * are both supplied — otherwise the project is created with pricing
+ * left undetermined), applies the standard cost-code template, and
+ * inserts the initial staff/client assignments, all in one transaction.
+ * This function does not re-implement any of that logic; it only maps
+ * camelCase params to the RPC's p_-prefixed named args and normalizes
  * the result to this repo's { id } | { error } convention (see
  * bidService.ts's createBidPackage/awardBid for the same shape).
  */
@@ -134,41 +168,146 @@ export async function createProject(
   params: CreateProjectParams
 ): Promise<{ id: string } | { error: string }> {
   if (!params.name.trim()) return { error: "Project name is required." };
-  if (!params.projectNumber.trim()) return { error: "Project number is required." };
-  if (!FEE_SUPPORTED_PRICING_MODELS.includes(params.pricingModel)) {
+  // Only applied when a pricingModel is actually supplied (P3.1 design
+  // §2/§3) — no pricing model at all is now a valid, non-erroring call
+  // (the project is created with pricing_model left NULL, "to be
+  // determined"; setProjectFeeTerms() below fills it in later).
+  if (params.pricingModel && !FEE_SUPPORTED_PRICING_MODELS.includes(params.pricingModel)) {
     return {
-      error: "This pricing model isn't fully supported yet — choose Cost-Plus (% Fee) or Cost-Plus (Fixed Fee).",
+      error: "This pricing model isn't fully supported yet — choose Cost-Plus (% Fee) or Cost-Plus (Fixed Fee), or leave pricing undetermined for now.",
     };
   }
 
   const { data, error } = await supabase.rpc("create_project_with_defaults", {
     p_org_id: params.orgId,
     p_name: params.name.trim(),
-    p_project_number: params.projectNumber.trim(),
     p_address: params.address ?? null,
     p_project_type: params.projectType ?? null,
-    p_pricing_model: params.pricingModel,
+    p_pricing_model: params.pricingModel ?? null,
     p_pricing_model_label: params.pricingModelLabel ?? null,
-    p_fee_basis: params.feeBasis,
+    p_fee_basis: params.feeBasis ?? null,
     p_fee_basis_points: params.feeBasisPoints ?? null,
     p_fee_fixed_amount_cents: params.feeFixedAmountCents ?? null,
     p_initial_staff_profile_ids: params.initialStaffProfileIds ?? [],
     p_initial_client_profile_ids: params.initialClientProfileIds ?? [],
   });
   if (error) {
-    // Friendly rewrite for the `projects_number_unique_per_org` collision
-    // (final-review fix wave, Minor finding 7) — same precedent as
-    // assignStaffToProject's own `/org mismatch/` rewrite below: without
-    // this, the raw Postgres constraint-violation message (something
-    // like `duplicate key value violates unique constraint
-    // "projects_number_unique_per_org"`) surfaces verbatim in the create
-    // form.
-    if (/projects_number_unique_per_org/.test(error.message)) {
-      return { error: "That project number is already in use in your organization — choose a different one." };
-    }
+    // project_number is server-generated as of P3.1 (generate_project_
+    // number(), schema/018) — the RPC no longer takes a caller-supplied
+    // number, so a projects_number_unique_per_org collision can no
+    // longer come from user input at all; it would only ever come from
+    // the astronomically-unlikely case of a freshly generated number
+    // colliding with a pre-existing legacy one (P3.1-DESIGN.md §1). That
+    // is a rare, real bug if it ever happens, not a user-correctable
+    // mistake — so, unlike the pre-P3.1 version of this function, the
+    // error is no longer rewritten into a friendly "pick a different
+    // number" message; it surfaces honestly.
     return { error: error.message };
   }
   return { id: data as string };
+}
+
+/**
+ * Thin wrapper over set_project_fee_terms() (schema/018, P3.1 §2) — the
+ * new capability that makes deferring pricing at creation (above)
+ * meaningful. Admin-only, enforced inside the RPC itself via
+ * is_org_admin_for_org() (same pattern as createProject()/
+ * changeProjectStatus() below), and atomically supersedes the current
+ * project_fee_rules row (if any) while updating projects.pricing_model/
+ * pricing_model_label together — this function does not re-implement any
+ * of that; it only maps params and normalizes the RPC's error, same
+ * convention as changeProjectStatus()'s own `/Only an org admin/` rewrite.
+ */
+export async function setProjectFeeTerms(
+  supabase: SupabaseClient,
+  params: {
+    projectId: string;
+    pricingModel: PricingModel;
+    feeBasis: FeeBasis;
+    feeBasisPoints?: number | null;
+    feeFixedAmountCents?: number | null;
+    pricingModelLabel?: string | null;
+  }
+): Promise<{ error: string } | {}> {
+  const { error } = await supabase.rpc("set_project_fee_terms", {
+    p_project_id: params.projectId,
+    p_pricing_model: params.pricingModel,
+    p_fee_basis: params.feeBasis,
+    p_fee_basis_points: params.feeBasisPoints ?? null,
+    p_fee_fixed_amount_cents: params.feeFixedAmountCents ?? null,
+    p_pricing_model_label: params.pricingModelLabel ?? null,
+  });
+  if (error) {
+    if (/Only an org admin/.test(error.message)) {
+      return { error: "Only an org admin can set a project's pricing/fee terms." };
+    }
+    // Mirrors the RPC's own FEE_SUPPORTED_PRICING_MODELS-equivalent
+    // server-side check (schema/018 Step 9) — set_project_fee_terms()
+    // always inserts a project_fee_rules row (unlike createProject()'s
+    // conditional insert), so it rejects an unsupported pricing model
+    // outright rather than silently skipping.
+    if (/only supports cost_plus_percentage or cost_plus_fixed_fee/.test(error.message)) {
+      return {
+        error: "This pricing model isn't fully supported yet — choose Cost-Plus (% Fee) or Cost-Plus (Fixed Fee).",
+      };
+    }
+    return { error: error.message };
+  }
+  return {};
+}
+
+export interface ProjectFeeTermsRow {
+  pricingModel: PricingModel | null;
+  pricingModelLabel: string | null;
+  feeBasis: FeeBasis | null;
+  feeBasisPoints: number | null;
+  feeFixedAmountCents: number | null;
+}
+
+/**
+ * Repository read backing the new Contract & Pricing Terms screen
+ * (P3.1 Task 8) — reads `projects.pricing_model`/`pricing_model_label`
+ * and the current, non-superseded `project_fee_rules` row (if any) for
+ * a project, side by side. Not part of Task 2's original read list (that
+ * task scoped project_briefs/project_site_info/contacts/checklist reads
+ * only); added here because it belongs next to setProjectFeeTerms()
+ * above — same two tables, same "the label and the terms it describes
+ * are read together" framing as that function's own write side.
+ *
+ * Both `pricingModel` and the fee-rule fields can legitimately be null
+ * at once (P3.1 design §2/§3 — pricing left "to be determined"), and
+ * `pricingModel` can be non-null while the fee-rule fields are still
+ * null for a caller whose RLS session can see `projects` but not
+ * `project_fee_rules` — see getProjectSetupChecklist's own "KNOWN
+ * RLS-VISIBILITY NUANCE" comment (projectIntakeService.ts):
+ * `project_fee_rules`' SELECT policy (schema/018 Step 10) is
+ * `is_financial_staff(project_id)`, a strict subset of the
+ * `is_org_staff(project_id)` policy that governs `projects` itself, so a
+ * superintendent session can legitimately see a set `pricingModel` here
+ * with every fee-rule field coming back null. That is the correct,
+ * RLS-scoped result for this function to return — not a bug to route
+ * around with a service-role client.
+ */
+export async function getProjectFeeTerms(supabase: SupabaseClient, projectId: string): Promise<ProjectFeeTermsRow> {
+  const [projectResult, feeRuleResult] = await Promise.all([
+    supabase.from("projects").select("pricing_model, pricing_model_label").eq("id", projectId).maybeSingle(),
+    supabase
+      .from("project_fee_rules")
+      .select("fee_basis, fee_basis_points, fee_fixed_amount_cents")
+      .eq("project_id", projectId)
+      .is("effective_to", null)
+      .maybeSingle(),
+  ]);
+  if (projectResult.error) throw projectResult.error;
+  if (feeRuleResult.error) throw feeRuleResult.error;
+
+  return {
+    pricingModel: projectResult.data?.pricing_model ?? null,
+    pricingModelLabel: projectResult.data?.pricing_model_label ?? null,
+    feeBasis: feeRuleResult.data?.fee_basis ?? null,
+    feeBasisPoints: feeRuleResult.data?.fee_basis_points ?? null,
+    feeFixedAmountCents: feeRuleResult.data?.fee_fixed_amount_cents ?? null,
+  };
 }
 
 /**
@@ -189,11 +328,24 @@ export async function createProject(
  * other read in this file already uses, never a service-role client.
  * Deliberately a plain lookup, not layered onto listAccessibleProjects()
  * (which the callers here don't otherwise need) or duplicated inline in
- * all three functions below.
+ * every call site below.
+ *
+ * `action` is a short, caller-supplied description of what was being
+ * attempted (e.g. "Team management", "Editing the project brief") and is
+ * REQUIRED, not defaulted — this function is now reused across several
+ * unrelated write paths (team assignment here, and project_briefs/
+ * project_site_info/project_clients/staff-handoff writes in
+ * projectIntakeService.ts as of P3.1), so there is no single generic
+ * wording that reads correctly everywhere. (Fix round: an earlier
+ * version hardcoded "Team management isn't available..." here, which
+ * every non-team call site inherited verbatim and incorrectly — a staff
+ * member blocked from editing a project's brief saw a message about
+ * "team management.")
  */
 export async function assertProjectNotArchived(
   supabase: SupabaseClient,
-  projectId: string
+  projectId: string,
+  action: string
 ): Promise<{ error: string } | null> {
   const { data, error } = await supabase.from("projects").select("status").eq("id", projectId).maybeSingle();
   if (error) return { error: error.message };
@@ -208,7 +360,7 @@ export async function assertProjectNotArchived(
   // invariant holds forever.)
   if (!data) return { error: "Project not found or not accessible." };
   if (data.status === "archived") {
-    return { error: "This project is archived. Team management isn't available for archived projects." };
+    return { error: `This project is archived. ${action} isn't available for archived projects.` };
   }
   return null;
 }
@@ -231,7 +383,7 @@ export async function assertProjectNotArchived(
  * clearer message where it's cheap to do so.
  */
 export async function assignStaffToProject(supabase: SupabaseClient, projectId: string, profileId: string) {
-  const archivedError = await assertProjectNotArchived(supabase, projectId);
+  const archivedError = await assertProjectNotArchived(supabase, projectId, "Team management");
   if (archivedError) return archivedError;
 
   const {
@@ -271,7 +423,7 @@ export async function revokeStaffAssignment(supabase: SupabaseClient, assignment
   if (lookupError) return { error: lookupError.message };
   if (!assignmentRow) return { error: "Staff assignment not found." };
 
-  const archivedError = await assertProjectNotArchived(supabase, assignmentRow.project_id);
+  const archivedError = await assertProjectNotArchived(supabase, assignmentRow.project_id, "Team management");
   if (archivedError) return archivedError;
 
   const {
@@ -301,7 +453,7 @@ export async function reactivateStaffAssignment(supabase: SupabaseClient, assign
   if (lookupError) return { error: lookupError.message };
   if (!assignmentRow) return { error: "Staff assignment not found." };
 
-  const archivedError = await assertProjectNotArchived(supabase, assignmentRow.project_id);
+  const archivedError = await assertProjectNotArchived(supabase, assignmentRow.project_id, "Team management");
   if (archivedError) return archivedError;
 
   const { error } = await supabase
@@ -324,6 +476,16 @@ export interface ProjectStaffAssignmentRow {
   revokedAt: string | null;
   revokedBy: string | null;
   revokedByName: string | null;
+  // Handoff fields (schema/018 Step 4, P3.1 design §8) — admin-editable
+  // via updateStaffAssignmentHandoff() (projectIntakeService.ts). Included
+  // here (not just on a separate narrower type) so ProjectTeamWorkspace.tsx
+  // can render/edit them inline per row from this same list, matching how
+  // the rest of this row's fields already arrive from one query.
+  requestedWork: StaffRequestType | null;
+  priority: HandoffPriority;
+  targetDueDate: string | null;
+  nextAction: string | null;
+  internalInstructions: string | null;
 }
 
 /**
@@ -352,7 +514,9 @@ export async function listProjectStaffAssignments(
 ): Promise<ProjectStaffAssignmentRow[]> {
   const { data, error } = await supabase
     .from("project_staff_assignments")
-    .select("id, project_id, profile_id, assigned_at, assigned_by, revoked_at, revoked_by")
+    .select(
+      "id, project_id, profile_id, assigned_at, assigned_by, revoked_at, revoked_by, requested_work, priority, target_due_date, next_action, internal_instructions"
+    )
     .eq("project_id", projectId)
     .order("assigned_at", { ascending: false });
   if (error) throw error;
@@ -389,6 +553,11 @@ export async function listProjectStaffAssignments(
     revokedAt: row.revoked_at,
     revokedBy: row.revoked_by,
     revokedByName: row.revoked_by ? profilesById.get(row.revoked_by)?.fullName ?? null : null,
+    requestedWork: row.requested_work ?? null,
+    priority: row.priority,
+    targetDueDate: row.target_due_date ?? null,
+    nextAction: row.next_action ?? null,
+    internalInstructions: row.internal_instructions ?? null,
   }));
 }
 
@@ -492,4 +661,98 @@ export async function listProjectMembers(supabase: SupabaseClient, projectId: st
     isPrimary: row.is_primary,
     addedAt: row.added_at,
   }));
+}
+
+// =====================================================================
+// projects.phase / start_date / target_completion_date (P3.1 Task 5 gap
+// closure). P3.1-DESIGN.md §5 says the Concept & Scope screen's "phase"
+// and "desired start/completion timing" fields are NOT new columns on
+// project_briefs — they reuse projects.phase (schema/018 Step 3's new
+// project_phase enum) and projects.start_date/target_completion_date
+// directly. Neither projectService.ts nor projectIntakeService.ts had
+// any function touching these three columns before this addition (Task
+// 2's brief scoped the intake service to project_briefs/project_site_info/
+// project_clients/staff-handoff only; the design doc's own §5 prose
+// promised the reuse but nothing in the service layer ever implemented
+// the write path for it) — confirmed by grep, not assumed. Kept here in
+// projectService.ts, not projectIntakeService.ts, because `projects`
+// itself (not an intake table) is this file's existing domain, and
+// assertProjectNotArchived()/the RLS reality below are already this
+// file's own concerns.
+//
+// RLS reality (schema/017's projects_staff_update, unchanged by this
+// addition): USING is_financial_staff(id) — any non-superintendent
+// staff, not admin-only, same population that can already edit
+// gmp_amount_cents/pricing_model directly on this table. A plain column
+// UPDATE (not an RPC) is used here, matching this table's own existing
+// write pattern (changeProjectStatus() is the one exception, and only
+// because status transitions have dedicated trigger-enforced validity
+// logic that phase/dates do not).
+// =====================================================================
+
+export interface ProjectPhaseAndTimingRow {
+  phase: ProjectPhase | null;
+  startDate: string | null; // date, "YYYY-MM-DD"
+  targetCompletionDate: string | null; // date, "YYYY-MM-DD"
+}
+
+export interface ProjectPhaseAndTimingWriteFields {
+  phase?: ProjectPhase | null;
+  startDate?: string | null;
+  targetCompletionDate?: string | null;
+}
+
+/** Narrow, dedicated read — deliberately not folded into ProjectRow/
+ *  PROJECT_COLUMNS above (used by listAccessibleProjects, which backs
+ *  the project switcher and list screens across the whole app); adding
+ *  these three columns there would widen every existing caller's
+ *  payload for a need only this one form has. Same "read exactly what
+ *  the screen needs" discipline as team/page.tsx's own dedicated
+ *  profiles query. */
+export async function getProjectPhaseAndTiming(
+  supabase: SupabaseClient,
+  projectId: string
+): Promise<ProjectPhaseAndTimingRow | null> {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("phase, start_date, target_completion_date")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    phase: data.phase,
+    startDate: data.start_date,
+    targetCompletionDate: data.target_completion_date,
+  };
+}
+
+/**
+ * Partial write (only the supplied fields are included in the UPDATE
+ * payload — `undefined` means "don't touch," explicit `null` means
+ * "clear this field," same convention as projectIntakeService.ts's
+ * pickDefined()/upsertProjectBrief()). Guarded by
+ * assertProjectNotArchived() — same P3-DESIGN.md Decision 9 precedent as
+ * every other project-scoped write in this file and in
+ * projectIntakeService.ts; projects_staff_update's RLS does not itself
+ * check status.
+ */
+export async function updateProjectPhaseAndTiming(
+  supabase: SupabaseClient,
+  projectId: string,
+  fields: ProjectPhaseAndTimingWriteFields
+): Promise<{} | { error: string }> {
+  const archivedError = await assertProjectNotArchived(supabase, projectId, "Editing project phase and timing");
+  if (archivedError) return archivedError;
+
+  const row: Record<string, unknown> = {};
+  if (fields.phase !== undefined) row.phase = fields.phase;
+  if (fields.startDate !== undefined) row.start_date = fields.startDate;
+  if (fields.targetCompletionDate !== undefined) row.target_completion_date = fields.targetCompletionDate;
+
+  if (Object.keys(row).length === 0) return {};
+
+  const { error } = await supabase.from("projects").update(row).eq("id", projectId);
+  if (error) return { error: error.message };
+  return {};
 }

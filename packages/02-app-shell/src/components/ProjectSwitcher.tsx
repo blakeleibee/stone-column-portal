@@ -25,7 +25,9 @@
  * Server Action import of its own for reads either.
  */
 import React, { useState } from "react";
-import { colors, spacing, radius, typography, touchTarget } from "../design/tokens";
+import { colors, spacing, radius, typography, touchTarget, shadow } from "../design/tokens";
+import { StatusBadge } from "./ui/Badge";
+import type { BadgeTone } from "./ui/Badge";
 import type { ProjectRow, ProjectStatus } from "../services/projectService";
 
 const STATUS_LABELS: Record<ProjectStatus, string> = {
@@ -34,6 +36,18 @@ const STATUS_LABELS: Record<ProjectStatus, string> = {
   on_hold: "On Hold",
   closed_out: "Closed Out",
   archived: "Archived",
+};
+
+// Reuses the shared ui/ Badge tone vocabulary (application-wide visual
+// modernization) instead of this component's own bespoke
+// `sc-switcher-badge-${status}` color rules — same tone-per-status
+// mapping a reader would expect from StatusBadge elsewhere in the app.
+const STATUS_TONE: Record<ProjectStatus, BadgeTone> = {
+  draft: "neutral",
+  active: "sage",
+  on_hold: "gold",
+  closed_out: "neutral",
+  archived: "brick",
 };
 
 export interface ProjectSwitcherProps {
@@ -110,16 +124,28 @@ export function ProjectSwitcher({
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        {currentProject ? (
-          <>
-            <span className="sc-switcher-name">{currentProject.name}</span>
-            <span className={`sc-switcher-badge sc-switcher-badge-${currentProject.status}`}>
-              {STATUS_LABELS[currentProject.status]}
-            </span>
-          </>
-        ) : (
-          <span className="sc-switcher-name sc-switcher-empty-label">No project selected</span>
-        )}
+        {/* Labeling fix only (owner-preview polish pass, item 1) — the
+            trigger already had real switcher mechanics (caret,
+            aria-haspopup, click-to-open dropdown); nothing told a
+            first-time viewer that this was a switcher and not just a
+            label. This eyebrow doesn't change the mechanism at all. */}
+        <span className="sc-switcher-trigger-text">
+          <span className="sc-switcher-eyebrow">Current Project</span>
+          <span className="sc-switcher-name-line">
+            {currentProject ? (
+              <>
+                <span className="sc-switcher-name">{currentProject.name}</span>
+                <StatusBadge
+                  className="sc-switcher-badge-fix"
+                  label={STATUS_LABELS[currentProject.status]}
+                  tone={STATUS_TONE[currentProject.status]}
+                />
+              </>
+            ) : (
+              <span className="sc-switcher-name sc-switcher-empty-label">No project selected</span>
+            )}
+          </span>
+        </span>
         <span aria-hidden="true" className="sc-switcher-caret">
           ▾
         </span>
@@ -150,9 +176,11 @@ export function ProjectSwitcher({
                   onClick={() => handleSelect(project.id)}
                 >
                   <span className="sc-switcher-item-name">{project.name}</span>
-                  <span className={`sc-switcher-badge sc-switcher-badge-${project.status}`}>
-                    {STATUS_LABELS[project.status]}
-                  </span>
+                  <StatusBadge
+                    className="sc-switcher-badge-fix"
+                    label={STATUS_LABELS[project.status]}
+                    tone={STATUS_TONE[project.status]}
+                  />
                 </button>
               ))
             )}
@@ -183,32 +211,36 @@ export function ProjectSwitcher({
 
 const switcherStyles = `
 .sc-switcher { position: relative; }
-.sc-switcher-trigger { display: inline-flex; align-items: center; gap: 6px; min-height: ${touchTarget.minSize}; padding: 4px 8px; background: none; border: 1px solid transparent; border-radius: ${radius.sm}; cursor: pointer; max-width: 260px; }
-.sc-switcher-trigger:hover { border-color: ${colors.line}; }
+.sc-switcher-trigger { display: inline-flex; align-items: center; gap: ${spacing.xs}; min-height: ${touchTarget.minSize}; padding: ${spacing.xs} ${spacing.sm}; background: none; border: 1px solid transparent; border-radius: ${radius.sm}; cursor: pointer; max-width: 260px; transition: background-color 0.15s ease, border-color 0.15s ease; }
+.sc-switcher-trigger:hover { border-color: ${colors.line}; background: ${colors.paperDim}; }
+.sc-switcher-trigger:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: 2px; }
+.sc-switcher-trigger-text { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+.sc-switcher-eyebrow { font-size: 9.5px; font-weight: ${typography.weightSemibold}; letter-spacing: 0.06em; text-transform: uppercase; color: ${colors.stoneDark}; line-height: 1.2; }
+.sc-switcher-name-line { display: flex; align-items: center; gap: ${spacing.xs}; min-width: 0; }
 .sc-switcher-name { font-size: ${typography.sizeSm}; color: ${colors.ink}; font-weight: ${typography.weightMedium}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
 .sc-switcher-empty-label { color: ${colors.stoneDark}; font-weight: ${typography.weightRegular}; }
 .sc-switcher-caret { font-size: 10px; color: ${colors.stoneDark}; }
 
 .sc-switcher-backdrop { position: fixed; inset: 0; z-index: 40; background: transparent; }
-.sc-switcher-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 41; min-width: 260px; max-width: 320px; max-height: 360px; overflow-y: auto; background: ${colors.white}; border: 1px solid ${colors.line}; border-radius: ${radius.md}; box-shadow: 0 8px 24px rgba(34,38,43,0.16); padding: ${spacing.xs}; display: flex; flex-direction: column; gap: 2px; }
+.sc-switcher-menu { position: absolute; top: calc(100% + ${spacing.xs}); left: 0; z-index: 41; min-width: 260px; max-width: 320px; max-height: 360px; overflow-y: auto; background: ${colors.white}; border: 1px solid ${colors.line}; border-radius: ${radius.md}; box-shadow: ${shadow.md}; padding: ${spacing.xs}; display: flex; flex-direction: column; gap: 2px; }
 
-.sc-switcher-item { display: flex; align-items: center; justify-content: space-between; gap: ${spacing.sm}; width: 100%; text-align: left; padding: 7px 8px; background: none; border: none; border-radius: ${radius.sm}; cursor: pointer; font-family: ${typography.fontFamily}; }
-.sc-switcher-item:hover { background: ${colors.paperDim}; }
+.sc-switcher-item { display: flex; align-items: center; justify-content: space-between; gap: ${spacing.sm}; width: 100%; text-align: left; padding: ${spacing.xs} ${spacing.sm}; background: none; border: none; border-radius: ${radius.sm}; cursor: pointer; font-family: ${typography.fontFamily}; transition: background-color 0.15s ease; }
+.sc-switcher-item:hover:not(:disabled) { background: ${colors.paperDim}; }
+.sc-switcher-item:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: -2px; }
 .sc-switcher-item:disabled { opacity: 0.6; cursor: not-allowed; }
 .sc-switcher-item-name { font-size: ${typography.sizeSm}; color: ${colors.ink}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.sc-switcher-badge { flex-shrink: 0; display: inline-block; padding: 2px 7px; border-radius: ${radius.pill}; font-size: 10px; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
-.sc-switcher-badge-draft { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
-.sc-switcher-badge-active { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
-.sc-switcher-badge-on_hold { background: ${colors.goldTint}; color: ${colors.gold}; }
-.sc-switcher-badge-closed_out { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
-.sc-switcher-badge-archived { background: ${colors.brickTint}; color: ${colors.brick}; }
+/* Layout-only: the visual tone/shape of the status badge now comes from
+   the shared ui/ StatusBadge component (see STATUS_TONE above) — this
+   just keeps it from being squeezed by its flex sibling's ellipsis. */
+.sc-switcher-badge-fix { flex-shrink: 0; }
 
-.sc-switcher-empty-msg { margin: 0; padding: 8px; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; }
-.sc-switcher-error { margin: 0 0 4px 0; padding: 6px 8px; font-size: ${typography.sizeXs}; color: ${colors.brick}; background: ${colors.brickTint}; border-radius: ${radius.sm}; }
+.sc-switcher-empty-msg { margin: 0; padding: ${spacing.sm}; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; }
+.sc-switcher-error { margin: 0 0 ${spacing.xs} 0; padding: ${spacing.xs} ${spacing.sm}; font-size: ${typography.sizeXs}; color: ${colors.brick}; background: ${colors.brickTint}; border-radius: ${radius.sm}; }
 
-.sc-switcher-footer { border-top: 1px solid ${colors.line}; margin-top: 4px; padding-top: 4px; display: flex; flex-direction: column; }
-.sc-switcher-link { padding: 7px 8px; font-size: ${typography.sizeXs}; color: ${colors.ink2}; text-decoration: none; border-radius: ${radius.sm}; }
+.sc-switcher-footer { border-top: 1px solid ${colors.line}; margin-top: ${spacing.xs}; padding-top: ${spacing.xs}; display: flex; flex-direction: column; }
+.sc-switcher-link { padding: ${spacing.xs} ${spacing.sm}; font-size: ${typography.sizeXs}; color: ${colors.ink2}; text-decoration: none; border-radius: ${radius.sm}; transition: background-color 0.15s ease; }
 .sc-switcher-link:hover { background: ${colors.paperDim}; }
+.sc-switcher-link:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: -2px; }
 .sc-switcher-link-create { color: ${colors.sageDeep}; font-weight: ${typography.weightMedium}; }
 `;

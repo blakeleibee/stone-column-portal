@@ -34,6 +34,7 @@ import { buildAdminFinancialsViewModel } from "../src/viewmodels/buildAdminFinan
 import { buildClientBudgetViewModel } from "../src/viewmodels/buildClientBudgetViewModel";
 import type { FinancialRepository, ProjectMeta, ProjectClientVisibilitySettings } from "../src/data/financialRepository";
 import type { ClientBudgetViewModel } from "../src/viewmodels/types";
+import type { FeeRule } from "../../01-financial-engine/src/types";
 import { formatCents } from "../../01-financial-engine/src/money";
 
 let checks = 0;
@@ -103,7 +104,7 @@ class TestProjectBRepository implements FinancialRepository {
   }
   async getCommittedCosts() { return []; }
   async getForecastEntries() { return []; }
-  async getFeeRule() {
+  async getFeeRule(): Promise<FeeRule | null> {
     return { id: "b_fee1", projectId: "proj_test_b", feeBasis: "percentage" as const, feeBasisPoints: 1000, contingencyFeeEligible: false, allowanceFeeEligible: true, effectiveFrom: "2026-01-01" };
   }
   async getFeeLedgerEntries() { return []; }
@@ -119,6 +120,16 @@ class TestProjectBRepository implements FinancialRepository {
 
 class OffByOneCentRepository extends TestProjectBRepository {
   async getIndependentPostedActualCostCents() { return 200001; } // real posted total is 200000
+}
+
+/** Regression coverage for the P3.1 "pricing not yet determined" crash:
+ *  a project can now legitimately exist with zero project_fee_rules rows
+ *  (see financialRepository.ts's getFeeRule doc comment). This repository
+ *  simulates exactly that — getFeeRule() resolves to null, the way
+ *  SupabaseFinancialRepository.getFeeRule() now does via .maybeSingle()
+ *  when no row matches, instead of the old `.single()` throwing. */
+class NoFeeRuleRepository extends TestProjectBRepository {
+  async getFeeRule() { return null; }
 }
 
 /** Type guard used in place of `any` (per the standing "no any" rule)
@@ -139,7 +150,7 @@ async function main() {
   const clientVM = await buildClientBudgetViewModel("proj_hawksridge", fixtureRepo);
 
   console.log("\n--- Admin view model: internal fields present ---");
-  check("admin view model has feeSummary", adminVM.feeSummary !== undefined);
+  check("admin view model has feeSummary", adminVM.feeSummary !== undefined && adminVM.feeSummary !== null);
   check("admin view model has reconciliation", adminVM.reconciliation !== undefined);
   check("admin view model has suggestions array", Array.isArray(adminVM.suggestions));
   check("admin view model has per-category status", adminVM.categories.every((c) => typeof c.status === "string"));
@@ -161,6 +172,23 @@ async function main() {
   check("reconciliation FAILS when the independent control total differs by exactly one cent", !badVM.reconciliation.ok);
   check("the failing reconciliation reports the actual 1-cent discrepancy", badVM.reconciliation.issues.some((i) => Math.abs(i.expectedCents - i.actualCents) === 1));
 
+  console.log("\n--- Fee rule genuinely absent (\"pricing not yet determined\") does not crash ---");
+  const noFeeRuleRepo = new NoFeeRuleRepository();
+  const noFeeRuleVM = await buildAdminFinancialsViewModel("proj_test_b", noFeeRuleRepo);
+  check("buildAdminFinancialsViewModel resolves (does not throw) when getFeeRule() returns null", noFeeRuleVM !== undefined);
+  check("feeSummary is honestly null, not a fabricated zero", noFeeRuleVM.feeSummary === null);
+  check(
+    "the rest of the view model still computes normally from the real inputs",
+    noFeeRuleVM.totals.revisedEstimateCents === goodVM.totals.revisedEstimateCents
+  );
+  const noFeeRuleHtml = renderToStaticMarkup(
+    <AppShell role="admin" activeKey="financials" onNavigate={() => {}} userName="Staff" projectName={noFeeRuleVM.projectMeta.name}>
+      <AdminFinancialsScreen viewModel={noFeeRuleVM} />
+    </AppShell>
+  );
+  check("renders without throwing", noFeeRuleHtml.length > 500);
+  check("renders an honest 'not yet determined' message instead of a fee figure", noFeeRuleHtml.includes("Not yet determined"));
+
   console.log("\n--- Rendering: admin screen ---");
   const adminHtml = renderToStaticMarkup(
     <AppShell role="admin" activeKey="financials" onNavigate={() => {}} userName="Brent Leibee (Admin)" projectName={adminVM.projectMeta.name}>
@@ -169,7 +197,7 @@ async function main() {
   );
   check("renders the real project name", adminHtml.includes("Hawks Ridge Residence"));
   check("renders the reconciliation panel", adminHtml.includes("reconcile to the cent") || adminHtml.includes("Reconciliation issue"));
-  check("renders fee accrued (admin-only figure)", adminHtml.includes(formatCents(adminVM.feeSummary.feeAccruedCents)));
+  check("renders fee accrued (admin-only figure)", adminHtml.includes(formatCents(adminVM.feeSummary!.feeAccruedCents)));
   check("renders using the engine's real revised-estimate figure via formatCents, not a hardcoded string", adminHtml.includes(formatCents(adminVM.totals.revisedEstimateCents)));
   check(
     "suggestion list items use stable composite keys, not array indexes (structural check on the view model)",
@@ -194,7 +222,7 @@ async function main() {
   );
   check("renders without throwing", clientHtml.length > 500);
   check("preview banner says 'Client preview', not a claim this component can't back up", clientHtml.includes("Client preview") && !clientHtml.includes("reflects real client visibility rules"));
-  check("client screen does NOT render fee-accrued figure", !clientHtml.includes(formatCents(adminVM.feeSummary.feeAccruedCents)));
+  check("client screen does NOT render fee-accrued figure", !clientHtml.includes(formatCents(adminVM.feeSummary!.feeAccruedCents)));
   check("client screen does NOT render the word 'Suggested'", !clientHtml.includes("Suggested"));
   check("client screen does NOT render internal category status text", !clientHtml.includes("substantially_complete") && !clientHtml.includes("not_started"));
 

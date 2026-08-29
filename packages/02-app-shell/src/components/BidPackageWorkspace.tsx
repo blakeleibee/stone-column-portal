@@ -31,6 +31,15 @@
  * matches what ImportWizard.tsx itself does (manual `uploading`/
  * `confirming`/`rowsLoading` booleans), which is the concrete pattern
  * this component was told to follow.
+ *
+ * VISUAL MODERNIZATION (docs/production-build/VISUAL-MODERNIZATION-PLAN.md):
+ * markup now composes the shared `ui/` primitives (Card/PageHeader/
+ * Button/TextInput/Select/Textarea/FormField/Badge/Alert/EmptyState)
+ * instead of this file's own one-off `sc-bids-*` input/button/badge/
+ * error styling. Visual/structural only — every prop, handler, and the
+ * re-fetch-and-replace state-freshness rule above is unchanged. This
+ * file already used `<style dangerouslySetInnerHTML>` (not the raw,
+ * hydration-unsafe `<style>{...}</style>` form) and still does.
  */
 import React, { useState } from "react";
 import { colors, spacing, typography, radius } from "../design/tokens";
@@ -44,6 +53,8 @@ import type {
   BidQuestionRow,
   BidAddendumRow,
 } from "../services/bidService";
+import { Card, PageHeader, Button, TextInput, Textarea, Select, FormField, StatusBadge, Alert, EmptyState } from "./ui";
+import type { BadgeTone } from "./ui";
 
 type ActionResult = { error?: string } | void | undefined;
 
@@ -86,6 +97,25 @@ const SUBMISSION_STATUS_LABELS: Record<BidSubmissionRow["status"], string> = {
   withdrawn: "Withdrawn",
 };
 
+// Purely presentational tone mapping — reuses the shared Badge tone
+// vocabulary rather than this file's own bespoke `sc-bids-badge-pkg-*`/
+// `sc-bids-badge-sub-*` color rules (which set the exact same
+// sage/gold/brick/paperDim colors these tones already resolve to).
+const PACKAGE_STATUS_TONE: Record<BidPackageRow["status"], BadgeTone> = {
+  draft: "neutral",
+  published: "sage",
+  awarded: "gold",
+  cancelled: "brick",
+};
+
+const SUBMISSION_STATUS_TONE: Record<BidSubmissionRow["status"], BadgeTone> = {
+  invited: "neutral",
+  submitted: "sage",
+  awarded: "gold",
+  declined: "brick",
+  withdrawn: "neutral",
+};
+
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString();
@@ -120,11 +150,11 @@ function toBidPackageRow(detail: BidPackageDetail): BidPackageRow {
 }
 
 function PackageStatusBadge({ status }: { status: BidPackageRow["status"] }) {
-  return <span className={`sc-bids-badge sc-bids-badge-pkg-${status}`}>{PACKAGE_STATUS_LABELS[status]}</span>;
+  return <StatusBadge label={PACKAGE_STATUS_LABELS[status]} tone={PACKAGE_STATUS_TONE[status]} />;
 }
 
 function SubmissionStatusBadge({ status }: { status: BidSubmissionRow["status"] }) {
-  return <span className={`sc-bids-badge sc-bids-badge-sub-${status}`}>{SUBMISSION_STATUS_LABELS[status]}</span>;
+  return <StatusBadge label={SUBMISSION_STATUS_LABELS[status]} tone={SUBMISSION_STATUS_TONE[status]} />;
 }
 
 export function BidPackageWorkspace({
@@ -476,11 +506,12 @@ export function BidPackageWorkspace({
 
   return (
     <div className="sc-bids-workspace">
+      <PageHeader title="Bid Packages" subtitle="Manage vendor bid packages, submissions, questions, and addenda." />
       <div className="sc-bids-layout">
-        <div className="sc-bids-list-col">
-          <h3>Bid Packages</h3>
-          {packages.length === 0 && <p className="sc-bids-empty">No bid packages yet. Create one to get started.</p>}
-          {packages.length > 0 && (
+        <Card className="sc-bids-list-col">
+          {packages.length === 0 ? (
+            <EmptyState title="No bid packages yet" description="Create one below to get started." />
+          ) : (
             <ul className="sc-bids-list">
               {packages.map((pkg) => (
                 <li key={pkg.id}>
@@ -501,20 +532,16 @@ export function BidPackageWorkspace({
           <section className="sc-bids-create">
             <h4>Create a bid package</h4>
             <form onSubmit={handleCreateSubmit} className="sc-bids-form">
-              <div className="sc-bids-field">
-                <label htmlFor="sc-bids-create-title">Title</label>
-                <input
+              <FormField label="Title" htmlFor="sc-bids-create-title">
+                <TextInput
                   id="sc-bids-create-title"
-                  className="sc-bids-input"
                   value={createTitle}
                   onChange={(e) => setCreateTitle(e.target.value)}
                 />
-              </div>
-              <div className="sc-bids-field">
-                <label htmlFor="sc-bids-create-costcode">Cost code</label>
-                <select
+              </FormField>
+              <FormField label="Cost code" htmlFor="sc-bids-create-costcode">
+                <Select
                   id="sc-bids-create-costcode"
-                  className="sc-bids-input"
                   value={createCostCodeId}
                   onChange={(e) => setCreateCostCodeId(e.target.value)}
                 >
@@ -525,49 +552,48 @@ export function BidPackageWorkspace({
                       {cc.activityName ? ` — ${cc.activityName}` : ""}
                     </option>
                   ))}
-                </select>
-              </div>
-              <div className="sc-bids-field">
-                <label htmlFor="sc-bids-create-scope">Scope description (optional)</label>
-                <textarea
+                </Select>
+              </FormField>
+              <FormField label="Scope description (optional)" htmlFor="sc-bids-create-scope">
+                <Textarea
                   id="sc-bids-create-scope"
-                  className="sc-bids-input"
                   rows={2}
                   value={createScope}
                   onChange={(e) => setCreateScope(e.target.value)}
                 />
-              </div>
-              <div className="sc-bids-field">
-                <label htmlFor="sc-bids-create-due">Due date (optional)</label>
-                <input
+              </FormField>
+              <FormField label="Due date (optional)" htmlFor="sc-bids-create-due">
+                <TextInput
                   id="sc-bids-create-due"
                   type="date"
-                  className="sc-bids-input"
                   value={createDueAt}
                   onChange={(e) => setCreateDueAt(e.target.value)}
                 />
-              </div>
-              <button type="submit" className="sc-bids-btn sc-bids-btn-primary" disabled={createSubmitting}>
-                {createSubmitting ? "Creating…" : "Create Package"}
-              </button>
-              {createError && <div className="sc-bids-error">{createError}</div>}
+              </FormField>
+              <Button type="submit" variant="primary" disabled={createSubmitting} loading={createSubmitting} loadingText="Creating…">
+                Create Package
+              </Button>
+              {createError && <Alert tone="error">{createError}</Alert>}
             </form>
           </section>
-        </div>
+        </Card>
 
-        <div className="sc-bids-detail-col">
+        <Card className="sc-bids-detail-col">
           {!selectedId && (
-            <p className="sc-bids-empty">Select a bid package on the left to view its detail, or create one to get started.</p>
+            <EmptyState
+              title="No package selected"
+              description="Select a bid package on the left to view its detail, or create one to get started."
+            />
           )}
 
           {selectedId && detailLoading && !detail && !detailError && <p>Loading…</p>}
 
           {selectedId && detailError && (
             <div className="sc-bids-detail-error">
-              <div className="sc-bids-error">{detailError}</div>
-              <button type="button" className="sc-bids-btn" onClick={handleRetryDetail}>
+              <Alert tone="error">{detailError}</Alert>
+              <Button variant="secondary" size="sm" onClick={handleRetryDetail}>
                 Retry
-              </button>
+              </Button>
             </div>
           )}
 
@@ -583,22 +609,17 @@ export function BidPackageWorkspace({
               </p>
 
               {detail.status === "awarded" && (
-                <div className="sc-bids-note">
+                <Alert tone="info">
                   Bid awarded. View the resulting commitment in <a href="/admin/commitments">Commitments</a>.
-                </div>
+                </Alert>
               )}
 
               {detail.status === "draft" && (
                 <div className="sc-bids-inline-form">
-                  <button
-                    type="button"
-                    className="sc-bids-btn sc-bids-btn-primary"
-                    disabled={publishSubmitting}
-                    onClick={handlePublish}
-                  >
-                    {publishSubmitting ? "Publishing…" : "Publish"}
-                  </button>
-                  {publishError && <div className="sc-bids-error">{publishError}</div>}
+                  <Button variant="primary" disabled={publishSubmitting} loading={publishSubmitting} loadingText="Publishing…" onClick={handlePublish}>
+                    Publish
+                  </Button>
+                  {publishError && <Alert tone="error">{publishError}</Alert>}
                 </div>
               )}
 
@@ -606,8 +627,7 @@ export function BidPackageWorkspace({
                 <h4>Vendors &amp; submissions</h4>
 
                 <div className="sc-bids-inline-form">
-                  <select
-                    className="sc-bids-input"
+                  <Select
                     value={inviteVendorId}
                     onChange={(e) => setInviteVendorId(e.target.value)}
                     aria-label="Vendor to invite"
@@ -618,15 +638,15 @@ export function BidPackageWorkspace({
                         {v.name}
                       </option>
                     ))}
-                  </select>
-                  <button type="button" className="sc-bids-btn" disabled={inviteSubmitting} onClick={handleInvite}>
-                    {inviteSubmitting ? "Inviting…" : "Invite"}
-                  </button>
+                  </Select>
+                  <Button variant="secondary" disabled={inviteSubmitting} loading={inviteSubmitting} loadingText="Inviting…" onClick={handleInvite}>
+                    Invite
+                  </Button>
                 </div>
-                {inviteError && <div className="sc-bids-error">{inviteError}</div>}
+                {inviteError && <Alert tone="error">{inviteError}</Alert>}
 
                 {detail.submissions.length === 0 ? (
-                  <p className="sc-bids-empty">No vendors invited yet</p>
+                  <EmptyState title="No vendors invited yet" />
                 ) : (
                   <table className="sc-bids-table">
                     <thead>
@@ -648,59 +668,67 @@ export function BidPackageWorkspace({
                           <td>
                             {sub.status === "invited" && (
                               <div className="sc-bids-inline-form">
-                                <input
+                                <TextInput
                                   type="number"
                                   step="0.01"
                                   placeholder="Amount ($)"
-                                  className="sc-bids-input sc-bids-input-narrow"
+                                  className="sc-bids-input-narrow"
                                   value={amountDrafts[sub.id] ?? ""}
                                   onChange={(e) => setAmountDrafts((prev) => ({ ...prev, [sub.id]: e.target.value }))}
                                   aria-label={`Bid amount for ${sub.vendorName}`}
                                 />
-                                <button
-                                  type="button"
-                                  className="sc-bids-btn"
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
                                   disabled={!!recordSubmitting[sub.id]}
+                                  loading={!!recordSubmitting[sub.id]}
+                                  loadingText="Recording…"
                                   onClick={() => handleRecordSubmission(sub.id)}
                                 >
-                                  {recordSubmitting[sub.id] ? "Recording…" : "Record"}
-                                </button>
-                                {recordErrors[sub.id] && <div className="sc-bids-error">{recordErrors[sub.id]}</div>}
+                                  Record
+                                </Button>
+                                {recordErrors[sub.id] && <Alert tone="error">{recordErrors[sub.id]}</Alert>}
                               </div>
                             )}
 
                             {sub.status === "submitted" &&
                               (awardConfirmId === sub.id ? (
                                 <div className="sc-bids-confirm">
-                                  <p>Award this bid? This creates a commitment and declines every other submitted bid on this package.</p>
-                                  <button
-                                    type="button"
-                                    className="sc-bids-btn sc-bids-btn-primary"
-                                    disabled={!!awardSubmitting[sub.id]}
-                                    onClick={() => handleAwardConfirm(sub.id)}
-                                  >
-                                    {awardSubmitting[sub.id] ? "Awarding…" : "Yes, award"}
-                                  </button>
-                                  <button type="button" className="sc-bids-btn" onClick={handleAwardCancel}>
-                                    Cancel
-                                  </button>
-                                  {awardErrors[sub.id] && <div className="sc-bids-error">{awardErrors[sub.id]}</div>}
+                                  <Alert tone="warning" title="Award this bid?">
+                                    This creates a commitment and declines every other submitted bid on this package.
+                                  </Alert>
+                                  <div className="sc-bids-confirm-actions">
+                                    <Button
+                                      variant="primary"
+                                      size="sm"
+                                      disabled={!!awardSubmitting[sub.id]}
+                                      loading={!!awardSubmitting[sub.id]}
+                                      loadingText="Awarding…"
+                                      onClick={() => handleAwardConfirm(sub.id)}
+                                    >
+                                      Yes, award
+                                    </Button>
+                                    <Button variant="secondary" size="sm" onClick={handleAwardCancel}>
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                  {awardErrors[sub.id] && <Alert tone="error">{awardErrors[sub.id]}</Alert>}
                                 </div>
                               ) : (
-                                <button type="button" className="sc-bids-btn" onClick={() => handleAwardClick(sub.id)}>
+                                <Button variant="secondary" size="sm" onClick={() => handleAwardClick(sub.id)}>
                                   Award
-                                </button>
+                                </Button>
                               ))}
 
                             {sub.status === "awarded" && (
-                              <button
-                                type="button"
-                                className="sc-bids-btn"
+                              <Button
+                                variant="secondary"
+                                size="sm"
                                 disabled
                                 title="Issue Subcontract ships with Task 8's document issuance service."
                               >
                                 Issue Subcontract (coming soon)
-                              </button>
+                              </Button>
                             )}
 
                             {(sub.status === "declined" || sub.status === "withdrawn") && (
@@ -716,9 +744,9 @@ export function BidPackageWorkspace({
 
               <section className="sc-bids-section">
                 <h4>Questions &amp; answers</h4>
-                {questionsError && <div className="sc-bids-error">{questionsError}</div>}
+                {questionsError && <Alert tone="error">{questionsError}</Alert>}
                 {questions.length === 0 ? (
-                  <p className="sc-bids-empty">No questions logged yet.</p>
+                  <EmptyState title="No questions logged yet." />
                 ) : (
                   <ul className="sc-bids-qa-list">
                     {questions.map((q) => (
@@ -734,30 +762,31 @@ export function BidPackageWorkspace({
                           </p>
                         ) : answerOpenId === q.id ? (
                           <div className="sc-bids-inline-form">
-                            <textarea
-                              className="sc-bids-input"
+                            <Textarea
                               rows={2}
                               value={answerDrafts[q.id] ?? ""}
                               onChange={(e) => setAnswerDrafts((prev) => ({ ...prev, [q.id]: e.target.value }))}
                               aria-label="Answer text"
                             />
-                            <button
-                              type="button"
-                              className="sc-bids-btn sc-bids-btn-primary"
+                            <Button
+                              variant="primary"
+                              size="sm"
                               disabled={!!answerSubmitting[q.id]}
+                              loading={!!answerSubmitting[q.id]}
+                              loadingText="Saving…"
                               onClick={() => handleAnswer(q.id)}
                             >
-                              {answerSubmitting[q.id] ? "Saving…" : "Save answer"}
-                            </button>
-                            <button type="button" className="sc-bids-btn" onClick={() => setAnswerOpenId(null)}>
+                              Save answer
+                            </Button>
+                            <Button variant="secondary" size="sm" onClick={() => setAnswerOpenId(null)}>
                               Cancel
-                            </button>
-                            {answerErrors[q.id] && <div className="sc-bids-error">{answerErrors[q.id]}</div>}
+                            </Button>
+                            {answerErrors[q.id] && <Alert tone="error">{answerErrors[q.id]}</Alert>}
                           </div>
                         ) : (
-                          <button type="button" className="sc-bids-btn" onClick={() => setAnswerOpenId(q.id)}>
+                          <Button variant="secondary" size="sm" onClick={() => setAnswerOpenId(q.id)}>
                             Answer
-                          </button>
+                          </Button>
                         )}
                       </li>
                     ))}
@@ -766,11 +795,9 @@ export function BidPackageWorkspace({
 
                 <form onSubmit={handleAskQuestion} className="sc-bids-form">
                   <h5>Log a question</h5>
-                  <div className="sc-bids-field">
-                    <label htmlFor="sc-bids-question-vendor">Asked by</label>
-                    <select
+                  <FormField label="Asked by" htmlFor="sc-bids-question-vendor" hint={detail.submissions.length === 0 ? "Invite a vendor before logging a question." : undefined}>
+                    <Select
                       id="sc-bids-question-vendor"
-                      className="sc-bids-input"
                       value={questionVendorId}
                       onChange={(e) => setQuestionVendorId(e.target.value)}
                       disabled={detail.submissions.length === 0}
@@ -781,35 +808,34 @@ export function BidPackageWorkspace({
                           {sub.vendorName}
                         </option>
                       ))}
-                    </select>
-                  </div>
-                  {detail.submissions.length === 0 && <p className="sc-bids-hint">Invite a vendor before logging a question.</p>}
-                  <div className="sc-bids-field">
-                    <label htmlFor="sc-bids-question-text">Question</label>
-                    <textarea
+                    </Select>
+                  </FormField>
+                  <FormField label="Question" htmlFor="sc-bids-question-text">
+                    <Textarea
                       id="sc-bids-question-text"
-                      className="sc-bids-input"
                       rows={2}
                       value={questionText}
                       onChange={(e) => setQuestionText(e.target.value)}
                     />
-                  </div>
-                  <button
+                  </FormField>
+                  <Button
                     type="submit"
-                    className="sc-bids-btn sc-bids-btn-primary"
+                    variant="primary"
                     disabled={questionSubmitting || detail.submissions.length === 0}
+                    loading={questionSubmitting}
+                    loadingText="Logging…"
                   >
-                    {questionSubmitting ? "Logging…" : "Log Question"}
-                  </button>
-                  {questionError && <div className="sc-bids-error">{questionError}</div>}
+                    Log Question
+                  </Button>
+                  {questionError && <Alert tone="error">{questionError}</Alert>}
                 </form>
               </section>
 
               <section className="sc-bids-section">
                 <h4>Addenda</h4>
-                {addendaError && <div className="sc-bids-error">{addendaError}</div>}
+                {addendaError && <Alert tone="error">{addendaError}</Alert>}
                 {addenda.length === 0 ? (
-                  <p className="sc-bids-empty">No addenda issued yet.</p>
+                  <EmptyState title="No addenda issued yet." />
                 ) : (
                   <ul className="sc-bids-addenda-list">
                     {addenda.map((a) => (
@@ -826,44 +852,38 @@ export function BidPackageWorkspace({
 
                 <form onSubmit={handleIssueAddendum} className="sc-bids-form">
                   <h5>Issue an addendum</h5>
-                  <div className="sc-bids-field">
-                    <label htmlFor="sc-bids-addendum-title">Title</label>
-                    <input
+                  <FormField label="Title" htmlFor="sc-bids-addendum-title">
+                    <TextInput
                       id="sc-bids-addendum-title"
-                      className="sc-bids-input"
                       value={addendumTitle}
                       onChange={(e) => setAddendumTitle(e.target.value)}
                     />
-                  </div>
-                  <div className="sc-bids-field">
-                    <label htmlFor="sc-bids-addendum-body">Body</label>
-                    <textarea
+                  </FormField>
+                  <FormField label="Body" htmlFor="sc-bids-addendum-body">
+                    <Textarea
                       id="sc-bids-addendum-body"
-                      className="sc-bids-input"
                       rows={3}
                       value={addendumBody}
                       onChange={(e) => setAddendumBody(e.target.value)}
                     />
-                  </div>
-                  <div className="sc-bids-field">
-                    <label htmlFor="sc-bids-addendum-due">Revised due date (optional)</label>
-                    <input
+                  </FormField>
+                  <FormField label="Revised due date (optional)" htmlFor="sc-bids-addendum-due">
+                    <TextInput
                       id="sc-bids-addendum-due"
                       type="date"
-                      className="sc-bids-input"
                       value={addendumDueAt}
                       onChange={(e) => setAddendumDueAt(e.target.value)}
                     />
-                  </div>
-                  <button type="submit" className="sc-bids-btn sc-bids-btn-primary" disabled={addendumSubmitting}>
-                    {addendumSubmitting ? "Issuing…" : "Issue Addendum"}
-                  </button>
-                  {addendumError && <div className="sc-bids-error">{addendumError}</div>}
+                  </FormField>
+                  <Button type="submit" variant="primary" disabled={addendumSubmitting} loading={addendumSubmitting} loadingText="Issuing…">
+                    Issue Addendum
+                  </Button>
+                  {addendumError && <Alert tone="error">{addendumError}</Alert>}
                 </form>
               </section>
             </div>
           )}
-        </div>
+        </Card>
       </div>
       <style dangerouslySetInnerHTML={{ __html: workspaceStyles }} />
     </div>
@@ -882,21 +902,11 @@ const workspaceStyles = `
 .sc-bids-list-due { font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; }
 .sc-bids-create { border-top: 1px solid ${colors.line}; padding-top: ${spacing.md}; }
 .sc-bids-create h4 { margin: 0 0 ${spacing.sm} 0; font-size: ${typography.sizeSm}; text-transform: uppercase; letter-spacing: 0.02em; color: ${colors.stoneDark}; }
-.sc-bids-form { display: flex; flex-direction: column; gap: ${spacing.sm}; align-items: flex-start; }
+.sc-bids-form { display: flex; flex-direction: column; gap: ${spacing.sm}; align-items: flex-start; width: 100%; }
 .sc-bids-form h5 { margin: ${spacing.md} 0 0 0; font-size: ${typography.sizeSm}; color: ${colors.stoneDark}; }
-.sc-bids-field { display: flex; flex-direction: column; gap: 4px; width: 100%; max-width: 420px; }
-.sc-bids-field label { font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
-.sc-bids-input { padding: 6px 8px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; font-family: ${typography.fontFamily}; font-size: ${typography.sizeSm}; color: ${colors.ink}; background: ${colors.white}; }
 .sc-bids-input-narrow { max-width: 140px; }
-.sc-bids-btn { padding: 7px 13px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; background: ${colors.white}; color: ${colors.ink2}; font-size: ${typography.sizeSm}; cursor: pointer; align-self: flex-start; }
-.sc-bids-btn-primary { background: ${colors.sage}; color: ${colors.white}; border-color: ${colors.sage}; }
-.sc-bids-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.sc-bids-error { color: ${colors.brick}; font-size: ${typography.sizeXs}; margin-top: 4px; }
 .sc-bids-empty { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
-.sc-bids-hint { color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; margin: 0; }
 .sc-bids-muted { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
-.sc-bids-note { background: ${colors.goldTint}; color: ${colors.ink}; border-radius: ${radius.md}; padding: ${spacing.sm} ${spacing.md}; font-size: ${typography.sizeSm}; margin: ${spacing.sm} 0; }
-.sc-bids-note a { color: ${colors.sageDeep}; font-weight: ${typography.weightSemibold}; }
 .sc-bids-detail-error { display: flex; align-items: center; gap: ${spacing.sm}; }
 .sc-bids-detail-header { display: flex; align-items: center; gap: ${spacing.sm}; }
 .sc-bids-detail-header h3 { margin: 0; }
@@ -908,8 +918,8 @@ const workspaceStyles = `
 .sc-bids-table { width: 100%; border-collapse: collapse; font-size: ${typography.sizeSm}; margin-top: ${spacing.sm}; }
 .sc-bids-table th { padding: 6px 8px; border-bottom: 1px solid ${colors.line}; font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; text-transform: uppercase; letter-spacing: 0.02em; }
 .sc-bids-table td { padding: 6px 8px; border-bottom: 1px solid ${colors.paperDim}; vertical-align: top; }
-.sc-bids-confirm { background: ${colors.brickTint}; border-radius: ${radius.md}; padding: ${spacing.sm}; display: flex; flex-direction: column; gap: ${spacing.xs}; align-items: flex-start; max-width: 360px; }
-.sc-bids-confirm p { margin: 0; font-size: ${typography.sizeXs}; color: ${colors.ink}; }
+.sc-bids-confirm { display: flex; flex-direction: column; gap: ${spacing.xs}; max-width: 360px; }
+.sc-bids-confirm-actions { display: flex; gap: ${spacing.xs}; align-items: center; }
 .sc-bids-qa-list, .sc-bids-addenda-list { list-style: none; padding: 0; margin: 0 0 ${spacing.md} 0; display: flex; flex-direction: column; gap: ${spacing.sm}; }
 .sc-bids-qa-item { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.sm}; }
 .sc-bids-qa-question { margin: 0 0 4px 0; font-weight: ${typography.weightMedium}; }
@@ -917,14 +927,4 @@ const workspaceStyles = `
 .sc-bids-qa-answer { margin: 6px 0 0 0; font-size: ${typography.sizeSm}; }
 .sc-bids-addenda-list li { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.sm}; }
 .sc-bids-addendum-title { margin: 0 0 4px 0; }
-.sc-bids-badge { display: inline-block; padding: 2px 8px; border-radius: ${radius.pill}; font-size: ${typography.sizeXs}; font-weight: ${typography.weightMedium}; text-transform: uppercase; letter-spacing: 0.02em; }
-.sc-bids-badge-pkg-draft { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
-.sc-bids-badge-pkg-published { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
-.sc-bids-badge-pkg-awarded { background: ${colors.goldTint}; color: ${colors.gold}; }
-.sc-bids-badge-pkg-cancelled { background: ${colors.brickTint}; color: ${colors.brick}; }
-.sc-bids-badge-sub-invited { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
-.sc-bids-badge-sub-submitted { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
-.sc-bids-badge-sub-awarded { background: ${colors.goldTint}; color: ${colors.gold}; }
-.sc-bids-badge-sub-declined { background: ${colors.brickTint}; color: ${colors.brick}; }
-.sc-bids-badge-sub-withdrawn { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
 `;

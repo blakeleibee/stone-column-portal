@@ -10,6 +10,8 @@ import type { ProjectSwitcherData } from "../../../src/server/project/switcherDa
 import { createProject } from "./createAction";
 import { switchProject } from "./switchAction";
 import { changeProjectStatus } from "./statusAction";
+import { upsertProjectBrief } from "./briefAction";
+import { upsertProjectContact } from "./contactAction";
 
 /**
  * Real project list (Task 4) — replaces the previous stub, which
@@ -67,12 +69,17 @@ export default async function AdminProjectsPage({
     // query exactly — without this, a deactivated staff member was
     // assignable at project-creation time even though the team screen
     // already refuses to offer them.
+    // role="staff" only (P3.1 Task 4): the create panel no longer offers
+    // an existing-client-login picker — see ProjectListWorkspace.tsx's
+    // own create-form comment for why that's a different concept from
+    // the new project_clients contact quick-add, and this screen's Task
+    // 4 report for the reasoning behind dropping it from create time.
     supabase
       .from("profiles")
       .select("id, full_name, role, staff_function")
       .eq("org_id", user.orgId)
       .eq("is_active", true)
-      .in("role", ["staff", "client"]),
+      .eq("role", "staff"),
   ]);
 
   // Server-resolved ProjectSwitcher data (final-review fix wave, Minor
@@ -112,7 +119,17 @@ export default async function AdminProjectsPage({
   const staffOptions = profileRows
     .filter((p) => p.role === "staff")
     .map((p) => ({ id: p.id, name: p.full_name, staffFunction: p.staff_function ?? null }));
-  const clientOptions = profileRows.filter((p) => p.role === "client").map((p) => ({ id: p.id, name: p.full_name }));
+
+  // Per-tab counts for the Active/Completed/Archived Tabs (owner-preview
+  // polish pass, item 2) -- derived from the SAME allAccessible array
+  // already fetched above for this page's own content (no new query).
+  // Mirrors the exact bucketing `view`'s own filter uses just above, so
+  // a tab's count and its own filtered list can never disagree.
+  const activeCount = allAccessible.filter(
+    (project) => project.status !== "archived" && project.status !== "closed_out"
+  ).length;
+  const completedCount = allAccessible.filter((project) => project.status === "closed_out").length;
+  const archivedCount = allAccessible.filter((project) => project.status === "archived").length;
 
   return (
     <AdminChrome activeKey="projects" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
@@ -123,18 +140,16 @@ export default async function AdminProjectsPage({
         orgId={user.orgId}
         isAdmin={user.role === "admin"}
         staffOptions={staffOptions}
-        clientOptions={clientOptions}
-        // Org-wide, all-statuses project numbers (not just this view's
-        // filtered `projects`) — the safe-next-number suggestion (item 5)
-        // must avoid colliding with an archived/completed project's
-        // number too, since uniqueness is enforced org-wide regardless of
-        // status.
-        allProjectNumbers={allAccessible.map((project) => project.projectNumber)}
         hasCompletedProjects={allAccessible.some((project) => project.status === "closed_out")}
         hasArchivedProjects={allAccessible.some((project) => project.status === "archived")}
+        activeCount={activeCount}
+        completedCount={completedCount}
+        archivedCount={archivedCount}
         initialCreateOpen={searchParams.new === "1"}
         createProject={createProject}
         switchProject={switchProject}
+        briefAction={upsertProjectBrief}
+        contactAction={upsertProjectContact}
         changeProjectStatus={changeProjectStatus}
         activeProjectsHref="/admin/projects"
         completedProjectsHref="/admin/projects?view=completed"
