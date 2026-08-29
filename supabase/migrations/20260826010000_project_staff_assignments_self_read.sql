@@ -1,0 +1,54 @@
+-- =====================================================================
+-- Stone Column Portal — Migration 019: project_staff_assignments
+-- self-read (Package P3.1, Task 9 gap-closure). See
+-- docs/production-build/P3.1-DESIGN.md §8 and
+-- docs/superpowers/plans/2026-08-26-p3.1-project-intake-and-handoff.md's
+-- Task 9 section for the "Your assignment" Overview card this migration
+-- exists to support.
+--
+-- FINDING (Task 9 implementation): design §8 says the "Your assignment"
+-- card is shown "for any staff session with an active assignment on the
+-- current project" and must render the assignment's own `requested_work`
+-- / `priority` / `target_due_date` / `next_action` / `internal_instructions`
+-- columns. But `project_staff_assignments`' ONLY RLS policy
+-- (`project_staff_assignments_admin_manage`, schema/016) is `for all to
+-- authenticated using (is_org_admin_for_org(...))` — admin-only,
+-- including SELECT. A `project_manager`/`superintendent`/`accounting`/
+-- `general` staff session (the actual audience of a handoff note) gets
+-- ZERO rows back from a direct SELECT against this table today, even for
+-- their own row — confirmed by reading schema/016 directly, not assumed.
+-- Design §8's own text ("the assigned employee already sees the project
+-- ... that structural minimum already exists and needs no new code")
+-- conflates "can see the project" (via `is_org_staff()`, used by
+-- `projects_staff_select`) with "can read their own assignment row's
+-- handoff columns" (a completely different table/policy) — the two are
+-- not the same guarantee. Without this migration, the card described in
+-- design §8 is non-functional for its primary audience.
+--
+-- FIX: one small, additive, narrowly-scoped permissive SELECT policy —
+-- a caller may read a project_staff_assignments row WHERE THAT ROW'S
+-- OWN `profile_id` equals their own `auth.uid()`. Postgres RLS combines
+-- multiple permissive policies for the same command with OR, so this
+-- only WIDENS SELECT (and only for a caller's own row); it does not
+-- touch `project_staff_assignments_admin_manage` at all, which remains
+-- the sole, unchanged gate on INSERT/UPDATE/DELETE and on every OTHER
+-- row's SELECT (Decision 1a — writes to this table, and visibility into
+-- anyone else's row, stay admin-only; a PM editing their own handoff
+-- note text remains explicitly out of scope, per design §8's own note).
+-- `profile_id = auth.uid()` is safe and correct because `profiles.id`
+-- IS `auth.users.id` (schema/001: `profiles.id uuid primary key
+-- references auth.users(id)`), the same identity equality every other
+-- self-read policy in this schema uses (e.g.
+-- `profiles_select_self_or_org_staff`, schema/001).
+--
+-- Not restricted to `revoked_at is null` — a caller may also read their
+-- own REVOKED row (their own historical record, no cross-user exposure);
+-- the "active assignment only" filter for the Overview card is an
+-- application-layer concern (see
+-- projectIntakeService.getMyActiveAssignmentForProject()), not an RLS
+-- concern.
+-- =====================================================================
+
+create policy project_staff_assignments_self_select on project_staff_assignments
+  for select to authenticated
+  using (profile_id = auth.uid());

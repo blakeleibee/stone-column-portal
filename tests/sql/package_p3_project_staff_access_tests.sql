@@ -967,9 +967,16 @@ declare
 begin
   select org_id into v_org_id from profiles where id = (select value from test_fixture_ids where key = 'admin');
 
+  -- NOTE (schema/018): create_project_with_defaults() no longer takes a
+  -- caller-supplied project_number (it's generated internally via
+  -- generate_project_number()), and only inserts a project_fee_rules
+  -- row when pricing_model is one of the two fee-supported values
+  -- (cost_plus_percentage/cost_plus_fixed_fee) — 'cost_plus_percentage'
+  -- used here (was 'fixed_price') so the "exactly one fee rule row"
+  -- assertion below still holds.
   select create_project_with_defaults(
-    v_org_id, 'P3 New Project', 'P3-NEW-001', '123 Test St', 'New Build',
-    'fixed_price'::pricing_model, 'Fixed Price',
+    v_org_id, 'P3 New Project', '123 Test St', 'New Build',
+    'cost_plus_percentage'::pricing_model, 'Cost-Plus (15%)',
     'percentage'::fee_basis, 1500, null,
     array[(select value from test_fixture_ids where key = 'pm_a')],
     array[(select value from test_fixture_ids where key = 'client_a')]
@@ -1007,15 +1014,23 @@ end $$;
 -- function's own explicit checks raise BEFORE any insert, so this
 -- cheaply proves "no orphaned row" but not mid-transaction rollback —
 -- see the mid-function failure test below for that.
+--
+-- NOTE (schema/018): project_number is no longer a caller-supplied
+-- parameter, so the "no orphaned row" assertions below key off `name`
+-- (still a real caller-supplied parameter) instead of the now-removed
+-- project_number literal, which would never match a real (auto-
+-- generated SC-YYYY-###) row anyway and would make the assertion
+-- vacuously true regardless of whether the bug it's guarding against
+-- was actually present.
 select assert_raises(
   format(
-    $sql$select create_project_with_defaults(%L, 'Bad Fee Project', 'P3-BADFEE-001', null, null, 'fixed_price'::pricing_model, null, 'percentage'::fee_basis, 1500, 5000, '{}'::uuid[], '{}'::uuid[])$sql$,
+    $sql$select create_project_with_defaults(%L, 'Bad Fee Project', null, null, 'cost_plus_percentage'::pricing_model, null, 'percentage'::fee_basis, 1500, 5000, '{}'::uuid[], '{}'::uuid[])$sql$,
     (select org_id from profiles where id = (select value from test_fixture_ids where key = 'admin'))
   ),
   'fee_basis=percentage with BOTH fee_basis_points and fee_fixed_amount_cents supplied must be rejected before any row is written'
 );
 select assert_that(
-  (select count(*) from projects where project_number = 'P3-BADFEE-001') = 0,
+  (select count(*) from projects where name = 'Bad Fee Project') = 0,
   'the fee-basis-validation failure leaves no projects row at all'
 );
 
@@ -1026,16 +1041,20 @@ select assert_that(
 -- template have already been inserted inside this same call. The
 -- org-match trigger then raises, proving the whole call rolls back
 -- atomically — not merely that validation happened to run first.
+-- 'cost_plus_percentage' (fee-supported) used deliberately, so the
+-- project_fee_rules row genuinely gets inserted before the rollback —
+-- an unsupported pricing model would skip that insert entirely
+-- (schema/018), which would make this comment's claim false.
 select assert_raises(
   format(
-    $sql$select create_project_with_defaults(%L, 'Orphan Test Project', 'P3-ORPHAN-001', null, null, 'fixed_price'::pricing_model, null, 'percentage'::fee_basis, 1000, null, array[%L]::uuid[], '{}'::uuid[])$sql$,
+    $sql$select create_project_with_defaults(%L, 'Orphan Test Project', null, null, 'cost_plus_percentage'::pricing_model, null, 'percentage'::fee_basis, 1000, null, array[%L]::uuid[], '{}'::uuid[])$sql$,
     (select org_id from profiles where id = (select value from test_fixture_ids where key = 'admin')),
     (select value from test_fixture_ids where key = 'org_b_admin')
   ),
   'assigning an org-B profile as initial staff must fail deep inside the function (after the projects/fee_rules/cost-code-template inserts already ran) via the org-match trigger'
 );
 select assert_that(
-  (select count(*) from projects where project_number = 'P3-ORPHAN-001') = 0,
+  (select count(*) from projects where name = 'Orphan Test Project') = 0,
   'the mid-function failure (org-mismatched staff assignment) leaves NO projects row — the whole call rolled back atomically, including the already-inserted fee rule and 7-division/113-cost-code template, not just the failing insert'
 );
 
@@ -1047,7 +1066,7 @@ select set_test_user((select value from test_fixture_ids where key = 'pm_a'));
 set local role authenticated;
 select assert_raises(
   format(
-    $sql$select create_project_with_defaults(%L, 'PM Attempt', 'P3-PM-001', null, null, 'fixed_price'::pricing_model, null, 'percentage'::fee_basis, 1000, null, '{}'::uuid[], '{}'::uuid[])$sql$,
+    $sql$select create_project_with_defaults(%L, 'PM Attempt', null, null, 'cost_plus_percentage'::pricing_model, null, 'percentage'::fee_basis, 1000, null, '{}'::uuid[], '{}'::uuid[])$sql$,
     (select org_id from profiles where id = (select value from test_fixture_ids where key = 'pm_a'))
   ),
   'a non-admin staff caller (project_manager function) cannot call create_project_with_defaults()'

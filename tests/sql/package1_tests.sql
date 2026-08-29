@@ -518,7 +518,10 @@ begin
   perform assert_that(v_after_count = v_before_count + 1, 'updating orgs should write exactly one new audit_log row');
 
   select count(*) into v_before_count from audit_log where table_name = 'projects' and record_id = (select value from test_fixture_ids where key = 'project_a');
-  update projects set phase = 'Framing' where id = (select value from test_fixture_ids where key = 'project_a');
+  -- 'preconstruction' (schema/018 converts phase from free text to a
+  -- controlled project_phase enum) — the specific value doesn't matter
+  -- to this audit-trigger-fired assertion, just that it's a valid one.
+  update projects set phase = 'preconstruction' where id = (select value from test_fixture_ids where key = 'project_a');
   select count(*) into v_after_count from audit_log where table_name = 'projects' and record_id = (select value from test_fixture_ids where key = 'project_a');
   perform assert_that(v_after_count = v_before_count + 1, 'updating projects should write exactly one new audit_log row');
 end $$;
