@@ -49,10 +49,43 @@ export const colors = {
   info: "#8B7F6C",
   infoBg: "#EFEAE1",
   border: "#DED7C9",
+
+  // --- Added for the application-wide visual modernization (shared
+  // ui/ primitive layer, packages/02-app-shell/src/components/ui/) ---
+  // These are genuinely new tokens, not replacements — every value above
+  // this line is untouched.
+
+  /** Dedicated focus-ring color for every interactive primitive's real
+   *  `:focus-visible` state (Button, TextInput, Textarea, Select,
+   *  Checkbox, Tabs, MenuButton, ChecklistItem links). Same hex as
+   *  `gold` — proven by the existing palette to read clearly against
+   *  both the paper background and the sage/brick button fills — but
+   *  named as its own semantic token so the focus-ring role can be
+   *  retuned independently of gold's other uses (warning states,
+   *  StatusBadge) without hunting through every usage. Used with
+   *  `outline-offset` (not `box-shadow`), so it always renders against
+   *  the page/card background behind the element, not the element's own
+   *  fill color. */
+  focusRing: "#AD8A4E",
+
+  /** Hover/active shade for the new ui/ Button's "destructive" variant —
+   *  the same relationship to `brick` that `sageDeep` already has to
+   *  `sage` (a darker shade of the same hue for a pressed/hovered look).
+   *  Only consumed by packages/02-app-shell/src/components/ui/. */
+  brickDeep: "#823B2F",
 } as const;
 
 export const spacing = {
   xs: "4px",
+  /** Added for the ui/ primitive layer (packages/02-app-shell/src/components/ui/):
+   *  a genuinely missing intermediate step between `xs` (4px) and `sm`
+   *  (8px). Several of that layer's controls (Button's `sm` size,
+   *  FormField's label-to-control gap, Tabs' vertical padding, and
+   *  ProgressBar's track thickness) independently needed exactly 6px —
+   *  before this token existed that value had to be hand-typed as a
+   *  bare, untraceable literal in ui/styles.ts. This is additive only;
+   *  no existing spacing value changed. */
+  "2xs": "6px",
   sm: "8px",
   md: "16px",
   lg: "24px",
