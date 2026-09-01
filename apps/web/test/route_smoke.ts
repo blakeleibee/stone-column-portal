@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadAdminVM, loadClientVM } from "../src/data/loadViewModels";
 import { formatCents } from "../../../packages/01-financial-engine/src/money";
+import { committedCosts as demoCommittedCosts } from "../../../packages/01-financial-engine/fixtures/hawksRidge";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.join(__dirname, "..");
@@ -195,6 +196,37 @@ async function main() {
     // reachability proof).
     const bidsNavTagOnEstimatePage = buttonTagFor(estimate.html, "Bids");
     check("nav bar includes the new 'Bids' entry (P5, Task 6)", !!bidsNavTagOnEstimatePage);
+
+    console.log("\n--- /admin/commitments is reachable and nav-wired (P5, Task 7) ---");
+    // Unlike /admin/bids/import (real-backend-only, no fixture path —
+    // see the redirect-based blocks below), getCommittedCosts() already
+    // works against both SupabaseFinancialRepository and
+    // FixtureFinancialRepository, so AdminCommitmentsPage follows
+    // /admin/estimate's demo/real dual-path shape (an isDemoMode() check
+    // up front, not requireRole() unconditionally) — under this test's
+    // DEMO_MODE=true env it renders the fixture project's open
+    // committed cost rather than redirecting to /login, same as
+    // /admin/estimate above.
+    const commitments = await getHtml("/admin/commitments");
+    check("/admin/commitments responds 200", commitments.status === 200);
+    check(
+      "/admin/commitments is NOT labeled preview (real engine data, fixture-backed under DEMO_MODE)",
+      !isLabeledAsPreview(commitments.html)
+    );
+    check(
+      "/admin/commitments shows the fixture's open committed cost amount",
+      commitments.html.includes(formatCents(demoCommittedCosts[0].amountCents))
+    );
+    const commitmentsNavTag = buttonTagFor(commitments.html, "Commitments");
+    check(
+      "/admin/commitments's nav highlights its own 'Commitments' tab (data-active=\"true\"), not 'Estimate'",
+      !!commitmentsNavTag && commitmentsNavTag.includes('data-active="true"')
+    );
+    const estimateNavTagOnCommitmentsPage = buttonTagFor(commitments.html, "Estimate");
+    check(
+      "/admin/commitments's 'Estimate' nav tab is NOT the active one",
+      !!estimateNavTagOnCommitmentsPage && estimateNavTagOnCommitmentsPage.includes('data-active="false"')
+    );
 
     console.log("\n--- /admin/import is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
     // Unlike /admin/estimate, AdminImportPage always calls requireRole()

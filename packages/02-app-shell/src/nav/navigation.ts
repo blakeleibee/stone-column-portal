@@ -35,6 +35,12 @@ export const adminNav: NavItem[] = [
   // same rationale as the estimate/import comment above: a real route
   // (/admin/bids) needs a nav entry to be reachable at all.
   { key: "bids", label: "Bids", icon: "Gavel" },
+  // "commitments" (P5, Task 7) — same rationale as "bids" directly
+  // above: /admin/commitments is a real route with no nav entry of its
+  // own until this one is added, which is exactly the "shipped
+  // unreachable except by typing the URL" gap the estimate/import/bids
+  // comments in this file already warned future tasks not to repeat.
+  { key: "commitments", label: "Commitments", icon: "ClipboardList" },
   { key: "conversations", label: "Conversations", icon: "MessagesSquare" },
   { key: "contacts", label: "Contacts", icon: "Users" },
   { key: "settings", label: "Settings", icon: "Settings" },
