@@ -196,6 +196,13 @@ async function main() {
     // reachability proof).
     const bidsNavTagOnEstimatePage = buttonTagFor(estimate.html, "Bids");
     check("nav bar includes the new 'Bids' entry (P5, Task 6)", !!bidsNavTagOnEstimatePage);
+    // Same reachability proof, for the new "Procurement" entry (P5, Task
+    // 9) — no separate authenticated fetch of /admin/procurement needed
+    // (that route has no DEMO_MODE fixture path — see the
+    // /admin/import-style block below for that route's own reachability
+    // proof), the full adminNav array renders on every admin page.
+    const procurementNavTagOnEstimatePage = buttonTagFor(estimate.html, "Procurement");
+    check("nav bar includes the new 'Procurement' entry (P5, Task 9)", !!procurementNavTagOnEstimatePage);
 
     console.log("\n--- /admin/commitments is reachable and nav-wired (P5, Task 7) ---");
     // Unlike /admin/bids/import (real-backend-only, no fixture path —
@@ -255,6 +262,21 @@ async function main() {
     check(
       "/admin/bids redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
       (bidsRoute.status === 307 || bidsRoute.status === 308) && (bidsRoute.location ?? "").endsWith("/login")
+    );
+
+    console.log("\n--- /admin/procurement is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");
+    // Same shape as the /admin/bids block directly above: AdminProcurementPage
+    // always calls requireRole() regardless of DEMO_MODE (material_orders/
+    // material_order_line_items have no fixture-repository equivalent —
+    // see that page's own doc comment), so under this test's
+    // DEMO_MODE=true env with no real session cookie it must redirect to
+    // /login rather than render. This still proves the route exists and
+    // is nav-wired (Task 9) without requiring a real authenticated
+    // Supabase session in this smoke test.
+    const procurementRoute = await getHtml("/admin/procurement");
+    check(
+      "/admin/procurement redirects to /login when unauthenticated (real-backend-only screen, no demo fixture path)",
+      (procurementRoute.status === 307 || procurementRoute.status === 308) && (procurementRoute.location ?? "").endsWith("/login")
     );
 
     console.log("\n--- /admin/projects is reachable and nav-wired, but real-backend-only (no DEMO_MODE fixture path) ---");

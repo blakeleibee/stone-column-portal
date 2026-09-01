@@ -41,6 +41,11 @@ export const adminNav: NavItem[] = [
   // unreachable except by typing the URL" gap the estimate/import/bids
   // comments in this file already warned future tasks not to repeat.
   { key: "commitments", label: "Commitments", icon: "ClipboardList" },
+  // "procurement" (P5, Task 9) — placed directly after "commitments",
+  // same rationale as every P5 nav-entry comment above: /admin/procurement
+  // is a real route (material_orders/material_order_line_items) with no
+  // nav entry of its own until this one is added.
+  { key: "procurement", label: "Procurement", icon: "PackageSearch" },
   { key: "conversations", label: "Conversations", icon: "MessagesSquare" },
   { key: "contacts", label: "Contacts", icon: "Users" },
   { key: "settings", label: "Settings", icon: "Settings" },
