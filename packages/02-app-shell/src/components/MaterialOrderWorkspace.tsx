@@ -618,6 +618,7 @@ export function MaterialOrderWorkspace({
                 {detail.lineItems.length === 0 ? (
                   <EmptyState title="No line items yet — add at least one before committing." />
                 ) : (
+                  <div className="sc-procurement-table-scroll">
                   <table className="sc-procurement-table">
                     <thead>
                       <tr>
@@ -686,6 +687,7 @@ export function MaterialOrderWorkspace({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
 
                 {detail.status === "draft" && (
@@ -841,7 +843,7 @@ const workspaceStyles = `
 .sc-procurement-muted { color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; margin: 4px 0 0 0; }
 .sc-procurement-detail-error { display: flex; align-items: center; gap: ${spacing.sm}; }
 .sc-procurement-detail-header { display: flex; align-items: center; gap: ${spacing.sm}; }
-.sc-procurement-detail-header h3 { margin: 0; }
+.sc-procurement-detail-header h3 { margin: 0; min-width: 0; overflow-wrap: break-word; }
 .sc-procurement-meta { color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; }
 .sc-procurement-section { margin-top: ${spacing.lg}; padding-top: ${spacing.md}; border-top: 1px solid ${colors.line}; }
 .sc-procurement-section h4 { margin: 0 0 ${spacing.sm} 0; }
@@ -852,4 +854,30 @@ const workspaceStyles = `
 .sc-procurement-confirm { display: flex; flex-direction: column; gap: ${spacing.xs}; max-width: 480px; }
 .sc-procurement-confirm-actions { display: flex; gap: ${spacing.xs}; align-items: center; }
 .sc-procurement-commit-summary { list-style: none; padding: 0; margin: 0 0 ${spacing.xs} 0; display: flex; flex-direction: column; gap: 2px; }
+
+.sc-procurement-table-scroll { overflow-x: auto; }
+
+/* Pre-Task-10-owner-preview mobile fix: same as BidPackageWorkspace's
+   identical rule below the 768px breakpoint AppShell.tsx already uses
+   for sidebar-vs-drawer -- the list and detail columns sat side by side
+   (a fixed 340px list column plus a flex:1 detail column) with no room
+   for both on a 390px phone, pushing the detail panel off-screen and
+   forcing horizontal page scroll to reach it. Stacking them (list
+   column first, full width) is the only change; every rule above is
+   unmodified, so desktop/tablet (>=768px) render byte-for-byte as
+   before. */
+@media (max-width: 767px) {
+  /* align-items: flex-start (base rule above) governs the CROSS axis --
+     vertical in row mode (harmless: cards just don't stretch to equal
+     height), but horizontal once flex-direction flips to column here.
+     Left at flex-start, the detail column sized itself to its widest
+     child's content (the line-items table) instead of the viewport,
+     which is what was actually escaping past 390px -- the table's own
+     overflow-x:auto wrapper only contains overflow within a box that's
+     already width-constrained; it can't shrink a box that isn't being
+     stretched in the first place. Overriding to stretch here is the
+     fix; nothing above this block changes. */
+  .sc-procurement-layout { flex-direction: column; align-items: stretch; }
+  .sc-procurement-list-col { width: 100%; }
+}
 `;

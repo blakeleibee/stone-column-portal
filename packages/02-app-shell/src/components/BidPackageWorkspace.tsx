@@ -702,6 +702,7 @@ export function BidPackageWorkspace({
                 {detail.submissions.length === 0 ? (
                   <EmptyState title="No vendors invited yet" />
                 ) : (
+                  <div className="sc-bids-table-scroll">
                   <table className="sc-bids-table">
                     <thead>
                       <tr>
@@ -826,6 +827,7 @@ export function BidPackageWorkspace({
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </section>
 
@@ -996,7 +998,7 @@ const workspaceStyles = `
 .sc-bids-muted { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
 .sc-bids-detail-error { display: flex; align-items: center; gap: ${spacing.sm}; }
 .sc-bids-detail-header { display: flex; align-items: center; gap: ${spacing.sm}; }
-.sc-bids-detail-header h3 { margin: 0; }
+.sc-bids-detail-header h3 { margin: 0; min-width: 0; overflow-wrap: break-word; }
 .sc-bids-scope { color: ${colors.ink2}; font-size: ${typography.sizeSm}; }
 .sc-bids-meta { color: ${colors.stoneDark}; font-size: ${typography.sizeXs}; }
 .sc-bids-section { margin-top: ${spacing.lg}; padding-top: ${spacing.md}; border-top: 1px solid ${colors.line}; }
@@ -1014,4 +1016,29 @@ const workspaceStyles = `
 .sc-bids-qa-answer { margin: 6px 0 0 0; font-size: ${typography.sizeSm}; }
 .sc-bids-addenda-list li { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.sm}; }
 .sc-bids-addendum-title { margin: 0 0 4px 0; }
+
+.sc-bids-table-scroll { overflow-x: auto; }
+
+/* Pre-Task-10-owner-preview mobile fix: below the 768px breakpoint
+   AppShell.tsx itself already uses for sidebar-vs-drawer, the list and
+   detail columns were sitting side by side (a fixed 320px list column
+   plus a flex:1 detail column) with no room for both on a 390px phone
+   -- the detail panel was pushed off-screen, forcing horizontal page
+   scroll to reach it at all. Stacking them (list column first, full
+   width) is the only change here; every rule above is unmodified, so
+   desktop/tablet (>=768px) render byte-for-byte as before. */
+@media (max-width: 767px) {
+  /* align-items: flex-start (base rule above) governs the CROSS axis --
+     vertical in row mode (harmless: cards just don't stretch to equal
+     height), but horizontal once flex-direction flips to column here.
+     Left at flex-start, the detail column sized itself to its widest
+     child's content (the submissions table) instead of the viewport,
+     which is what was actually escaping past 390px -- the table's own
+     overflow-x:auto wrapper only contains overflow within a box that's
+     already width-constrained; it can't shrink a box that isn't being
+     stretched in the first place. Overriding to stretch here is the
+     fix; nothing above this block changes. */
+  .sc-bids-layout { flex-direction: column; align-items: stretch; }
+  .sc-bids-list-col { width: 100%; }
+}
 `;
