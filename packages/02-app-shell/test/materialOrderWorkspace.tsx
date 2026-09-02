@@ -29,6 +29,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import type { ReactTestInstance } from "react-test-renderer";
 import { MaterialOrderWorkspace } from "../src/components/MaterialOrderWorkspace";
 import type { MaterialOrderRow, MaterialOrderDetail, MaterialOrderCommitResult } from "../src/services/procurementService";
+import type { IssuedDocumentRow } from "../src/services/documentIssuanceService";
 import type { CostCode, CommittedCost } from "../../01-financial-engine/src/types";
 
 let checks = 0;
@@ -122,6 +123,8 @@ function makeFakeServer() {
 
   const addedLineItemCalls: Array<{ costCodeId: string; description: string; quantity: number; unitPriceCents: number }> = [];
   let commitCallCount = 0;
+  let issuedVersion = 0;
+  let issueCallCount = 0;
 
   async function getMaterialOrderDetail(id: string) {
     if (id !== BASE_ORDER.id) return { error: "not found" };
@@ -183,17 +186,33 @@ function makeFakeServer() {
   async function recordReceivedQuantity() {
     return {};
   }
+  // Stateful, real-issue-tracking fakes (post-Task-10-review fix): the
+  // ORIGINAL version of this fake unconditionally returned a version-1
+  // document regardless of whether issuePurchaseOrder had ever actually
+  // been called — harmless back when the component only read this
+  // response right after a click, but load-bearing now that
+  // loadDetail() ALSO calls getLatestIssuedPurchaseOrder on every
+  // select/reload (the bug this task fixes): a fake that always reports
+  // "issued" would hide a real regression where loadDetail's fetch is
+  // missing or wrong. issuedVersion === 0 (nothing issued yet) must
+  // report an absent document, exactly like the real
+  // documentIssuanceService.getLatestIssuedDocument does before any
+  // issue_document() RPC call — mirrors bidPackageWorkspace.tsx's fake
+  // issueSubcontract/getLatestIssuedSubcontract pairing.
   async function issuePurchaseOrder() {
-    return { issuedDocumentId: "doc_1" };
+    issueCallCount++;
+    issuedVersion++;
+    return { issuedDocumentId: `doc_${issuedVersion}` };
   }
-  async function getLatestIssuedPurchaseOrder() {
+  async function getLatestIssuedPurchaseOrder(): Promise<{ document?: IssuedDocumentRow; error?: string }> {
+    if (issuedVersion === 0) return { document: undefined };
     return {
       document: {
-        id: "doc_1",
-        documentType: "purchase_order" as const,
+        id: `doc_${issuedVersion}`,
+        documentType: "purchase_order",
         sourceId: BASE_ORDER.id,
         documentNumber: "PO-100",
-        version: 1,
+        version: issuedVersion,
         templateVersion: "v1",
         issuedAt: new Date().toISOString(),
         issuedBy: null,
@@ -215,6 +234,8 @@ function makeFakeServer() {
     getLatestIssuedPurchaseOrder,
     addedLineItemCalls,
     getCommitCallCount: () => commitCallCount,
+    getIssueCallCount: () => issueCallCount,
+    getIssuedVersion: () => issuedVersion,
   };
 }
 
@@ -360,6 +381,105 @@ async function main() {
       rendered.includes("09-200 Drywall") && rendered.includes("$300.00")
     );
     check("after commit, the 'Add a line item' form is gone (order left draft status)", !rendered.includes("Add a line item"));
+
+    console.log("\n--- Task 10: Issue Purchase Order now links to a real PDF route ---");
+    check("no 'View PDF' link renders before a PO has been issued", renderer.root.findAllByType("a").filter((a) => textOf(a).includes("View PDF")).length === 0);
+
+    const issueButton = findButtonByText(renderer.root, "Issue Purchase Order");
+    await act(async () => {
+      await issueButton.props.onClick();
+    });
+
+    const renderedAfterIssue = textOf(renderer.root);
+    check("shows 'Purchase Order issued — Version 1.' after issuing", renderedAfterIssue.includes("Purchase Order issued — Version 1."));
+    check("the obsolete 'future update' placeholder text is gone now that the real PDF route exists", !renderedAfterIssue.includes("future update"));
+
+    const pdfLinks = renderer.root.findAllByType("a").filter((a) => textOf(a).includes("View PDF"));
+    check("exactly one 'View PDF' link renders once a PO has been issued", pdfLinks.length === 1);
+    check(
+      "the 'View PDF' link points at this material order's real PDF route",
+      pdfLinks[0].props.href === "/api/procurement/material-orders/order_1/pdf"
+    );
+    check("the 'View PDF' link opens in a new tab, not navigating away from the workspace", pdfLinks[0].props.target === "_blank");
+    check("the button relabels to 'Reissue Purchase Order' once a version already exists", tryFindButtonByText(renderer.root, "Reissue Purchase Order") !== null);
+    check("no leftover 'Issue Purchase Order' (non-reissue) label remains once issued", tryFindButtonByText(renderer.root, "Issue Purchase Order") === null);
+
+    console.log("\n--- Task 10 fix (post-review): issued-PO state survives reselecting the SAME order, not just the immediate post-click render ---");
+    // Deselect, then reselect the same order via the list — this
+    // re-runs handleSelectOrder(), which resets poIssuedResult to null
+    // BEFORE loadDetail() re-fetches it. Before the fix, loadDetail()
+    // never called getLatestIssuedPurchaseOrder at all, so this would
+    // have left the banner/link gone and the button back to plain
+    // "Issue Purchase Order" even though the order was still genuinely
+    // issued.
+    const orderButtonAgain = findButtonByText(renderer.root, "PO-100");
+    await act(async () => {
+      await orderButtonAgain.props.onClick();
+    });
+
+    const renderedAfterReselect = textOf(renderer.root);
+    check("reselecting the same order still shows 'Purchase Order issued — Version 1.'", renderedAfterReselect.includes("Purchase Order issued — Version 1."));
+    check(
+      "reselecting the same order still shows the 'View PDF' link with the correct href",
+      renderer.root.findAllByType("a").filter((a) => textOf(a).includes("View PDF") && a.props.href === "/api/procurement/material-orders/order_1/pdf").length === 1
+    );
+    check("reselecting the same order still shows 'Reissue Purchase Order', not the initial-issue label", tryFindButtonByText(renderer.root, "Reissue Purchase Order") !== null);
+    check("reselecting did NOT call issuePurchaseOrder again — this is a read-only re-fetch, not a reissue", server.getIssueCallCount() === 1);
+
+    console.log("\n--- Task 10 fix (post-review): issued-PO state survives a full remount (simulates navigating away and back / reloading the page) ---");
+    // A brand-new component tree sharing NOTHING with the renderer above
+    // except the same fake "backend" (server) — proves the version
+    // state/PDF link/Reissue label come from loadDetail()'s own fetch on
+    // first select, not from any React state carried over in memory.
+    let freshRenderer!: TestRenderer.ReactTestRenderer;
+    act(() => {
+      freshRenderer = TestRenderer.create(
+        <MaterialOrderWorkspace
+          projectId="proj_1"
+          materialOrders={[BASE_ORDER]}
+          costCodes={COST_CODES}
+          vendors={[]}
+          createMaterialOrder={server.createMaterialOrder}
+          getMaterialOrderDetail={server.getMaterialOrderDetail}
+          addMaterialOrderLineItem={server.addMaterialOrderLineItem}
+          commitMaterialOrder={server.commitMaterialOrder}
+          recordReceivedQuantity={server.recordReceivedQuantity}
+          issuePurchaseOrder={server.issuePurchaseOrder}
+          getCommittedCostsForProject={server.getCommittedCostsForProject}
+          getLatestIssuedPurchaseOrder={server.getLatestIssuedPurchaseOrder}
+        />
+      );
+    });
+
+    const freshOrderButton = findButtonByText(freshRenderer.root, "PO-100");
+    await act(async () => {
+      await freshOrderButton.props.onClick();
+    });
+
+    const renderedFreshMount = textOf(freshRenderer.root);
+    check(
+      "a freshly-mounted workspace (simulating page reload) shows 'Purchase Order issued — Version 1.' on first select, with zero clicks in this instance",
+      renderedFreshMount.includes("Purchase Order issued — Version 1.")
+    );
+    check(
+      "the freshly-mounted workspace shows the correct 'View PDF' link on first select",
+      freshRenderer.root.findAllByType("a").filter((a) => textOf(a).includes("View PDF") && a.props.href === "/api/procurement/material-orders/order_1/pdf").length === 1
+    );
+    check("the freshly-mounted workspace shows 'Reissue Purchase Order' immediately, not the initial-issue label", tryFindButtonByText(freshRenderer.root, "Reissue Purchase Order") !== null);
+    check("issuePurchaseOrder was still only ever called once (the fresh mount's own load did not call it)", server.getIssueCallCount() === 1);
+
+    // Reissuing from the fresh instance creates a real version 2 — a
+    // second click is a legible, intentional "Reissue" action (the
+    // button already said so), not a silent, unlabeled Version-2
+    // creation.
+    const reissueButton = findButtonByText(freshRenderer.root, "Reissue Purchase Order");
+    await act(async () => {
+      await reissueButton.props.onClick();
+    });
+
+    check("reissuing calls issuePurchaseOrder a second time", server.getIssueCallCount() === 2);
+    check("reissuing actually creates version 2 on the fake backend", server.getIssuedVersion() === 2);
+    check("shows 'Purchase Order issued — Version 2.' after reissuing", textOf(freshRenderer.root).includes("Purchase Order issued — Version 2."));
   }
 
   console.log(`\nmaterialOrderWorkspace.tsx: all ${checks} checks passed.`);

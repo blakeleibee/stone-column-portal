@@ -53,6 +53,7 @@ import type {
   BidQuestionRow,
   BidAddendumRow,
 } from "../services/bidService";
+import type { IssuedDocumentRow } from "../services/documentIssuanceService";
 import { Card, PageHeader, Button, TextInput, Textarea, Select, FormField, StatusBadge, Alert, EmptyState } from "./ui";
 import type { BadgeTone } from "./ui";
 
@@ -80,6 +81,8 @@ export interface BidPackageWorkspaceProps {
   askBidQuestion: (bidPackageId: string, vendorId: string, questionText: string) => Promise<ActionResult>;
   answerBidQuestion: (bidQuestionId: string, answerText: string) => Promise<ActionResult>;
   issueBidAddendum: (bidPackageId: string, title: string, bodyText: string, revisedDueAt?: string) => Promise<ActionResult>;
+  issueSubcontract: (bidPackageId: string, documentNumber?: string) => Promise<{ issuedDocumentId?: string; error?: string }>;
+  getLatestIssuedSubcontract: (bidPackageId: string) => Promise<{ document?: IssuedDocumentRow; error?: string }>;
 }
 
 const PACKAGE_STATUS_LABELS: Record<BidPackageRow["status"], string> = {
@@ -173,6 +176,8 @@ export function BidPackageWorkspace({
   askBidQuestion,
   answerBidQuestion,
   issueBidAddendum,
+  issueSubcontract,
+  getLatestIssuedSubcontract,
 }: BidPackageWorkspaceProps) {
   const [packages, setPackages] = useState<BidPackageRow[]>(bidPackages);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -233,6 +238,17 @@ export function BidPackageWorkspace({
   const [addendumSubmitting, setAddendumSubmitting] = useState(false);
   const [addendumError, setAddendumError] = useState<string | null>(null);
 
+  // --- Issue subcontract (Task 10 — closes Task 6's own forward-
+  // referenced "ships with Task 8's document issuance service" gap now
+  // that Task 10's PDF route exists). issuedSubcontract is refreshed by
+  // every loadDetail() call (not only right after a successful issue),
+  // so reopening an already-issued package shows its real version state
+  // immediately, matching this task's own correction text.
+  const [issuedSubcontract, setIssuedSubcontract] = useState<IssuedDocumentRow | null>(null);
+  const [issuedSubcontractError, setIssuedSubcontractError] = useState<string | null>(null);
+  const [issueSubcontractSubmitting, setIssueSubcontractSubmitting] = useState(false);
+  const [issueSubcontractError, setIssueSubcontractError] = useState<string | null>(null);
+
   const costCodesById = new Map(costCodes.map((cc) => [cc.id, cc]));
 
   // The single re-fetch every mutation below calls on success. Never
@@ -242,10 +258,11 @@ export function BidPackageWorkspace({
   // fresh detail response so status-badge changes (publish/award) show
   // up in the list without a separate listBidPackages round trip.
   async function loadDetail(id: string) {
-    const [detailResult, questionsResult, addendaResult] = await Promise.all([
+    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult] = await Promise.all([
       getBidPackageDetail(id),
       listBidQuestions(id),
       listBidAddenda(id),
+      getLatestIssuedSubcontract(id),
     ]);
 
     if (detailResult.error || !detailResult.detail) {
@@ -255,6 +272,8 @@ export function BidPackageWorkspace({
       setQuestionsError(null);
       setAddenda([]);
       setAddendaError(null);
+      setIssuedSubcontract(null);
+      setIssuedSubcontractError(null);
       return;
     }
 
@@ -281,6 +300,16 @@ export function BidPackageWorkspace({
       setAddendaError(null);
       setAddenda(addendaResult.addenda ?? []);
     }
+
+    // Absent (`document: undefined`) is the normal pre-issuance state,
+    // not an error — only a real fetch failure sets issuedSubcontractError.
+    if (issuedSubcontractResult.error) {
+      setIssuedSubcontractError(issuedSubcontractResult.error);
+      setIssuedSubcontract(null);
+    } else {
+      setIssuedSubcontractError(null);
+      setIssuedSubcontract(issuedSubcontractResult.document ?? null);
+    }
   }
 
   async function handleSelectPackage(id: string) {
@@ -292,6 +321,9 @@ export function BidPackageWorkspace({
     setAddenda([]);
     setAddendaError(null);
     setAwardConfirmId(null);
+    setIssuedSubcontract(null);
+    setIssuedSubcontractError(null);
+    setIssueSubcontractError(null);
     setDetailLoading(true);
     try {
       await loadDetail(id);
@@ -426,6 +458,28 @@ export function BidPackageWorkspace({
       await loadDetail(detail.id);
     } finally {
       setAwardSubmitting((prev) => ({ ...prev, [submissionId]: false }));
+    }
+  }
+
+  // Reissue is allowed even once a subcontract already exists (Task 6's
+  // own described behavior: "a second click after any underlying change
+  // creates a new version") — issueSubcontract() itself (Task 8,
+  // unmodified) is what actually increments the version; this handler
+  // never guesses a version number, it always re-fetches it fresh via
+  // loadDetail() -> getLatestIssuedSubcontract().
+  async function handleIssueSubcontract() {
+    if (!detail) return;
+    setIssueSubcontractError(null);
+    setIssueSubcontractSubmitting(true);
+    try {
+      const result = await issueSubcontract(detail.id);
+      if (result.error) {
+        setIssueSubcontractError(result.error);
+        return;
+      }
+      await loadDetail(detail.id);
+    } finally {
+      setIssueSubcontractSubmitting(false);
     }
   }
 
@@ -721,14 +775,47 @@ export function BidPackageWorkspace({
                               ))}
 
                             {sub.status === "awarded" && (
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                disabled
-                                title="Issue Subcontract ships with Task 8's document issuance service."
-                              >
-                                Issue Subcontract (coming soon)
-                              </Button>
+                              <div className="sc-bids-confirm">
+                                {issuedSubcontractError && <Alert tone="error">{issuedSubcontractError}</Alert>}
+                                {issuedSubcontract && (
+                                  <p className="sc-bids-muted">
+                                    {issuedSubcontract.version > 1
+                                      ? `Version ${issuedSubcontract.version} issued — `
+                                      : `Subcontract issued — Version ${issuedSubcontract.version}. `}
+                                    <a
+                                      href={`/api/bids/${detail.id}/subcontract-pdf`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="sc-ui-btn sc-ui-btn-secondary sc-ui-btn-sm"
+                                    >
+                                      View PDF
+                                    </a>
+                                    {issuedSubcontract.version > 1 && (
+                                      <>
+                                        {" "}
+                                        <a
+                                          href={`/api/bids/${detail.id}/subcontract-pdf?version=${issuedSubcontract.version - 1}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          view previous version
+                                        </a>
+                                      </>
+                                    )}
+                                  </p>
+                                )}
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  disabled={issueSubcontractSubmitting}
+                                  loading={issueSubcontractSubmitting}
+                                  loadingText="Issuing…"
+                                  onClick={handleIssueSubcontract}
+                                >
+                                  {issuedSubcontract ? "Reissue Subcontract" : "Issue Subcontract"}
+                                </Button>
+                                {issueSubcontractError && <Alert tone="error">{issueSubcontractError}</Alert>}
+                              </div>
                             )}
 
                             {(sub.status === "declined" || sub.status === "withdrawn") && (

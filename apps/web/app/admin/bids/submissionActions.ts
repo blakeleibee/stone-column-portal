@@ -8,7 +8,11 @@ import {
   answerBidQuestion as answerBidQuestionService,
   issueBidAddendum as issueBidAddendumService,
 } from "../../../../../packages/02-app-shell/src/services/bidService";
-import { issueSubcontract as issueSubcontractService } from "../../../../../packages/02-app-shell/src/services/documentIssuanceService";
+import {
+  issueSubcontract as issueSubcontractService,
+  getLatestIssuedDocument as getLatestIssuedDocumentService,
+  type IssuedDocumentRow,
+} from "../../../../../packages/02-app-shell/src/services/documentIssuanceService";
 
 export async function recordBidSubmission(bidSubmissionId: string, amountCents: number, notes?: string) {
   const supabase = await createServerSupabaseClient();
@@ -43,4 +47,27 @@ export async function issueBidAddendum(bidPackageId: string, title: string, body
 export async function issueSubcontract(bidPackageId: string, documentNumber?: string) {
   const supabase = await createServerSupabaseClient();
   return issueSubcontractService(supabase, bidPackageId, documentNumber);
+}
+
+/**
+ * Task 10's on-load version-state addition (this task's own correction
+ * text): unlike getLatestIssuedPurchaseOrder (Task 9's version of this
+ * same idea, apps/web/app/admin/procurement/actions.ts), an absent
+ * subcontract is the NORMAL pre-issuance state for most bid packages,
+ * not a surprising follow-up-read failure — so this returns
+ * `{ document: undefined }` rather than `{ error }` when none exists
+ * yet, and BidPackageWorkspace's loadDetail() calls this on every
+ * selection/refresh (not only right after a successful issueSubcontract
+ * call) so the "Subcontract issued — Version N" state is visible
+ * immediately when reopening an already-issued package, not just in the
+ * moment right after issuing it.
+ */
+export async function getLatestIssuedSubcontract(bidPackageId: string): Promise<{ document?: IssuedDocumentRow; error?: string }> {
+  const supabase = await createServerSupabaseClient();
+  try {
+    const document = await getLatestIssuedDocumentService(supabase, "subcontract", bidPackageId);
+    return { document: document ?? undefined };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to load the issued subcontract." };
+  }
 }

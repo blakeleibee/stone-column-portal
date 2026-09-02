@@ -7,7 +7,7 @@ import { createServerSupabaseClient } from "../../../src/server/supabase/serverC
 import { listBidPackages, listVendors } from "../../../../../packages/02-app-shell/src/services/bidService";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
 import { createBidPackage, publishBidPackage, inviteVendor, getBidPackageDetail, listBidQuestions, listBidAddenda } from "./actions";
-import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum } from "./submissionActions";
+import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum, issueSubcontract, getLatestIssuedSubcontract } from "./submissionActions";
 
 /**
  * Resolves its project/switcher data via resolveSelectedProject()
@@ -60,6 +60,8 @@ export default async function AdminBidsPage() {
         askBidQuestion={askBidQuestion}
         answerBidQuestion={answerBidQuestion}
         issueBidAddendum={issueBidAddendum}
+        issueSubcontract={issueSubcontract}
+        getLatestIssuedSubcontract={getLatestIssuedSubcontract}
       />
     </AdminChrome>
   );

@@ -39,16 +39,35 @@
  * is added its cost code is exactly whatever was selected at that
  * moment — never silently re-derived later.
  *
- * Honest issue-PO confirmation (this task's Correction 2 — Task 10's
- * PDF route does not exist yet): after `issuePurchaseOrder` succeeds,
- * this fetches the real issued document's version via
- * `getLatestIssuedPurchaseOrder` (a thin Task 9 addition to
- * documentIssuanceService's already-real `getLatestIssuedDocument`) and
- * shows "Purchase Order issued — Version N." with a plain, non-interactive
- * "PDF viewing available in a future update." note — never a clickable
- * "Open PDF"/"View PDF" link, matching ProjectSetupChecklist.tsx's own
- * "never present not-yet-built functionality as if it were real"
- * convention.
+ * Issue-PO confirmation with a real PDF link (originally Task 9's
+ * Correction 2, now updated by Task 10 now that its PDF route exists):
+ * after `issuePurchaseOrder` succeeds, this fetches the real issued
+ * document's version via `getLatestIssuedPurchaseOrder` (a thin Task 9
+ * addition to documentIssuanceService's already-real
+ * `getLatestIssuedDocument`) and shows "Purchase Order issued — Version
+ * N." alongside a real "View PDF" link to
+ * /api/procurement/material-orders/[id]/pdf (Task 10) — Task 9's
+ * original non-interactive "PDF viewing available in a future update."
+ * placeholder text is gone now that the route it was waiting on exists,
+ * per ProjectSetupChecklist.tsx's own "never present not-yet-built
+ * functionality as if it were real" convention (which cuts the other
+ * way once the functionality IS real: no reason left to withhold the
+ * link).
+ *
+ * On-load version-state parity fix (post-Task-10 review): `loadDetail()`
+ * itself calls `getLatestIssuedPurchaseOrder` on every load (selecting
+ * an order, retrying, or after any other mutation) and re-populates
+ * `poIssuedResult` from that real fetch — not only right after a
+ * successful `issuePurchaseOrder` click. Before this fix, reselecting an
+ * already-issued order (or reloading the page) silently lost the
+ * "Purchase Order issued — Version N" banner and the View PDF link even
+ * though the order was genuinely still issued, and the button never
+ * relabeled to "Reissue Purchase Order" — a confused admin re-clicking
+ * "Issue Purchase Order" on an already-issued order would silently
+ * create Version 2 with no UI indication that's what just happened.
+ * Mirrors BidPackageWorkspace.tsx's `loadDetail()` ->
+ * `getLatestIssuedSubcontract` fetch and its "Reissue Subcontract"
+ * relabeling exactly.
  *
  * Every number this file renders traces to a real, already-computed
  * value: line items show `quantity`/`unitPriceCents` exactly as stored
@@ -220,10 +239,11 @@ export function MaterialOrderWorkspace({
   // edit (e.g. after a receiving update elsewhere) must not be
   // clobbered.
   async function loadDetail(id: string, resetLine: boolean) {
-    const result = await getMaterialOrderDetail(id);
+    const [result, latestIssued] = await Promise.all([getMaterialOrderDetail(id), getLatestIssuedPurchaseOrder(id)]);
     if (result.error || !result.detail) {
       setDetail(null);
       setDetailError(result.error ?? "Material order not found.");
+      setPoIssuedResult(null);
       return;
     }
     setDetailError(null);
@@ -233,6 +253,19 @@ export function MaterialOrderWorkspace({
       const exists = prev.some((o) => o.id === id);
       return exists ? prev.map((o) => (o.id === id ? row : o)) : [row, ...prev];
     });
+    // Re-establishes the real issued-PO version state on EVERY load, not
+    // only right after a successful issuePurchaseOrder click (the bug
+    // this fixes: reselecting an order, or reloading the page, used to
+    // lose the "Purchase Order issued — Version N" banner and the View
+    // PDF link even though the order was genuinely still issued) —
+    // mirrors BidPackageWorkspace's loadDetail() -> getLatestIssuedSubcontract
+    // fetch exactly. A real fetch failure here is treated the same as
+    // "not yet issued" (poIssuedResult -> null) rather than surfacing a
+    // separate error state — an absent PO is this order's overwhelmingly
+    // common, non-exceptional state (most orders never reach here before
+    // commit), same judgment call issuePurchaseOrder's own pre-existing
+    // "PDF viewing" fallback already made.
+    setPoIssuedResult(latestIssued.document ? { version: latestIssued.document.version } : null);
     if (resetLine) {
       resetLineForm(result.detail.defaultCostCodeId);
     }
@@ -760,7 +793,7 @@ export function MaterialOrderWorkspace({
                     loadingText="Issuing…"
                     onClick={handleIssuePO}
                   >
-                    Issue Purchase Order
+                    {poIssuedResult ? "Reissue Purchase Order" : "Issue Purchase Order"}
                   </Button>
                   {issueError && <Alert tone="error">{issueError}</Alert>}
                   {poIssuedResult && (
@@ -769,7 +802,14 @@ export function MaterialOrderWorkspace({
                         ? `Purchase Order issued — Version ${poIssuedResult.version}.`
                         : "Purchase Order issued."}
                       <br />
-                      <span className="sc-procurement-muted">PDF viewing available in a future update.</span>
+                      <a
+                        href={`/api/procurement/material-orders/${detail.id}/pdf`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="sc-ui-btn sc-ui-btn-secondary sc-ui-btn-sm"
+                      >
+                        View PDF
+                      </a>
                     </Alert>
                   )}
                 </section>
