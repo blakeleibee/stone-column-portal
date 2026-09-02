@@ -998,8 +998,15 @@ build).
   compliance status, nothing else.
 - **Dependencies:** P5, P3's vendor RLS foundation.
 - **Exclusions:** No company-wide vendor directory UI for the vendor
-  themselves (that's the admin-side Vendors area, already built as
-  record-keeping in P5).
+  themselves. **Correction (2026-09-02):** this bullet previously
+  claimed that UI already existed as "the admin-side Vendors area,
+  already built as record-keeping in P5" — verified false. P5 only ever
+  consumes existing `vendors` rows (bid invites, material-order vendor
+  selection); no admin-side vendor-creation/management screen exists in
+  P5, P2.1 (which built the `vendors` table itself explicitly "no UI,
+  data only"), or any other shipped/in-progress package. See
+  `PRODUCT-COMPLETENESS-MATRIX.md` Section D — this is an unhomed gap,
+  not a built screen.
 
 ### Package P12 — Investor & Spec-Home Reporting, Lender Draw Support
 
