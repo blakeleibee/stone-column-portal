@@ -124,7 +124,19 @@ owns which fact.
 
 Where practical, the portal eliminates duplicate entry — staff should
 never have to type the same fact into two systems when one can supply
-it to the other through a controlled, auditable path.
+it to the other through a controlled, auditable path. **This applies
+within the portal's own procurement lifecycle, not just at the
+QuickBooks boundary** (recorded 2026-09-01): the intended shape of a
+meaningful planned purchase is Estimate/vendor quote → Material Order →
+Purchase Order → receipt → QuickBooks bill/actual cost, each step
+capable of feeding the next rather than being re-keyed from scratch.
+A small, incidental purchase should never need to pass through that
+whole chain — it can post as a plain QuickBooks actual. This is a
+standing intent for future procurement-efficiency packages to build
+toward, not a description of what exists today — see
+`FINANCIAL-ARCHITECTURE.md`'s "Bid awards and material orders" note and
+`PRODUCT-COMPLETENESS-MATRIX.md` Section D for exactly what's built,
+what's homed, and what's still an open decision.
 
 ## 5. Non-negotiables
 

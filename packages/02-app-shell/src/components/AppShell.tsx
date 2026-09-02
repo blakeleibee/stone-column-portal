@@ -192,9 +192,7 @@ export function AppShell({
             <div className="sc-sidebar-brand-label">{role === "client" ? "Homeowner Portal" : "Admin Portal"}</div>
           </div>
           <div className="sc-sidebar-nav">
-            {items.map((item) => (
-              <NavButton key={item.key} item={item} active={item.key === activeKey} onNavigate={handleNavigate} vertical />
-            ))}
+            {renderNavGroups(items, activeKey, handleNavigate)}
           </div>
         </nav>
 
@@ -238,9 +236,7 @@ export function AppShell({
                 ×
               </button>
             </div>
-            {items.map((item) => (
-              <NavButton key={item.key} item={item} active={item.key === activeKey} onNavigate={handleNavigate} vertical />
-            ))}
+            {renderNavGroups(items, activeKey, handleNavigate)}
           </div>
         </div>
       )}
@@ -339,6 +335,40 @@ function IconPlaceholderDark({ name }: { name: string }) {
   );
 }
 
+/**
+ * Pre-Task-10 owner-preview correction: groups admin/staff nav items into
+ * "Organization" / "Current Project" sections when the config supplies
+ * `section` (adminNav does; clientNav/projectTabs/clientMoreNav don't).
+ * Falls back to the original flat, unheaded list otherwise — this is the
+ * same items array, same NavButton, same onNavigate wiring as before;
+ * only the grouping/heading presentation changes.
+ */
+function renderNavGroups(items: NavItem[], activeKey: string, onNavigate: (key: string) => void) {
+  if (!items.some((item) => item.section)) {
+    return items.map((item) => (
+      <NavButton key={item.key} item={item} active={item.key === activeKey} onNavigate={onNavigate} vertical />
+    ));
+  }
+
+  const sections: Array<{ id: "organization" | "project"; label: string }> = [
+    { id: "organization", label: "Organization" },
+    { id: "project", label: "Current Project" },
+  ];
+
+  return sections.flatMap(({ id, label }) => {
+    const sectionItems = items.filter((item) => item.section === id);
+    if (sectionItems.length === 0) return [];
+    return [
+      <div key={`heading-${id}`} className="sc-nav-section-heading">
+        {label}
+      </div>,
+      ...sectionItems.map((item) => (
+        <NavButton key={item.key} item={item} active={item.key === activeKey} onNavigate={onNavigate} vertical />
+      )),
+    ];
+  });
+}
+
 function NavButton({
   item,
   active,
@@ -400,6 +430,8 @@ const shellStyles = `
 .sc-nav-item[data-active="true"] { background: ${colors.inkSoft}; color: ${colors.white}; font-weight: 600; box-shadow: inset 3px 0 0 0 ${colors.gold}; }
 .sc-nav-item:focus-visible { outline: 2px solid ${colors.focusRing}; outline-offset: -2px; }
 .sc-nav-item--vertical { width: 100%; margin-bottom: 2px; }
+.sc-nav-section-heading { font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: ${colors.stone}; padding: ${spacing.sm} 10px 4px; margin-top: 4px; }
+.sc-nav-section-heading:first-child { margin-top: 0; }
 .sc-nav-item--light { color: ${colors.ink2}; }
 .sc-nav-item--light:hover:not([data-active="true"]) { background: ${colors.paperDim}; color: ${colors.ink}; }
 .sc-nav-item--light[data-active="true"] { background: ${colors.sageTint}; color: ${colors.sageDeep}; box-shadow: inset 3px 0 0 0 ${colors.sage}; }

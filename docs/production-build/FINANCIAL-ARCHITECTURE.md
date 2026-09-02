@@ -187,6 +187,48 @@ in the same commit that introduces it, never invented ad hoc:**
 Any package introducing a new financial event type adds its row here
 in the same PR that adds the schema/code using it.
 
+## Bid awards and material orders: two parallel paths today (procurement-efficiency note, 2026-09-01)
+
+Recorded during the P5 Tasks 7–9 owner preview, in response to a
+duplicate-manual-entry concern. `bid_award` and `material_order` (the
+table above) are **intentionally two separate, non-converting event
+types today** — `award_bid()` never touches `material_orders`, and
+`commit_material_order()` never reads `bid_submissions`. There is no
+schema or code path connecting them, by design: P5 never proposed one.
+
+The owner's stated long-term intent is a pipeline — Estimate/vendor
+quote → Material Order → Purchase Order → receipt → QuickBooks bill/
+actual — with small incidental purchases flowing in as plain
+QuickBooks actuals (`expenses`, `source_type='quickbooks_import'`)
+without ever requiring a Material Order. That intent does not require
+any change to the backbone above; it requires future *efficiency*
+capabilities layered on top of it, none of which are built or
+schema-homed yet:
+
+- Converting an awarded `bid_submissions` row directly into a
+  `material_orders`/`material_order_line_items` row.
+- Duplicating/copying a prior `material_orders` row as a starting
+  point for a new one (including recurring orders).
+- Bulk CSV/spreadsheet import of `material_order_line_items` — distinct
+  from P4's QuickBooks import, which is explicitly scoped to producing
+  `expenses` rows only (see P4-DESIGN.md's exclusions).
+- Creating a `material_orders` row directly from an approved
+  `budget_ledger` line (estimate-to-order), distinct from P4.2/P4.3,
+  which are read-only/estimating-side features that never write to
+  procurement tables.
+- Converting a vendor-supplied quote document into structured order
+  data.
+- A reusable, per-vendor catalog of commonly-ordered items/prices
+  (`vendors` today stores identity only, no item/price child table).
+
+None of these are scheduled to any package as of this writing — see
+`PRODUCT-COMPLETENESS-MATRIX.md` Section D for tracking. **Do not build
+any of them speculatively.** If a future package takes one on, it must
+still route through the existing backbone (`committed_costs` via
+`commit_material_order()`/`award_bid()`, never a parallel table) — this
+note exists so that decision doesn't get re-derived from scratch, not
+to pre-approve a design.
+
 ## Confirmation: P5 through at least P13 need no redesign of the existing backbone
 
 Checked against every remaining financial package in

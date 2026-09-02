@@ -12,6 +12,18 @@ export interface NavItem {
   // config is consumed (AppShell.tsx), kept as a string here so this
   // file has zero UI-library dependency of its own.
   icon: string;
+  // Pre-Task-10 owner-preview correction: with 10 active projects, staff
+  // must always be able to tell which sidebar entries are organization-
+  // wide vs. scoped to whichever project the switcher currently has
+  // selected. Optional and admin/staff-only for now — clientNav/
+  // projectTabs/clientMoreNav don't set it, so AppShell renders those
+  // exactly as before (a single ungrouped list) when this field is
+  // absent. "overview" and "import" are project-scoped even though
+  // their names don't make that obvious: both resolve the currently
+  // selected project via resolveProjectAndSwitcherData() (confirmed in
+  // apps/web/app/admin/overview/page.tsx and .../import/page.tsx), not
+  // an org-wide listing.
+  section?: "organization" | "project";
 }
 
 // Global admin/staff navigation (spec section 13).
@@ -24,31 +36,36 @@ export interface NavItem {
 // financial-data screens (real budget entry, and the QuickBooks import
 // wizard that feeds it).
 export const adminNav: NavItem[] = [
-  { key: "overview", label: "Overview", icon: "LayoutDashboard" },
-  { key: "projects", label: "Projects", icon: "Building2" },
-  { key: "action-center", label: "Action Center", icon: "ListChecks" },
-  { key: "financials", label: "Financials", icon: "Wallet" },
-  { key: "estimate", label: "Estimate", icon: "Calculator" },
-  { key: "import", label: "Import", icon: "FileUp" },
+  { key: "overview", label: "Overview", icon: "LayoutDashboard", section: "project" },
+  { key: "projects", label: "Projects", icon: "Building2", section: "organization" },
+  { key: "action-center", label: "Action Center", icon: "ListChecks", section: "organization" },
+  { key: "financials", label: "Financials", icon: "Wallet", section: "project" },
+  { key: "estimate", label: "Estimate", icon: "Calculator", section: "project" },
+  { key: "import", label: "Import", icon: "FileUp", section: "project" },
   // "bids" (P5, Task 6) — placed after estimate/import and before the
   // commitments/procurement entries later P5 tasks (7, 9) will add,
   // same rationale as the estimate/import comment above: a real route
   // (/admin/bids) needs a nav entry to be reachable at all.
-  { key: "bids", label: "Bids", icon: "Gavel" },
+  { key: "bids", label: "Bids", icon: "Gavel", section: "project" },
   // "commitments" (P5, Task 7) — same rationale as "bids" directly
   // above: /admin/commitments is a real route with no nav entry of its
   // own until this one is added, which is exactly the "shipped
   // unreachable except by typing the URL" gap the estimate/import/bids
   // comments in this file already warned future tasks not to repeat.
-  { key: "commitments", label: "Commitments", icon: "ClipboardList" },
+  { key: "commitments", label: "Commitments", icon: "ClipboardList", section: "project" },
   // "procurement" (P5, Task 9) — placed directly after "commitments",
   // same rationale as every P5 nav-entry comment above: /admin/procurement
   // is a real route (material_orders/material_order_line_items) with no
-  // nav entry of its own until this one is added.
-  { key: "procurement", label: "Procurement", icon: "PackageSearch" },
-  { key: "conversations", label: "Conversations", icon: "MessagesSquare" },
-  { key: "contacts", label: "Contacts", icon: "Users" },
-  { key: "settings", label: "Settings", icon: "Settings" },
+  // nav entry of its own until this one is added. Label reads "Material
+  // Orders" (pre-Task-10 owner-preview correction) since this screen
+  // doesn't yet represent the full procurement process (quote/bid
+  // conversion, recurring orders, supplier catalogs — see
+  // FINANCIAL-ARCHITECTURE.md's procurement-efficiency-features note);
+  // the route/key/db objects are unchanged.
+  { key: "procurement", label: "Material Orders", icon: "PackageSearch", section: "project" },
+  { key: "conversations", label: "Conversations", icon: "MessagesSquare", section: "project" },
+  { key: "contacts", label: "Contacts", icon: "Users", section: "organization" },
+  { key: "settings", label: "Settings", icon: "Settings", section: "organization" },
 ];
 
 // Inside-a-project tabs/compact menu (spec section 13).

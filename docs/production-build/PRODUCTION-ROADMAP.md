@@ -731,6 +731,18 @@ requirement; full constraint detail in `FINANCIAL-ARCHITECTURE.md`'s
   "inspect the real system before designing against it" discipline
   `WORKBOOK-GAP-ANALYSIS.md` already used for P2.1. Do not guess this
   decision in advance of that inspection.
+- **A second open decision, also deferred to this package's design
+  pass:** "actual-cost feedback" in this package's own title has never
+  been elaborated past cost-code/import-batch-level aggregate
+  reconciliation (P4's existing `confirm_import_batch()` sum check).
+  Recorded 2026-09-01, raised during the P5 Tasks 7–9 owner preview:
+  whether staff also need individual-commitment-level reconciliation —
+  tying a specific QuickBooks-imported `expenses` row back to the
+  `committed_costs`/`material_orders` row it actually pays against — is
+  undecided. Today `expenses` carries no such link (see
+  `FINANCIAL-ARCHITECTURE.md`'s procurement-efficiency note). This
+  package's design pass must decide whether that granularity is in
+  scope, not assume either answer.
 - **Dependencies:** P4.1 (parent/child structure to map), P4.2/P4.3
   (richer estimate data worth exporting, though not a hard technical
   blocker — this package's own design should confirm whether export can
