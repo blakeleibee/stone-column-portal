@@ -761,6 +761,8 @@ way.
 
 ### Package P5 — Commitments, Bids (PM-side), Procurement & Material Orders
 
+**Status: Tasks 1–10 of 12 shipped.** Task 11 (Action Center conditions) and Task 12 (final verification and milestone closeout) remain outstanding — sequenced to run immediately after P5.0 below, per the owner's 2026-09-04 decision recorded in `P5-EXTENSION-PACKAGES-DESIGN.md` Section 4. P5 is not tagged complete until Task 12 runs.
+
 - **Scope:** `committed_costs` UI (already schema-hardened across 5
   migrations, never exercised by any UI); PM-facing bid package
   create/receive/compare/award; PO/subcontract document generation;
@@ -793,6 +795,63 @@ way.
 - **Exclusions:** No vendor-facing UI yet (P11) — vendor data is
   referenced (who a bid was sent to) but never displayed to a vendor
   session in this package.
+
+### Package P5.0 — Project-Context Write-Safety
+
+**Status: Approved, implementing now.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Not one of the brief's original P0–P15 packages — inserted here after the owner's 2026-09-03/04 P5 live-preview feedback found that the existing project-selection behavior isn't just a display gap (two real committed-cost amounts weren't readily findable during the preview) but a genuine write-safety defect: nothing today stops a create action from landing under an unintended project.
+
+- **Scope:** unmistakable current project name/number on every project-scoped page; no silent "default to whichever project sorts first" fallback in `resolveSelectedProject()`; an explicit no-project-selected state; server-side re-validation of the target project on every affected create/write action (never trusting client-supplied state alone); the target project named directly on every create action's own button/confirmation.
+- **Schema/migrations:** None.
+- **Server-side operations:** `resolveSelectedProject()` and the Server Action layer's project-resolution pattern, corrected; no new tables.
+- **Acceptance criteria:** no project-scoped screen ever silently renders an unintended project's data; no create/write action can succeed without an explicitly selected, access-checked project; existing `switchProject()` behavior (stays on the same route, re-renders for the new project) is unchanged.
+- **Dependencies:** P3 (project switcher foundation), P5 (the screens where the defect was found).
+- **Exclusions:** No navigation/IA redesign (that stays P9.5, per the owner's explicit instruction) — this is a correctness fix to existing shared infrastructure, not a new information architecture.
+
+### Package P5.1 — Vendor Directory & Onboarding
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Closes the "no admin-side UI to create/manage a `vendors` row" gap recorded in `PRODUCT-COMPLETENESS-MATRIX.md` Section D.
+
+- **Scope:** org-level vendor management — company/legal name, active/inactive, trades, contacts (primary bidding contact + additional), phone/address, preferred communication method, service area, compliance documents (W-9/certificate of insurance with expiration/licensing), payment terms, internal notes, cross-linked history, exact-match duplicate detection at creation (a warning, never a hard block).
+- **Schema/migrations:** `vendor_contacts`, `vendor_documents` (new); additive columns on `vendors` (`legal_name`, `trades`, `service_area`, `preferred_communication_method`, `payment_terms`; `is_archived` reused, inverted, as active/inactive rather than a new column).
+- **RLS:** `is_org_staff_for_org()` for the vendor directory generally; W-9-category `vendor_documents` rows additionally gated to an authorized admin/accounting role, with expiring signed download URLs and per-access audit logging — full detail in the design doc. No vendor-facing access of any kind in this package.
+- **Server-side operations:** none beyond ordinary CRUD; reuses the existing (currently unused) `StorageAdapter` for document upload/download.
+- **Acceptance criteria:** a vendor can be created with name/email/phone alone; every other field is optional and editable later in its own section; a W-9 document's access is individually audited and excluded from any future search/AI indexing.
+- **Dependencies:** none beyond P5 itself (vendors are organization-scoped, not project-scoped — no dependency on P5.0).
+- **Exclusions:** no vendor-facing login/portal (P5.2/P11); no banking/tax-ID numbers stored as structured, searchable fields (documents only) absent a future, separate security decision.
+
+### Package P5.2 — Vendor Bid Access, Documents, Email Invitations & Correspondence
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Pulls forward the "Bid Management (vendor-side)" and document-sharing slice of P11's originally-stated scope — see P11's own entry below for the resulting split.
+
+- **Scope:** the real vendor-facing bidding experience (no vendor UI exists anywhere today) — secure, package-scoped access via email invitation; bid package assembly (inclusions/exclusions/alternates/allowances/pricing-breakdown instructions/schedule expectations/deadline/Stone Column contact); document upload and versioned, addenda-based distribution reusing the existing `documents`/`StorageAdapter` infrastructure; real email invitations (delivery/open/response tracking, resend, revoke/expire) via Resend behind a replaceable `EmailService` interface, sent from a dedicated `notify.stonecolumn.com` subdomain; portal-as-system-of-record correspondence with real, verified inbound-email reply routing (package/vendor-specific reply tokens, sender verification, authenticity checks, attachment scanning, duplicate prevention, a staff-reviewed quarantine queue for anything that fails).
+- **Schema/migrations:** additive columns on `bid_packages`; `version`/`superseded_by_id` added to `documents`; `bid_package_documents`, `bid_invitation_emails`, `entity_messages`, `entity_message_attachments`, `inbound_reply_tokens`, `quarantined_inbound_messages` (all new).
+- **RLS:** fixes the latent bug where `inviteVendor` never creates the `project_members` row `is_project_vendor()` requires (currently harmless only because no vendor session exercises it yet); every vendor-visible document/message requires the existing double-gate (`is_project_vendor()` AND a specific invitation record), never a blanket grant.
+- **Server-side operations:** real upload Route Handler (the existing `canUploadDocument` check is defined but never called today); inbound-email webhook processing with the five-step verification pipeline in the design doc.
+- **Tests:** the standard "Vendor A sees nothing belonging to Vendor B" isolation test, extended to correspondence and documents specifically, including a case proving a guessed/leaked reply token still cannot resolve into another vendor's thread.
+- **Acceptance criteria:** a vendor can receive a real email, access exactly one bid package, submit a bid, ask a question, and reply either through the portal or by email with the reply landing correctly in the same thread — never seeing another vendor's anything.
+- **Dependencies:** P5.1, P3's vendor RLS foundation.
+- **Exclusions:** `vendor_profiles`/`vendor_assignments`/`vendor_performance_notes`/`vendor_invoices`/`vendor_change_requests`/1099 export remain P11 scope, unchanged.
+
+### Package P5.3 — Material Order Collaboration & Documents
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5.
+
+- **Scope:** comments and documents on material orders, at the order and line-item level — structurally separate "Internal Activity" and "Vendor Conversation" surfaces (never a shared composer with a visibility checkbox); system-activity timeline surfaced from existing `audit_log` rows; typed document uploads (vendor quote/PO/invoice/packing slip/delivery ticket/revised confirmation/product info/photo) with first-class invoice linkage (cost code, vendor, order, a future QuickBooks `expense_id`); delivery/backorder/damaged/returned tracking on line items.
+- **Schema/migrations:** `material_order_documents` (new, same shape as `bid_package_documents` plus `document_type`/`line_item_id`); additive line-item columns (`expected_delivery_date`, `backorder_reason`, `backorder_expected_date`, `damaged_quantity`, `returned_quantity`).
+- **RLS:** a genuine, deliberate widening — `material_orders` today has explicitly no vendor policy ("procurement is internal only"); this package adds one, scoped per-order via the same explicit-invitation pattern P5.2 establishes for bids, never a blanket project-procurement grant.
+- **Server-side operations:** reuses P5.2's document-storage and `entity_messages`/inbound-email infrastructure — no new email/storage mechanism.
+- **Acceptance criteria:** a vendor sees and can reply about only the specific order they're party to; an internal note is structurally impossible to post into the vendor-visible surface by accident.
+- **Dependencies:** P5.2.
+- **Exclusions:** no cross-order vendor visibility of any kind.
+
+### Package P5.4 — Financial Traceability & Cross-Navigation
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5.
+
+- **Scope:** real, bidirectional links between `committed_costs` rows and the bid submission/material order that produced them (today, only a generic link to the Commitments list page exists in either direction); Committed and Projected columns added to `BudgetTable.tsx`'s per-cost-code view (the financial engine already computes both; this is a display change, not a math change).
+- **Schema/migrations:** None.
+- **Dependencies:** P5 (Commitments/Bids/Financials screens already shipped). Independent of P5.1–P5.3.
+- **Exclusions:** the project-context-clarity fix originally considered for this package was extracted into P5.0 and runs first instead, per the owner's 2026-09-04 sequencing decision.
 
 ### Package P6 — Client Billing: Draws, Payments, Retainage
 
@@ -981,32 +1040,33 @@ build).
 - **Dependencies:** P3; benefits from P7–P9 existing.
 - **Exclusions:** No AI-assisted drafting (P15).
 
-### Package P11 — Vendor Portal (full), Bid Management (vendor-side), Compliance, 1099 Support
+### Package P11 — Vendor Portal (full), Compliance Performance/Invoicing, 1099 Support
 
-- **Scope:** The actual vendor-facing portal, extending the P3
-  foundation and P5's record-keeping half; `vendor_profiles`,
-  `vendor_assignments`, `vendor_compliance`, `vendor_performance_notes`,
-  `vendor_invoices`, `vendor_change_requests`; 1099 export.
-- **Schema/migrations:** Six new tables (as above).
+**Correction (2026-09-04):** this package's scope is narrower than originally stated, now that P5.2 exists. "Bid Management (vendor-side)" — the vendor's own bidding experience, invitations, and correspondence — moved to P5.2, built earlier because P5 needed it sooner, not deferred to here. `vendor_compliance` (originally one of this package's six new tables) is not built here at all — its full intended scope (W-9/certificate-of-insurance/licensing tracking) is absorbed by P5.1's `vendor_documents` table instead. What remains below is the vendor's own account/assignment/performance/invoicing experience beyond bidding.
+
+- **Scope:** The vendor's own portal login and assignment/performance/
+  invoicing experience, extending the P3 foundation, P5.1's vendor
+  directory, and P5.2's bid-access foundation; `vendor_profiles`,
+  `vendor_assignments`, `vendor_performance_notes`, `vendor_invoices`,
+  `vendor_change_requests`; 1099 export.
+- **Schema/migrations:** Five new tables (as above — down from the
+  original six now that `vendor_compliance` is P5.1's).
 - **Tests:** The P1/P3 "Vendor A sees nothing" test is the regression
   baseline this package must extend deliberately, re-testing after
   every new capability, never accidentally weakening it — same
   requirement as the old roadmap, now backed by a foundation that
-  actually exists and was actually tested starting in P3.
+  actually exists and was actually tested starting in P3 and extended
+  again in P5.2.
 - **Acceptance criteria:** A vendor logs in for real (Supabase Auth,
-  `vendor` role), sees only their own assigned projects/bids/
-  compliance status, nothing else.
-- **Dependencies:** P5, P3's vendor RLS foundation.
+  `vendor` role — already usable for bidding since P5.2), sees only
+  their own assigned projects/performance/invoicing status, nothing
+  else.
+- **Dependencies:** P5.1, P5.2, P3's vendor RLS foundation.
 - **Exclusions:** No company-wide vendor directory UI for the vendor
-  themselves. **Correction (2026-09-02):** this bullet previously
-  claimed that UI already existed as "the admin-side Vendors area,
-  already built as record-keeping in P5" — verified false. P5 only ever
-  consumes existing `vendors` rows (bid invites, material-order vendor
-  selection); no admin-side vendor-creation/management screen exists in
-  P5, P2.1 (which built the `vendors` table itself explicitly "no UI,
-  data only"), or any other shipped/in-progress package. See
-  `PRODUCT-COMPLETENESS-MATRIX.md` Section D — this is an unhomed gap,
-  not a built screen.
+  themselves (that UI — for staff, not the vendor — is P5.1, built and
+  live by the time this package starts). No bid-management UI (P5.2,
+  built earlier). No compliance-document tracking (P5.1's
+  `vendor_documents`).
 
 ### Package P12 — Investor & Spec-Home Reporting, Lender Draw Support
 
@@ -1151,8 +1211,17 @@ P3 (real projects + vendor RLS foundation) ────────────�
  ├─→ P4 (Estimating + QuickBooks import)                  │
  │      │                                                 │
  │      ├─→ P5 (Commitments + Bids[PM] + Procurement) ────┘ (vendor RLS
- │      │      └─→ P11 (Vendor Portal[full] + Bids[vendor] + Compliance)  reused, not
- │      │                                                                  re-introduced)
+ │      │      └─→ P5.0 (Project-Context Write-Safety)      reused, not
+ │      │             └─→ P5 Task 11/12 (closeout)          re-introduced)
+ │      │                    └─→ P5.1 (Vendor Directory & Onboarding)
+ │      │                           └─→ P5.2 (Vendor Bid Access/Docs/
+ │      │                                  Email/Correspondence)
+ │      │                                  ├─→ P5.3 (Material Order
+ │      │                                  │      Collaboration/Docs)
+ │      │                                  └─→ P11 (Vendor Portal[full]:
+ │      │                                         assignments/performance/
+ │      │                                         invoicing/1099)
+ │      │             └─→ P5.4 (Financial Traceability & Cross-Nav)
  │      ├─→ P6 (Billing: Draws/Payments/Retainage)
  │      │      ├─→ P6b (Payment Processing)
  │      │      ├─→ P7 (Change Orders + E-Signature)
