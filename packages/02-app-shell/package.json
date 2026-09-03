@@ -5,7 +5,7 @@
   "description": "Stone Column Portal — Package 2 responsive app shell, navigation, and Financials screen (imports the Package 1 financial engine directly; no duplicated formulas).",
   "scripts": {
     "smoke": "tsx test/render_smoke.tsx",
-    "test": "tsx test/render_smoke.tsx && tsx test/estimateTable_field_sync.tsx && tsx test/projectListWorkspace_pricingModel.tsx && tsx test/projectContactsWorkspace.tsx && tsx test/projectPricingWorkspace.tsx && tsx test/projectBriefWorkspace.tsx && tsx test/projectSiteInfoWorkspace.tsx && tsx test/projectSetupChecklist.tsx && tsx test/ui_button.tsx && tsx test/ui_formField.tsx && tsx test/ui_menuButton.tsx && tsx test/commitmentsTable_grouping.tsx && tsx test/materialOrderWorkspace.tsx && tsx test/bidPackageWorkspace.tsx",
+    "test": "tsx test/render_smoke.tsx && tsx test/estimateTable_field_sync.tsx && tsx test/projectListWorkspace_pricingModel.tsx && tsx test/projectContactsWorkspace.tsx && tsx test/projectPricingWorkspace.tsx && tsx test/projectBriefWorkspace.tsx && tsx test/projectSiteInfoWorkspace.tsx && tsx test/projectSetupChecklist.tsx && tsx test/ui_button.tsx && tsx test/ui_formField.tsx && tsx test/ui_menuButton.tsx && tsx test/commitmentsTable_grouping.tsx && tsx test/materialOrderWorkspace.tsx && tsx test/bidPackageWorkspace.tsx && tsx test/action_center_queries_unit.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
