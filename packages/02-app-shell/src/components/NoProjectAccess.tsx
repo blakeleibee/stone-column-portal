@@ -5,15 +5,19 @@
  * (P3-DESIGN.md Decision 10). Deliberately generic and reusable — Task 4
  * (`/admin/projects?project=<id>`'s deep-link check) and Task 6
  * (`/admin/projects/[id]/team`, when the route's project id isn't in the
- * caller's accessible list) both render this exact component. Task 5's
- * five rewired pages (overview/financials/estimate/bids/import) do NOT
- * render this — corrected here during the final-review fix wave, which
- * found this comment's earlier claim to the contrary; those pages use
- * `resolveSelectedProject()`'s own null-means-"zero accessible
- * projects" contract and render a plain "No projects yet for this
- * organization" fallback instead, since a null selected project there
- * means the org has no accessible projects at all, not a specific
- * named-but-inaccessible one.
+ * caller's accessible list) both render this exact component. The seven
+ * pages that resolve their project via resolveProjectAndSwitcherData()
+ * (overview/financials/estimate/bids/procurement/commitments/import) do
+ * NOT render this — they render NoProjectSelected.tsx instead. As of
+ * P5.0 (Project-Context Write-Safety), `resolveSelectedProject()`
+ * returning `null` no longer means "the org has zero accessible
+ * projects" specifically — it also means "projects exist, but none is
+ * explicitly selected yet" (no more silent first-project fallback) — so
+ * those seven pages distinguish the two using
+ * `switcherData.otherProjects`/`hasArchivedProjects` rather than
+ * treating every `null` as this component's "you don’t have access to
+ * THIS SPECIFIC project" case, which would be the wrong message for
+ * either of their two null-project states.
  *
  * Per Decision 10, when this component IS rendered, its three possible
  * causes (nonexistent, wrong-org, revoked) are deliberately NOT

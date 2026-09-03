@@ -248,6 +248,7 @@ async function main() {
       renderer = TestRenderer.create(
         <MaterialOrderWorkspace
           projectId="proj_1"
+          projectName="Test Project"
           materialOrders={[BASE_ORDER]}
           costCodes={COST_CODES}
           vendors={[]}
@@ -436,6 +437,7 @@ async function main() {
       freshRenderer = TestRenderer.create(
         <MaterialOrderWorkspace
           projectId="proj_1"
+          projectName="Test Project"
           materialOrders={[BASE_ORDER]}
           costCodes={COST_CODES}
           vendors={[]}

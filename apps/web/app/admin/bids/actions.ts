@@ -1,6 +1,8 @@
 "use server";
 
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
+import { getCurrentUser } from "../../../src/server/auth/getCurrentUser";
+import { isProjectAccessibleToUser, PROJECT_NOT_ACCESSIBLE_ERROR } from "../../../src/server/project/assertProjectAccess";
 import {
   createBidPackage as createBidPackageService,
   publishBidPackage as publishBidPackageService,
@@ -15,8 +17,22 @@ import {
   type BidAddendumRow,
 } from "../../../../../packages/02-app-shell/src/services/bidService";
 
+/**
+ * P5.0 (Project-Context Write-Safety): re-validates `projectId` against
+ * the acting user's real accessible-project list before creating a new
+ * bid_packages row — this Server Action's only caller passes down
+ * whatever project a Server Component page resolved, which (before
+ * P5.0) could have been a silently-defaulted "first project" rather
+ * than one the user explicitly selected. Never trusts that value alone;
+ * see assertProjectAccess.ts's own doc comment for the full reasoning.
+ */
 export async function createBidPackage(projectId: string, costCodeId: string, title: string, scopeDescription?: string, dueAt?: string) {
   const supabase = await createServerSupabaseClient();
+  const user = await getCurrentUser(supabase);
+  if (!user) return { error: "Not authenticated." };
+  if (!(await isProjectAccessibleToUser(supabase, user.orgId, projectId))) {
+    return { error: PROJECT_NOT_ACCESSIBLE_ERROR };
+  }
   return createBidPackageService(supabase, projectId, costCodeId, title, scopeDescription, dueAt);
 }
 

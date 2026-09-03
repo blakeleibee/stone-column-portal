@@ -217,7 +217,12 @@ const switcherStyles = `
 .sc-switcher-trigger-text { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
 .sc-switcher-eyebrow { font-size: 9.5px; font-weight: ${typography.weightSemibold}; letter-spacing: 0.06em; text-transform: uppercase; color: ${colors.stoneDark}; line-height: 1.2; }
 .sc-switcher-name-line { display: flex; align-items: center; gap: ${spacing.xs}; min-width: 0; }
-.sc-switcher-name { font-size: ${typography.sizeSm}; color: ${colors.ink}; font-weight: ${typography.weightMedium}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
+/* P5.0 (Project-Context Write-Safety), requirement 1: bumped from
+   sizeSm/weightMedium to sizeMd/weightSemibold — a small, targeted
+   legibility increase (not a redesign) for the one label every
+   project-scoped page's write-safety now depends on the user actually
+   noticing. */
+.sc-switcher-name { font-size: ${typography.sizeMd}; color: ${colors.ink}; font-weight: ${typography.weightSemibold}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; }
 .sc-switcher-empty-label { color: ${colors.stoneDark}; font-weight: ${typography.weightRegular}; }
 .sc-switcher-caret { font-size: 10px; color: ${colors.stoneDark}; }
 

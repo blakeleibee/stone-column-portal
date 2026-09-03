@@ -1,5 +1,6 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { CommitmentsTable } from "../../../../../packages/02-app-shell/src/components/CommitmentsTable";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { PageHeader } from "../../../../../packages/02-app-shell/src/components/ui";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
@@ -8,6 +9,7 @@ import { createServerSupabaseClient } from "../../../src/server/supabase/serverC
 import { projectMeta as demoProjectMeta } from "../../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import type { FinancialRepository } from "../../../../../packages/02-app-shell/src/data/financialRepository";
 import { resolveProjectAndSwitcherData, type ResolvedProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 import { supersedeCommittedCost } from "./actions";
 
 /**
@@ -70,7 +72,11 @@ export default async function AdminCommitmentsPage() {
   if (!project) {
     return (
       <AdminChrome activeKey="commitments" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }

@@ -1,5 +1,6 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { ProjectWorkspace } from "../../../src/screens/ProjectWorkspace";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { loadAdminVM, loadAdminVMFor } from "../../../src/data/loadViewModels";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
@@ -7,6 +8,7 @@ import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { projectMeta as demoProjectMeta } from "../../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 
 export default async function AdminFinancialsPage() {
   if (isDemoMode()) {
@@ -27,7 +29,11 @@ export default async function AdminFinancialsPage() {
   if (!project) {
     return (
       <AdminChrome activeKey="financials" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }

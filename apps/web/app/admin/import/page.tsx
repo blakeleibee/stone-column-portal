@@ -1,11 +1,13 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { ImportWizard } from "../../../../../packages/02-app-shell/src/components/ImportWizard";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { listMappingProfiles } from "../../../../../packages/02-app-shell/src/services/importMappingService";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 import { createMappingProfile } from "./mappingActions";
 import {
   overrideImportRow,
@@ -37,7 +39,11 @@ export default async function AdminImportPage() {
   if (!project) {
     return (
       <AdminChrome activeKey="import" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }

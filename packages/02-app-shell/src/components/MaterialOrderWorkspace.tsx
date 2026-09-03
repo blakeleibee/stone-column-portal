@@ -100,6 +100,10 @@ type ActionResult<T extends object = object> = (T & { error?: undefined }) | { e
 
 export interface MaterialOrderWorkspaceProps {
   projectId: string;
+  /** P5.0 (Project-Context Write-Safety), requirement 6: named directly
+   *  on the create-material-order button so the last moment before this
+   *  write happens still confirms which project it targets. */
+  projectName: string;
   materialOrders: MaterialOrderRow[];
   costCodes: CostCode[];
   vendors: VendorRow[];
@@ -166,6 +170,7 @@ type PoIssuedResult = { version: number } | { versionUnknown: true };
 
 export function MaterialOrderWorkspace({
   projectId,
+  projectName,
   materialOrders,
   costCodes,
   vendors,
@@ -576,7 +581,7 @@ export function MaterialOrderWorkspace({
                 />
               </FormField>
               <Button type="submit" variant="primary" disabled={createSubmitting} loading={createSubmitting} loadingText="Creating…">
-                Create Order
+                Create Order for {projectName}
               </Button>
               {createError && <Alert tone="error">{createError}</Alert>}
             </form>

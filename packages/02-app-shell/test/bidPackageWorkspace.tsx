@@ -202,6 +202,7 @@ async function main() {
     renderer = TestRenderer.create(
       <BidPackageWorkspace
         projectId="proj_1"
+        projectName="Test Project"
         bidPackages={[BASE_PACKAGE]}
         costCodes={COST_CODES}
         vendors={[]}

@@ -61,6 +61,10 @@ type ActionResult = { error?: string } | void | undefined;
 
 export interface BidPackageWorkspaceProps {
   projectId: string;
+  /** P5.0 (Project-Context Write-Safety), requirement 6: named directly
+   *  on the create-bid-package button so the last moment before this
+   *  write happens still confirms which project it targets. */
+  projectName: string;
   bidPackages: BidPackageRow[];
   costCodes: CostCode[];
   vendors: VendorRow[];
@@ -162,6 +166,7 @@ function SubmissionStatusBadge({ status }: { status: BidSubmissionRow["status"] 
 
 export function BidPackageWorkspace({
   projectId,
+  projectName,
   bidPackages,
   costCodes,
   vendors,
@@ -625,7 +630,7 @@ export function BidPackageWorkspace({
                 />
               </FormField>
               <Button type="submit" variant="primary" disabled={createSubmitting} loading={createSubmitting} loadingText="Creating…">
-                Create Package
+                Create Package for {projectName}
               </Button>
               {createError && <Alert tone="error">{createError}</Alert>}
             </form>

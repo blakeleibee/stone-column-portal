@@ -42,11 +42,17 @@ export default async function ProjectSetupPage({ params }: { params: { id: strin
   const accessible = await listAccessibleProjects(supabase, user.orgId, { includeArchived: true });
   const project = accessible.find((p) => p.id === params.id);
 
+  // P5.0 (Project-Context Write-Safety): matches team/page.tsx's own
+  // fix — this used to fall through to `activeProjects[0]` when there
+  // was no cookie or a stale one (the same silent-fallback defect fixed
+  // in resolveSelectedProjectForCookieValue()). This page's own content
+  // is scoped by `params.id` (already access-checked below), so only the
+  // header switcher's "Current Project" label was ever at risk of
+  // silently naming an unrelated project.
   const cookieStore = await cookies();
   const cookieProjectId = cookieStore.get(SELECTED_PROJECT_COOKIE_NAME)?.value ?? null;
   const activeProjects = accessible.filter((p) => p.status !== "archived");
-  const currentProject =
-    (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || activeProjects[0] || null;
+  const currentProject = (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || null;
   const switcherData: ProjectSwitcherData = {
     currentProject,
     otherProjects: activeProjects.filter((p) => p.id !== currentProject?.id),

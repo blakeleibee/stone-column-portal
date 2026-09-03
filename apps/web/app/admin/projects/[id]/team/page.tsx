@@ -51,12 +51,21 @@ export default async function ProjectTeamPage({ params }: { params: { id: string
   // the same selected-project cookie resolveSelectedProject() reads, then
   // matching it against the active (non-archived) subset of `accessible`,
   // reproducing resolveSelectedProjectForCookieValue()'s own cookie-match
-  // -> first-entry -> null fallback exactly, just without re-querying.
+  // -> null fallback exactly, just without re-querying.
+  //
+  // P5.0 (Project-Context Write-Safety): this used to fall through to
+  // `activeProjects[0]` (the alphabetically-first project) when there was
+  // no cookie or a stale one — the same silent-fallback defect fixed in
+  // resolveSelectedProjectForCookieValue() itself. This page's own
+  // CONTENT was never at risk (it's scoped by `params.id`, already
+  // access-checked below via `accessible.find`), but the header
+  // switcher's "Current Project" label could still silently show an
+  // unrelated project's name while viewing this route — fixed here for
+  // the same reason, even though it never enabled a wrong-project write.
   const cookieStore = await cookies();
   const cookieProjectId = cookieStore.get(SELECTED_PROJECT_COOKIE_NAME)?.value ?? null;
   const activeProjects = accessible.filter((p) => p.status !== "archived");
-  const currentProject =
-    (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || activeProjects[0] || null;
+  const currentProject = (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || null;
   const switcherData: ProjectSwitcherData = {
     currentProject,
     otherProjects: activeProjects.filter((p) => p.id !== currentProject?.id),

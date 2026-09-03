@@ -50,11 +50,14 @@ export default async function ProjectPricingPage({ params }: { params: { id: str
   const accessible = await listAccessibleProjects(supabase, user.orgId, { includeArchived: true });
   const project = accessible.find((p) => p.id === params.id);
 
+  // P5.0 (Project-Context Write-Safety): no more silent `activeProjects[0]`
+  // fallback for the header switcher's "Current Project" label — matches
+  // team/setup/page.tsx's own fix and resolveSelectedProjectForCookieValue()
+  // itself. This page's own content stays scoped by `params.id` regardless.
   const cookieStore = await cookies();
   const cookieProjectId = cookieStore.get(SELECTED_PROJECT_COOKIE_NAME)?.value ?? null;
   const activeProjects = accessible.filter((p) => p.status !== "archived");
-  const currentProject =
-    (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || activeProjects[0] || null;
+  const currentProject = (cookieProjectId && activeProjects.find((p) => p.id === cookieProjectId)) || null;
   const switcherData: ProjectSwitcherData = {
     currentProject,
     otherProjects: activeProjects.filter((p) => p.id !== currentProject?.id),

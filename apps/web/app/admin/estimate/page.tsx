@@ -1,5 +1,6 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { EstimateTable } from "../../../../../packages/02-app-shell/src/components/EstimateTable";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
@@ -8,6 +9,7 @@ import { computeAllCategoryFinancials } from "../../../../../packages/01-financi
 import { projectMeta as demoProjectMeta } from "../../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import type { FinancialRepository } from "../../../../../packages/02-app-shell/src/data/financialRepository";
 import { resolveProjectAndSwitcherData, type ResolvedProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 import { enterOriginalBudget, adjustBudget } from "./actions";
 import { updateCostCodeMetadata } from "./costCodeActions";
 
@@ -78,7 +80,11 @@ export default async function AdminEstimatePage() {
   if (!project) {
     return (
       <AdminChrome activeKey="estimate" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }

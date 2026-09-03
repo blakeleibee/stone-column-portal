@@ -1,11 +1,13 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { BidPackageWorkspace } from "../../../../../packages/02-app-shell/src/components/BidPackageWorkspace";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
 import { listBidPackages, listVendors } from "../../../../../packages/02-app-shell/src/services/bidService";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 import { createBidPackage, publishBidPackage, inviteVendor, getBidPackageDetail, listBidQuestions, listBidAddenda } from "./actions";
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum, issueSubcontract, getLatestIssuedSubcontract } from "./submissionActions";
 
@@ -31,7 +33,11 @@ export default async function AdminBidsPage() {
   if (!project) {
     return (
       <AdminChrome activeKey="bids" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }
@@ -46,6 +52,7 @@ export default async function AdminBidsPage() {
     <AdminChrome activeKey="bids" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <BidPackageWorkspace
         projectId={project.id}
+        projectName={project.name}
         bidPackages={bidPackages}
         costCodes={costCodes}
         vendors={vendors}

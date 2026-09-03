@@ -1,5 +1,6 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { MaterialOrderWorkspace } from "../../../../../packages/02-app-shell/src/components/MaterialOrderWorkspace";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
@@ -7,6 +8,7 @@ import { createServerSupabaseClient } from "../../../src/server/supabase/serverC
 import { listMaterialOrders } from "../../../../../packages/02-app-shell/src/services/procurementService";
 import { listVendors } from "../../../../../packages/02-app-shell/src/services/bidService";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 import {
   createMaterialOrder,
   addMaterialOrderLineItem,
@@ -40,7 +42,11 @@ export default async function AdminProcurementPage() {
   if (!project) {
     return (
       <AdminChrome activeKey="procurement" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }
@@ -55,6 +61,7 @@ export default async function AdminProcurementPage() {
     <AdminChrome activeKey="procurement" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
       <MaterialOrderWorkspace
         projectId={project.id}
+        projectName={project.name}
         materialOrders={materialOrders}
         costCodes={costCodes}
         vendors={vendors}

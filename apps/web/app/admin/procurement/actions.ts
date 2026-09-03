@@ -1,6 +1,8 @@
 "use server";
 
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
+import { getCurrentUser } from "../../../src/server/auth/getCurrentUser";
+import { isProjectAccessibleToUser, PROJECT_NOT_ACCESSIBLE_ERROR } from "../../../src/server/project/assertProjectAccess";
 import { getRepository } from "../../../src/data/getRepository";
 import {
   createMaterialOrder as createMaterialOrderService,
@@ -14,8 +16,23 @@ import {
   getLatestIssuedDocument as getLatestIssuedDocumentService,
 } from "../../../../../packages/02-app-shell/src/services/documentIssuanceService";
 
+/**
+ * P5.0 (Project-Context Write-Safety): re-validates `projectId` against
+ * the acting user's real accessible-project list before creating a new
+ * material_orders row — same reasoning as bids/actions.ts's
+ * createBidPackage. addMaterialOrderLineItem below is deliberately NOT
+ * given this same check: it always operates on an already-loaded
+ * materialOrderId, so its projectId parameter is denormalized data for
+ * the line item's own row, not a signal of "which project is this
+ * writing a brand-new top-level record into."
+ */
 export async function createMaterialOrder(projectId: string, defaultCostCodeId?: string, vendorId?: string, orderNumber?: string, notes?: string) {
   const supabase = await createServerSupabaseClient();
+  const user = await getCurrentUser(supabase);
+  if (!user) return { error: "Not authenticated." };
+  if (!(await isProjectAccessibleToUser(supabase, user.orgId, projectId))) {
+    return { error: PROJECT_NOT_ACCESSIBLE_ERROR };
+  }
   return createMaterialOrderService(supabase, projectId, defaultCostCodeId, vendorId, orderNumber, notes);
 }
 
