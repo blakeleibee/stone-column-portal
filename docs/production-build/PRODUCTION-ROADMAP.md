@@ -27,7 +27,15 @@ established: `docs/production-build/FINANCIAL-ARCHITECTURE.md` (the
 project + cost-code ledger as the permanent financial backbone) and
 `docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` (business logic
 exposed as repository/service functions a future AI layer can reuse).
-**The next package is P5.**
+**P5 (Commitments, Bids [PM-side], Procurement & Material Orders)
+complete** (`p5-complete` tag) — see `docs/production-build/P5-DESIGN.md`
+and `docs/milestones/P5-complete.md`. **P5.0 (Project-Context
+Write-Safety) and P5's own Task 11 are also complete**, folded into the
+same closeout — see the milestone doc for why. **The next package is
+P5.1** (Vendor Directory & Onboarding — see
+`docs/production-build/P5-EXTENSION-PACKAGES-DESIGN.md`), not P6: P5.1–P5.4
+are owner-approved sub-packages sequenced ahead of P6, per that design
+document's Section 4.
 
 Replaces the "Package 3 onward" portion of
 `docs/product-definition/05-implementation-roadmap.md` with small,
@@ -761,7 +769,12 @@ way.
 
 ### Package P5 — Commitments, Bids (PM-side), Procurement & Material Orders
 
-**Status: Tasks 1–10 of 12 shipped.** Task 11 (Action Center conditions) and Task 12 (final verification and milestone closeout) remain outstanding — sequenced to run immediately after P5.0 below, per the owner's 2026-09-04 decision recorded in `P5-EXTENSION-PACKAGES-DESIGN.md` Section 4. P5 is not tagged complete until Task 12 runs.
+**Status: Complete.** Tag `p5-complete`. Full closeout record:
+`docs/milestones/P5-complete.md`. All 12 tasks shipped, including
+Task 11 (Action Center conditions) and Task 12 (final verification and
+milestone closeout), the latter run immediately after P5.0 rather than
+after P5.4 as originally planned, per the owner's 2026-09-04 sequencing
+decision recorded in `P5-EXTENSION-PACKAGES-DESIGN.md` Section 4.
 
 - **Scope:** `committed_costs` UI (already schema-hardened across 5
   migrations, never exercised by any UI); PM-facing bid package
@@ -798,7 +811,7 @@ way.
 
 ### Package P5.0 — Project-Context Write-Safety
 
-**Status: Approved, implementing now.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Not one of the brief's original P0–P15 packages — inserted here after the owner's 2026-09-03/04 P5 live-preview feedback found that the existing project-selection behavior isn't just a display gap (two real committed-cost amounts weren't readily findable during the preview) but a genuine write-safety defect: nothing today stops a create action from landing under an unintended project.
+**Status: Complete**, folded into P5's own closeout (`docs/milestones/P5-complete.md`, tag `p5-complete`). Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Not one of the brief's original P0–P15 packages — inserted here after the owner's 2026-09-03/04 P5 live-preview feedback found that the existing project-selection behavior isn't just a display gap (two real committed-cost amounts weren't readily findable during the preview) but a genuine write-safety defect: nothing today stops a create action from landing under an unintended project.
 
 - **Scope:** unmistakable current project name/number on every project-scoped page; no silent "default to whichever project sorts first" fallback in `resolveSelectedProject()`; an explicit no-project-selected state; server-side re-validation of the target project on every affected create/write action (never trusting client-supplied state alone); the target project named directly on every create action's own button/confirmation.
 - **Schema/migrations:** None.
