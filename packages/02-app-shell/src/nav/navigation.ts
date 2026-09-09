@@ -65,6 +65,16 @@ export const adminNav: NavItem[] = [
   { key: "procurement", label: "Material Orders", icon: "PackageSearch", section: "project" },
   { key: "conversations", label: "Conversations", icon: "MessagesSquare", section: "project" },
   { key: "contacts", label: "Contacts", icon: "Users", section: "organization" },
+  // "vendors" (P5.1) — org-level, matching Projects/Contacts/Settings:
+  // vendors are shared across every project in the org, not scoped to
+  // whichever project the switcher currently has selected. Placed next
+  // to "contacts" (the closest existing org-level directory-shaped
+  // screen) rather than among the project-scoped bids/commitments/
+  // procurement entries above, even though those screens are P5.1's
+  // main consumers of the vendors table — this nav's own section
+  // grouping is about WHERE a screen's data lives, not which other
+  // screens happen to read from it.
+  { key: "vendors", label: "Vendors", icon: "Truck", section: "organization" },
   { key: "settings", label: "Settings", icon: "Settings", section: "organization" },
 ];
 

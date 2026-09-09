@@ -22,6 +22,7 @@ const ADMIN_PATH: Record<string, string> = {
   procurement: "/admin/procurement",
   conversations: "/admin/conversations",
   contacts: "/admin/contacts",
+  vendors: "/admin/vendors",
   settings: "/admin/settings",
 };
 

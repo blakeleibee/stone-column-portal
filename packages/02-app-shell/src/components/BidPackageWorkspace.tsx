@@ -701,6 +701,13 @@ export function BidPackageWorkspace({
                   <Button variant="secondary" disabled={inviteSubmitting} loading={inviteSubmitting} loadingText="Inviting…" onClick={handleInvite}>
                     Invite
                   </Button>
+                  {/* P5.1: navigation convenience only — creating/editing
+                      a vendor happens on the org-level directory, not
+                      inline here. Doesn't touch this file's own
+                      invite/award/etc. logic at all. */}
+                  <a href="/admin/vendors" target="_blank" rel="noopener noreferrer" className="sc-bids-muted">
+                    Manage Vendors
+                  </a>
                 </div>
                 {inviteError && <Alert tone="error">{inviteError}</Alert>}
 
