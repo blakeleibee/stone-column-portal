@@ -16,7 +16,8 @@
     "test:estimate": "tsx test/estimate_actions_unit.ts",
     "test:import-parse": "tsx test/import_parse_unit.ts",
     "test:procurement": "tsx test/procurement_actions_unit.ts",
-    "test:pdf-routes": "tsx test/pdf_routes_integration.ts"
+    "test:pdf-routes": "tsx test/pdf_routes_integration.ts",
+    "test:vendor-directory": "tsx test/vendor_service_unit.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",
