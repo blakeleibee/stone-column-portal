@@ -90,6 +90,9 @@ export interface CommittedCost {
   status: "open" | "fulfilled" | "cancelled";
   supersededAt?: ISODate | null;   // set when partially invoiced / replaced by a new row
   supersededById?: ID | null;
+  vendorName?: string;   // display-only, mirrors Expense.vendorName
+  sourceType?: string;   // e.g. "bid_award" | "material_order"
+  sourceId?: ID;         // NOT unique — a material order may back several rows sharing one sourceId
 }
 
 export interface ForecastEntry {

@@ -27,7 +27,15 @@ established: `docs/production-build/FINANCIAL-ARCHITECTURE.md` (the
 project + cost-code ledger as the permanent financial backbone) and
 `docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` (business logic
 exposed as repository/service functions a future AI layer can reuse).
-**The next package is P5.**
+**P5 (Commitments, Bids [PM-side], Procurement & Material Orders)
+complete** (`p5-complete` tag) — see `docs/production-build/P5-DESIGN.md`
+and `docs/milestones/P5-complete.md`. **P5.0 (Project-Context
+Write-Safety) and P5's own Task 11 are also complete**, folded into the
+same closeout — see the milestone doc for why. **The next package is
+P5.1** (Vendor Directory & Onboarding — see
+`docs/production-build/P5-EXTENSION-PACKAGES-DESIGN.md`), not P6: P5.1–P5.4
+are owner-approved sub-packages sequenced ahead of P6, per that design
+document's Section 4.
 
 Replaces the "Package 3 onward" portion of
 `docs/product-definition/05-implementation-roadmap.md` with small,
@@ -409,13 +417,40 @@ foundation, not this product UI.
 - **Explicit exclusions:** No SSO. No investor/lender roles yet
   (P12). No real financial mutation UI yet.
 
-## Package P3 — Production project foundation
+## Package P3 — Production project foundation ("Project & Staff Access Foundation")
 
-**Status: Vendor-identity RLS slice delivered as part of P1 (complete)
-— see `docs/production-build/P1-DESIGN.md` and
-`docs/milestones/P1-complete.md`.** Project CRUD/lifecycle UI,
-team-management UI, and project settings screens remain this
-section's (future) scope.
+**Status: Implemented, independently reviewed, and live-verified against
+the real hosted dev Supabase project; sitting at an owner-preview
+checkpoint as of 2026-08-20** (a completion pass covering UI/UX
+polish and one remaining security guard — archived-project team
+management by direct URL — is now COMPLETE, pending final owner
+acceptance). Not yet merged into `p5-commitments-bids-procurement`, no
+`p3-complete` tag. Full design record: **`docs/production-build/P3-DESIGN.md`**,
+pulled forward ahead of P5 Task 7 by explicit owner decision
+(2026-08-19). That document supersedes this section's bullet list below
+with exact schema/RLS/tests/acceptance-criteria detail, the same way
+`P4-DESIGN.md`/`P5-DESIGN.md` supersede their own sections — this text
+is retained for historical continuity, not as the current spec. It also
+closed a gap this roadmap previously left open:
+`SECURITY-AND-PERMISSIONS-MATRIX.md`'s long-flagged `staff_function`
+(PM/Superintendent/Accounting) differentiation and the resulting
+audit-log over-exposure correction, neither of which this section
+originally named, are now part of P3's scope. **P3's real project-
+creation flow is also Step 1 ("Project identity") of the owner's
+2026-08-20 progressive project-setup workflow** (identity → estimate/
+budget → cost codes/subcategories → specs/selections → client/team →
+QuickBooks connection → schedule → documents) — the remaining seven
+steps belong to their own respective future packages (P4.1 for cost
+codes/subcategories, P4.3/P4.4 for a real estimate-at-creation step and
+QuickBooks connection respectively, P8 for selections, P9 for schedule/
+documents), and are explicitly **not** built by P3 — P3's own creation
+form ends with a lightweight, static setup checklist showing what's
+done and what's coming later, never a fake in-progress workflow for
+steps that don't exist yet. Thin Leads intake, thin Company Templates, and the baseline
+backup/retention policy — old Package 3's other named items — remain
+explicitly **not** part of P3 as redefined; see
+`P3-DESIGN.md`'s Exclusions and
+`PRODUCT-COMPLETENESS-MATRIX.md` Section D for their status.
 
 - **Exact scope:** Real project CRUD and lifecycle, plus (per the
   recommended change above) the vendor identity/RLS foundation.
@@ -478,6 +513,42 @@ section's (future) scope.
   pipeline beyond the thinnest intake-and-convert-to-project flow
   (matches old roadmap's "thin Leads" scope, completing in P14). No
   vendor-facing screens (P11) — foundation only, per instruction.
+
+---
+
+## Package P3.1 — Project Intake & Employee Handoff
+
+**Status: Design drafted, independently reviewed, awaiting owner
+approval as of 2026-08-26.** Not implemented. An amendment to P3's
+own project-creation screen — found while P3 sat at its owner-preview
+checkpoint — not a new standalone package number, matching the `P2.1`
+sub-package convention. Full design record:
+**`docs/production-build/P3.1-DESIGN.md`**, which supersedes this
+paragraph with exact schema/RLS/task detail; this entry exists only so
+P3.1 appears in the package sequence.
+
+Reframes P3's create-project screen from a contract-pricing form into a
+project-intake/handoff workflow: database-generated sequential project
+numbers (`SC-YYYY-###`, never typed or suggested by the browser);
+pricing/fee terms made fully optional at creation and movable to a new
+post-creation "Contract & Pricing Terms" step; a minimal required-field
+set at creation (name, type, optional primary contact, location or "not
+established," a short concept, optional staff); a new project-brief and
+site-information intake surface (concept/scope, property/permitting/
+utilities, target budget range explicitly labeled preliminary and
+non-contractual); a lightweight, informational-only decision-maker flag
+on the existing `project_clients` table (explicitly not a substitute for
+P7's real `project_decision_makers`/`CLIENT-APPROVAL-MODEL.md` work);
+handoff-note fields on `project_staff_assignments` (requested work,
+priority, due date, next action, instructions); and a revised,
+derived-status setup checklist. Documents storage remains deferred to P9
+(OneDrive/SharePoint) — this package adds no upload mechanism. Dependencies:
+P3 (design, not the `p3-complete` tag — the two are expected to land
+together). Explicit exclusions: same list as P3.1-DESIGN.md §11 —
+`project_decision_makers`, document upload, notification infrastructure,
+real permitting workflow, QuickBooks per-project connection, cost-code
+breakdown, leads-pipeline analytics, and a binding contract-amount concept
+all remain in their existing future packages, untouched.
 
 ---
 
@@ -569,7 +640,141 @@ duplicate-logic path for the assistant to use later.
   instruction — QuickBooks Desktop has no live cloud API to begin
   with). No commitments/bids yet (P5).
 
+### Package P4.1 — Cost Code Breakdown (Detailed Budget Foundation)
+
+**Status: Design complete, not yet approved for implementation.** Full
+design record: `docs/production-build/P4.1-DESIGN.md`. Inserted here
+(not part of the original P0–P15 brief) after the owner's explicit
+"every project cost code must optionally support customizable child
+budget items" requirement (2026-08-15), reconfirmed and unchanged by
+the broader 2026-08-20 "detailed budget foundation" requirement — see
+`FINANCIAL-ARCHITECTURE.md`'s "Detailed budget foundation" section,
+which confirms the existing design already satisfies it in full.
+
+- **Scope:** `cost_code_children` (new table: project-specific,
+  renameable, reorderable, archivable breakdown rows under a canonical,
+  QuickBooks-mapped parent cost code); nullable `cost_code_child_id` on
+  `budget_ledger`, `expenses`, `committed_costs`, `forecast_entries`,
+  `bid_packages`, `material_order_line_items`.
+- **Dependencies:** P4 (cost codes/budget ledger to extend), P5 Tasks
+  1–2 (the `committed_costs`/`bid_packages`/`material_order_line_items`
+  schema this package's RPC changes touch).
+- **Exclusions:** No client-facing child visibility. No QuickBooks
+  auto-resolution of children (import stays parent-level; manual
+  post-import reassignment only). No order-level convenience child
+  default on `material_orders` (line-item level only).
+- **Sequencing note:** independent of P5's own remaining UI tasks —
+  implementing this before or after P5 Task 7 resumes is an owner
+  timing choice, not an architectural dependency either way (P5 Task 7
+  itself is blocked on P3, not on P4.1 — see P3's own status above).
+
+### Package P4.2 — Historical Pricing Intelligence & Comparable-Project Library
+
+**Status: Not yet designed.** Recorded here per the owner's 2026-08-20
+"historical pricing intelligence" requirement — full detail in
+`FINANCIAL-ARCHITECTURE.md`'s "Planned: historical pricing intelligence"
+section.
+
+- **Scope (expected):** A read-only analytical layer surfacing, per
+  cost code/child item: average historical cost, low/high range, most
+  recent cost, unit cost where applicable, source projects and dates,
+  whether the source is an estimate/bid/commitment/actual, a
+  confidence score based on relevance and sample size, and transparent
+  time/inflation adjustments. Completed-job actuals weigh more heavily
+  than old estimates, but every suggestion remains explainable and
+  owner-editable — no suggestion is ever auto-applied (existing
+  `budget_suggestions` governance, unchanged).
+- **Dependencies:** P4 (cost codes, budget ledger, QuickBooks actuals),
+  P4.1 (child-item granularity to report on), P5 (vendor bids,
+  commitments as additional historical data sources).
+- **Exclusions:** No writes to `budget_ledger` or any backbone table.
+  No new source of truth for any dollar amount — pure read/aggregate
+  layer over data that already exists.
+
+### Package P4.3 — Tiered Pricing, Estimate Templates & Suggestion Engine
+
+**Status: Not yet designed.** Recorded per the owner's 2026-08-20
+"tiered pricing" requirement.
+
+- **Scope (expected):** Reusable Value/Standard/Premium pricing tiers,
+  applied per cost item/specification (never a whole-project
+  multiplier — a project may mix tiers across different line items).
+  Project setup eventually captures project type, square footage,
+  location, target tier, pricing model, and an optional comparable
+  project/template, and may generate a draft estimate showing suggested
+  values, historical ranges, sources, dates, adjustments, and missing/
+  low-confidence warnings — a draft a human reviews, never a budget the
+  system silently approves or revises.
+- **Dependencies:** P4.1 (the child-item level a tier attaches to —
+  see `FINANCIAL-ARCHITECTURE.md`'s note that this package must confirm
+  the exact attachment point once real P4.1 rows exist), P4.2
+  (historical data the suggestion engine draws on).
+- **Exclusions:** No automatic budget approval or revision — every
+  generated draft requires explicit human acceptance, matching the
+  existing `budget_suggestions` non-negotiable.
+
+### Package P4.4 — Controlled QuickBooks Budget/Estimate Export & Actual-Cost Feedback
+
+**Status: Not yet designed — and deliberately cannot be fully designed
+yet.** Recorded per the owner's 2026-08-20 QuickBooks-export
+requirement; full constraint detail in `FINANCIAL-ARCHITECTURE.md`'s
+"Planned: budget export to QuickBooks" section.
+
+- **Scope (expected):** Controlled, versioned export of an *approved*
+  budget/estimate snapshot (never a draft) to the mapped QuickBooks
+  Customer:Job, via explicit parent-cost-code-to-QuickBooks-item/account
+  mapping. Detailed P4.1 children roll into their mapped parent for
+  export unless an equivalent QuickBooks item exists. Export history is
+  versioned (user, timestamp, project, budget version, mapping version,
+  output, result), idempotent, pre-export-validated, and
+  post-import-reconciled, with clear error reporting and a backup
+  warning before any IIF import. No budget is ever independently
+  editable in both systems.
+- **The one genuine open owner decision this package cannot start
+  without:** whether the correct QuickBooks target is a QuickBooks
+  Estimate, a job-specific QuickBooks Budget, or both for distinct
+  reporting purposes. **Explicitly deferred** until this package's own
+  design pass inspects Stone Column's actual QuickBooks Desktop
+  Enterprise Contractor setup or a representative export — the same
+  "inspect the real system before designing against it" discipline
+  `WORKBOOK-GAP-ANALYSIS.md` already used for P2.1. Do not guess this
+  decision in advance of that inspection.
+- **A second open decision, also deferred to this package's design
+  pass:** "actual-cost feedback" in this package's own title has never
+  been elaborated past cost-code/import-batch-level aggregate
+  reconciliation (P4's existing `confirm_import_batch()` sum check).
+  Recorded 2026-09-01, raised during the P5 Tasks 7–9 owner preview:
+  whether staff also need individual-commitment-level reconciliation —
+  tying a specific QuickBooks-imported `expenses` row back to the
+  `committed_costs`/`material_orders` row it actually pays against — is
+  undecided. Today `expenses` carries no such link (see
+  `FINANCIAL-ARCHITECTURE.md`'s procurement-efficiency note). This
+  package's design pass must decide whether that granularity is in
+  scope, not assume either answer.
+- **Dependencies:** P4.1 (parent/child structure to map), P4.2/P4.3
+  (richer estimate data worth exporting, though not a hard technical
+  blocker — this package's own design should confirm whether export can
+  usefully ship before P4.2/P4.3 land, since the owner's proposed
+  sequence places it last but the dependency is soft, not hard).
+- **Exclusions:** No live QuickBooks API — file-based (IIF or
+  equivalent) only, matching P4's own QuickBooks-import precedent, since
+  QuickBooks Desktop has no live cloud API to begin with.
+
+**P5 Task 7 is not blocked by P4.2/P4.3/P4.4** — only by P3 and,
+separately, by whichever of P3/P4.1 the owner chooses to sequence first
+(see the P3 section's own status). The new estimating packages above
+extend P4's domain and can be sequenced relative to P5's remaining
+tasks by business priority, not by a hard technical dependency either
+way.
+
 ### Package P5 — Commitments, Bids (PM-side), Procurement & Material Orders
+
+**Status: Complete.** Tag `p5-complete`. Full closeout record:
+`docs/milestones/P5-complete.md`. All 12 tasks shipped, including
+Task 11 (Action Center conditions) and Task 12 (final verification and
+milestone closeout), the latter run immediately after P5.0 rather than
+after P5.4 as originally planned, per the owner's 2026-09-04 sequencing
+decision recorded in `P5-EXTENSION-PACKAGES-DESIGN.md` Section 4.
 
 - **Scope:** `committed_costs` UI (already schema-hardened across 5
   migrations, never exercised by any UI); PM-facing bid package
@@ -603,6 +808,63 @@ duplicate-logic path for the assistant to use later.
 - **Exclusions:** No vendor-facing UI yet (P11) — vendor data is
   referenced (who a bid was sent to) but never displayed to a vendor
   session in this package.
+
+### Package P5.0 — Project-Context Write-Safety
+
+**Status: Complete**, folded into P5's own closeout (`docs/milestones/P5-complete.md`, tag `p5-complete`). Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Not one of the brief's original P0–P15 packages — inserted here after the owner's 2026-09-03/04 P5 live-preview feedback found that the existing project-selection behavior isn't just a display gap (two real committed-cost amounts weren't readily findable during the preview) but a genuine write-safety defect: nothing today stops a create action from landing under an unintended project.
+
+- **Scope:** unmistakable current project name/number on every project-scoped page; no silent "default to whichever project sorts first" fallback in `resolveSelectedProject()`; an explicit no-project-selected state; server-side re-validation of the target project on every affected create/write action (never trusting client-supplied state alone); the target project named directly on every create action's own button/confirmation.
+- **Schema/migrations:** None.
+- **Server-side operations:** `resolveSelectedProject()` and the Server Action layer's project-resolution pattern, corrected; no new tables.
+- **Acceptance criteria:** no project-scoped screen ever silently renders an unintended project's data; no create/write action can succeed without an explicitly selected, access-checked project; existing `switchProject()` behavior (stays on the same route, re-renders for the new project) is unchanged.
+- **Dependencies:** P3 (project switcher foundation), P5 (the screens where the defect was found).
+- **Exclusions:** No navigation/IA redesign (that stays P9.5, per the owner's explicit instruction) — this is a correctness fix to existing shared infrastructure, not a new information architecture.
+
+### Package P5.1 — Vendor Directory & Onboarding
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Closes the "no admin-side UI to create/manage a `vendors` row" gap recorded in `PRODUCT-COMPLETENESS-MATRIX.md` Section D.
+
+- **Scope:** org-level vendor management — company/legal name, active/inactive, trades, contacts (primary bidding contact + additional), phone/address, preferred communication method, service area, compliance documents (W-9/certificate of insurance with expiration/licensing), payment terms, internal notes, cross-linked history, exact-match duplicate detection at creation (a warning, never a hard block).
+- **Schema/migrations:** `vendor_contacts`, `vendor_documents` (new); additive columns on `vendors` (`legal_name`, `trades`, `service_area`, `preferred_communication_method`, `payment_terms`; `is_archived` reused, inverted, as active/inactive rather than a new column).
+- **RLS:** `is_org_staff_for_org()` for the vendor directory generally; W-9-category `vendor_documents` rows additionally gated to an authorized admin/accounting role, with expiring signed download URLs and per-access audit logging — full detail in the design doc. No vendor-facing access of any kind in this package.
+- **Server-side operations:** none beyond ordinary CRUD; reuses the existing (currently unused) `StorageAdapter` for document upload/download.
+- **Acceptance criteria:** a vendor can be created with name/email/phone alone; every other field is optional and editable later in its own section; a W-9 document's access is individually audited and excluded from any future search/AI indexing.
+- **Dependencies:** none beyond P5 itself (vendors are organization-scoped, not project-scoped — no dependency on P5.0).
+- **Exclusions:** no vendor-facing login/portal (P5.2/P11); no banking/tax-ID numbers stored as structured, searchable fields (documents only) absent a future, separate security decision.
+
+### Package P5.2 — Vendor Bid Access, Documents, Email Invitations & Correspondence
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Pulls forward the "Bid Management (vendor-side)" and document-sharing slice of P11's originally-stated scope — see P11's own entry below for the resulting split.
+
+- **Scope:** the real vendor-facing bidding experience (no vendor UI exists anywhere today) — secure, package-scoped access via email invitation; bid package assembly (inclusions/exclusions/alternates/allowances/pricing-breakdown instructions/schedule expectations/deadline/Stone Column contact); document upload and versioned, addenda-based distribution reusing the existing `documents`/`StorageAdapter` infrastructure; real email invitations (delivery/open/response tracking, resend, revoke/expire) via Resend behind a replaceable `EmailService` interface, sent from a dedicated `notify.stonecolumn.com` subdomain; portal-as-system-of-record correspondence with real, verified inbound-email reply routing (package/vendor-specific reply tokens, sender verification, authenticity checks, attachment scanning, duplicate prevention, a staff-reviewed quarantine queue for anything that fails).
+- **Schema/migrations:** additive columns on `bid_packages`; `version`/`superseded_by_id` added to `documents`; `bid_package_documents`, `bid_invitation_emails`, `entity_messages`, `entity_message_attachments`, `inbound_reply_tokens`, `quarantined_inbound_messages` (all new).
+- **RLS:** fixes the latent bug where `inviteVendor` never creates the `project_members` row `is_project_vendor()` requires (currently harmless only because no vendor session exercises it yet); every vendor-visible document/message requires the existing double-gate (`is_project_vendor()` AND a specific invitation record), never a blanket grant.
+- **Server-side operations:** real upload Route Handler (the existing `canUploadDocument` check is defined but never called today); inbound-email webhook processing with the five-step verification pipeline in the design doc.
+- **Tests:** the standard "Vendor A sees nothing belonging to Vendor B" isolation test, extended to correspondence and documents specifically, including a case proving a guessed/leaked reply token still cannot resolve into another vendor's thread.
+- **Acceptance criteria:** a vendor can receive a real email, access exactly one bid package, submit a bid, ask a question, and reply either through the portal or by email with the reply landing correctly in the same thread — never seeing another vendor's anything.
+- **Dependencies:** P5.1, P3's vendor RLS foundation.
+- **Exclusions:** `vendor_profiles`/`vendor_assignments`/`vendor_performance_notes`/`vendor_invoices`/`vendor_change_requests`/1099 export remain P11 scope, unchanged.
+
+### Package P5.3 — Material Order Collaboration & Documents
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5.
+
+- **Scope:** comments and documents on material orders, at the order and line-item level — structurally separate "Internal Activity" and "Vendor Conversation" surfaces (never a shared composer with a visibility checkbox); system-activity timeline surfaced from existing `audit_log` rows; typed document uploads (vendor quote/PO/invoice/packing slip/delivery ticket/revised confirmation/product info/photo) with first-class invoice linkage (cost code, vendor, order, a future QuickBooks `expense_id`); delivery/backorder/damaged/returned tracking on line items.
+- **Schema/migrations:** `material_order_documents` (new, same shape as `bid_package_documents` plus `document_type`/`line_item_id`); additive line-item columns (`expected_delivery_date`, `backorder_reason`, `backorder_expected_date`, `damaged_quantity`, `returned_quantity`).
+- **RLS:** a genuine, deliberate widening — `material_orders` today has explicitly no vendor policy ("procurement is internal only"); this package adds one, scoped per-order via the same explicit-invitation pattern P5.2 establishes for bids, never a blanket project-procurement grant.
+- **Server-side operations:** reuses P5.2's document-storage and `entity_messages`/inbound-email infrastructure — no new email/storage mechanism.
+- **Acceptance criteria:** a vendor sees and can reply about only the specific order they're party to; an internal note is structurally impossible to post into the vendor-visible surface by accident.
+- **Dependencies:** P5.2.
+- **Exclusions:** no cross-order vendor visibility of any kind.
+
+### Package P5.4 — Financial Traceability & Cross-Navigation
+
+**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5.
+
+- **Scope:** real, bidirectional links between `committed_costs` rows and the bid submission/material order that produced them (today, only a generic link to the Commitments list page exists in either direction); Committed and Projected columns added to `BudgetTable.tsx`'s per-cost-code view (the financial engine already computes both; this is a display change, not a math change).
+- **Schema/migrations:** None.
+- **Dependencies:** P5 (Commitments/Bids/Financials screens already shipped). Independent of P5.1–P5.3.
+- **Exclusions:** the project-context-clarity fix originally considered for this package was extracted into P5.0 and runs first instead, per the owner's 2026-09-04 sequencing decision.
 
 ### Package P6 — Client Billing: Draws, Payments, Retainage
 
@@ -722,6 +984,60 @@ duplicate-logic path for the assistant to use later.
 - **Dependencies:** P3.
 - **Exclusions:** No vendor-facing schedule confirmation UI yet (P11).
 
+### Package P9.5 — Application-Wide Product Design & UX Refinement
+
+**Status: Planned, not yet designed.** Positioned here — after the
+major day-to-day operational workflows (P5 Commitments/Bids, P6
+Billing/Draws, P7 Change Orders, P8 Selections, P9 Scheduling/Field
+Ops/Documents) are built and working end-to-end, and before the more
+peripheral roles and packages (P10–P14) that can then inherit a
+maturer design system — rather than after everything, per the owner's
+own placement instruction (2026-08-27).
+
+**Why this exists as its own package:** the shared design-system layer
+built during P3.1's visual-modernization pass
+(`packages/02-app-shell/src/components/ui/`, `docs/production-build/VISUAL-MODERNIZATION-PLAN.md`)
+was explicitly accepted as "a working visual foundation... clean enough
+to continue, but not the final product-quality design." The owner's
+own words: a deliberate, scoped opportunity to revisit visual/UX
+maturity once the core operational surface (P5–P9) exists to actually
+evaluate holistically, rather than continuously re-polishing a UI that
+is still growing new screens every package.
+
+**Standing constraint until this package runs** (owner instruction,
+2026-08-27, also recorded in `CLAUDE.md`): every package between now
+and P9.5 must reuse the existing shared design-system primitives
+(`Button`, `TextInput`/`Textarea`/`Select`/`Checkbox`, `FormField`/
+`FormGrid`, `Card`, `PageHeader`, `Badge`/`StatusBadge`, `Alert`,
+`EmptyState`, `Tabs`, `ProgressBar`, `ChecklistItem`, `MenuButton`) for
+every new screen — new screens must stay visually consistent,
+responsive, and accessible, but no package should spend discretionary
+effort on additional cosmetic polish beyond what's required for
+usability. Real usability problems (a confusing control, a genuine
+accessibility gap, an inconsistent height/spacing that actively harms
+scanning) are still worth fixing as part of whatever package touches
+that screen — this constraint is about discretionary redesign effort,
+not about tolerating real usability defects.
+
+**Expected scope (to be designed when this package starts):** a full
+audit of every screen built since the P3.1 modernization pass (P5–P9's
+own UI, plus anything P3.1 didn't reach), a genuine product-design pass
+(not just a component-consistency pass) informed by real usage of the
+now-complete operational workflows, and likely an expansion of the
+`ui/` primitive library itself (a `Table` primitive was repeatedly
+deferred during P3.1 for lack of one — every list/table screen since
+has used ad-hoc `<table>` markup restyled with tokens rather than a
+real shared primitive; this is a natural candidate for P9.5 to finally
+build).
+
+- **Dependencies:** P5, P6, P7, P8, P9 (the operational workflows this
+  package is meant to evaluate against).
+- **Exclusions:** No functional/architectural change — this is a
+  visual/UX package only, same boundary P3.1's own modernization pass
+  held (see `VISUAL-MODERNIZATION-PLAN.md`'s "Implementation boundary").
+  Does not redesign the accepted P3.1 visual direction (palette,
+  overall layout) from scratch — refines/completes it.
+
 ### Package P10 — Client Communication & Approvals (Conversations)
 
 - **Scope:** `conversation_threads`, `messages`; later, captured-email
@@ -737,25 +1053,33 @@ duplicate-logic path for the assistant to use later.
 - **Dependencies:** P3; benefits from P7–P9 existing.
 - **Exclusions:** No AI-assisted drafting (P15).
 
-### Package P11 — Vendor Portal (full), Bid Management (vendor-side), Compliance, 1099 Support
+### Package P11 — Vendor Portal (full), Compliance Performance/Invoicing, 1099 Support
 
-- **Scope:** The actual vendor-facing portal, extending the P3
-  foundation and P5's record-keeping half; `vendor_profiles`,
-  `vendor_assignments`, `vendor_compliance`, `vendor_performance_notes`,
-  `vendor_invoices`, `vendor_change_requests`; 1099 export.
-- **Schema/migrations:** Six new tables (as above).
+**Correction (2026-09-04):** this package's scope is narrower than originally stated, now that P5.2 exists. "Bid Management (vendor-side)" — the vendor's own bidding experience, invitations, and correspondence — moved to P5.2, built earlier because P5 needed it sooner, not deferred to here. `vendor_compliance` (originally one of this package's six new tables) is not built here at all — its full intended scope (W-9/certificate-of-insurance/licensing tracking) is absorbed by P5.1's `vendor_documents` table instead. What remains below is the vendor's own account/assignment/performance/invoicing experience beyond bidding.
+
+- **Scope:** The vendor's own portal login and assignment/performance/
+  invoicing experience, extending the P3 foundation, P5.1's vendor
+  directory, and P5.2's bid-access foundation; `vendor_profiles`,
+  `vendor_assignments`, `vendor_performance_notes`, `vendor_invoices`,
+  `vendor_change_requests`; 1099 export.
+- **Schema/migrations:** Five new tables (as above — down from the
+  original six now that `vendor_compliance` is P5.1's).
 - **Tests:** The P1/P3 "Vendor A sees nothing" test is the regression
   baseline this package must extend deliberately, re-testing after
   every new capability, never accidentally weakening it — same
   requirement as the old roadmap, now backed by a foundation that
-  actually exists and was actually tested starting in P3.
+  actually exists and was actually tested starting in P3 and extended
+  again in P5.2.
 - **Acceptance criteria:** A vendor logs in for real (Supabase Auth,
-  `vendor` role), sees only their own assigned projects/bids/
-  compliance status, nothing else.
-- **Dependencies:** P5, P3's vendor RLS foundation.
+  `vendor` role — already usable for bidding since P5.2), sees only
+  their own assigned projects/performance/invoicing status, nothing
+  else.
+- **Dependencies:** P5.1, P5.2, P3's vendor RLS foundation.
 - **Exclusions:** No company-wide vendor directory UI for the vendor
-  themselves (that's the admin-side Vendors area, already built as
-  record-keeping in P5).
+  themselves (that UI — for staff, not the vendor — is P5.1, built and
+  live by the time this package starts). No bid-management UI (P5.2,
+  built earlier). No compliance-document tracking (P5.1's
+  `vendor_documents`).
 
 ### Package P12 — Investor & Spec-Home Reporting, Lender Draw Support
 
@@ -900,8 +1224,17 @@ P3 (real projects + vendor RLS foundation) ────────────�
  ├─→ P4 (Estimating + QuickBooks import)                  │
  │      │                                                 │
  │      ├─→ P5 (Commitments + Bids[PM] + Procurement) ────┘ (vendor RLS
- │      │      └─→ P11 (Vendor Portal[full] + Bids[vendor] + Compliance)  reused, not
- │      │                                                                  re-introduced)
+ │      │      └─→ P5.0 (Project-Context Write-Safety)      reused, not
+ │      │             └─→ P5 Task 11/12 (closeout)          re-introduced)
+ │      │                    └─→ P5.1 (Vendor Directory & Onboarding)
+ │      │                           └─→ P5.2 (Vendor Bid Access/Docs/
+ │      │                                  Email/Correspondence)
+ │      │                                  ├─→ P5.3 (Material Order
+ │      │                                  │      Collaboration/Docs)
+ │      │                                  └─→ P11 (Vendor Portal[full]:
+ │      │                                         assignments/performance/
+ │      │                                         invoicing/1099)
+ │      │             └─→ P5.4 (Financial Traceability & Cross-Nav)
  │      ├─→ P6 (Billing: Draws/Payments/Retainage)
  │      │      ├─→ P6b (Payment Processing)
  │      │      ├─→ P7 (Change Orders + E-Signature)
@@ -910,6 +1243,8 @@ P3 (real projects + vendor RLS foundation) ────────────�
  │      └─→ P8 (Selections & Allowances)
  │
  ├─→ P9 (Scheduling/Field Ops/Documents/RFIs/Meetings/Safety/Calendar)
+ │      └─→ P9.5 (Application-Wide Product Design & UX Refinement —
+ │             after P5–P9's operational workflows exist to evaluate)
  │
  └─→ P10 (Conversations + Email-to-Project Capture)
 

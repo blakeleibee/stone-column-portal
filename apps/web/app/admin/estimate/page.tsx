@@ -1,5 +1,6 @@
 import { AdminChrome } from "../../../src/shell/AdminChrome";
 import { EstimateTable } from "../../../../../packages/02-app-shell/src/components/EstimateTable";
+import { NoProjectSelected } from "../../../../../packages/02-app-shell/src/components/NoProjectSelected";
 import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
@@ -7,6 +8,8 @@ import { createServerSupabaseClient } from "../../../src/server/supabase/serverC
 import { computeAllCategoryFinancials } from "../../../../../packages/01-financial-engine/src/budget";
 import { projectMeta as demoProjectMeta } from "../../../../../packages/01-financial-engine/fixtures/hawksRidge";
 import type { FinancialRepository } from "../../../../../packages/02-app-shell/src/data/financialRepository";
+import { resolveProjectAndSwitcherData, type ResolvedProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
+import { switchProject } from "../projects/switchAction";
 import { enterOriginalBudget, adjustBudget } from "./actions";
 import { updateCostCodeMetadata } from "./costCodeActions";
 
@@ -14,10 +17,12 @@ async function EstimatePageBody({
   projectId,
   repo,
   demo,
+  projectSwitcherData,
 }: {
   projectId: string;
   repo: FinancialRepository;
   demo: boolean;
+  projectSwitcherData?: ResolvedProjectAndSwitcherData["switcherData"];
 }) {
   // Fetch every input computeAllCategoryFinancials needs, through the
   // repository's existing methods — never a raw ad hoc query duplicating
@@ -46,7 +51,7 @@ async function EstimatePageBody({
   }
 
   return (
-    <AdminChrome activeKey="estimate" isDemoMode={demo}>
+    <AdminChrome activeKey="estimate" isDemoMode={demo} projectSwitcherData={projectSwitcherData}>
       <EstimateTable
         categories={categories}
         costCodes={costCodes}
@@ -70,20 +75,19 @@ export default async function AdminEstimatePage() {
   const supabase = await createServerSupabaseClient();
   const repo = getRepository(supabase);
 
-  const { data: firstProject } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("org_id", user.orgId)
-    .limit(1)
-    .maybeSingle();
+  const { project, switcherData } = await resolveProjectAndSwitcherData(supabase, user.orgId, user.role);
 
-  if (!firstProject) {
+  if (!project) {
     return (
-      <AdminChrome activeKey="estimate" isDemoMode={isDemoMode()}>
-        <p style={{ padding: 24 }}>No projects yet for this organization.</p>
+      <AdminChrome activeKey="estimate" isDemoMode={isDemoMode()} projectSwitcherData={switcherData}>
+        <NoProjectSelected
+          projects={switcherData.otherProjects}
+          hasArchivedProjects={switcherData.hasArchivedProjects}
+          onSelectProject={switchProject}
+        />
       </AdminChrome>
     );
   }
 
-  return <EstimatePageBody projectId={firstProject.id} repo={repo} demo={false} />;
+  return <EstimatePageBody projectId={project.id} repo={repo} demo={false} projectSwitcherData={switcherData} />;
 }

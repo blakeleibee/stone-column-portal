@@ -34,7 +34,13 @@ export async function buildAdminFinancialsViewModel(
 
   const categories = computeAllCategoryFinancials(costCodes, budgetLedger, expenses, committedCosts, forecastEntries);
   const totals = computeProjectTotals(categories);
-  const feeSummary = computeProjectFeeSummary(feeRule, categories, expenses, feeLedgerEntries);
+  // `feeRule` is null when this project has no active fee rule yet
+  // (pricing left "to be determined" at creation, P3.1 — see
+  // financialRepository.ts's getFeeRule doc comment). computeProjectFeeSummary
+  // requires a real FeeRule and must not be called with a fabricated one
+  // — an absent fee rule surfaces honestly as `feeSummary: null`, never
+  // as a computed-looking $0.
+  const feeSummary = feeRule ? computeProjectFeeSummary(feeRule, categories, expenses, feeLedgerEntries) : null;
 
   // CORRECTION (Package 2 review item 3): reconcileProject() must be
   // given a control total that was NOT derived by summing these same

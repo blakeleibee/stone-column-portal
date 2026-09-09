@@ -1,5 +1,15 @@
 # Completed / Remaining Checklist
 
+> **HISTORICAL — prototype-checkpoint era, superseded.** This document
+> predates `docs/production-build/PRODUCTION-ROADMAP.md` (P0–P15) and
+> was never updated after P0/P1/P2.1/P4 shipped — its "Packages 3–8:
+> Not started" line and similar statements are stale and should not be
+> read as current project status. Confirmed stale and marked historical
+> 2026-08-19, per `docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md`
+> Section E. For current status, see `PRODUCTION-ROADMAP.md` and
+> `PRODUCT-COMPLETENESS-MATRIX.md`. Kept for its record of Package 1/2
+> prototype-era correction history, not deleted.
+
 ## Package 1 — Data model & financial engine (Round 3: self-verification of Round 2)
 
 ### Round 3 additions (see docs/PACKAGE_01_CORRECTIONS_V3.md for full detail)

@@ -22,6 +22,49 @@ a second, parallel financial table that duplicates data already living
 in this backbone.** New packages add new tables that *reference* the
 backbone; they never re-store a number the backbone already owns.
 
+## Source-of-truth ownership, by direction (owner decision, 2026-08-20)
+
+Two systems, two domains, one explicit boundary — stated here because
+every future estimating/QuickBooks package (P4.1 onward) must build
+against this exact split, never blur it:
+
+- **The portal is the source of truth for estimating and budgeting**:
+  original and revised estimates, allowances, detailed cost-code
+  breakdowns (parent + child, see P4.1), commitments, forecasts, and
+  projected final cost. This was already true by construction — nothing
+  in `schema/001`–`016` lets QuickBooks data write to `budget_ledger`,
+  `forecast_entries`, or `committed_costs` — this section makes it an
+  explicit, permanent product decision rather than an implicit
+  consequence of what's been built so far.
+- **QuickBooks Desktop Enterprise Contractor is the source of truth for
+  accounting**: bills, checks, credit cards, payroll, invoices,
+  payments, and actual job costs. The portal never recomputes or
+  overrides a QuickBooks actual — `expenses` rows sourced from
+  QuickBooks are a **reviewed, staff-confirmed copy** of what
+  QuickBooks already recorded (`source_type='quickbooks_import'`), not
+  an independent accounting entry.
+- **Money flows both directions, for different reasons, through
+  different controlled paths** — this is the one change from the
+  pre-2026-08-20 framing (which described only inbound sync). Actuals
+  flow **QuickBooks → portal** (P4's existing import pipeline,
+  unchanged). Approved budget/estimate snapshots flow **portal →
+  QuickBooks** (P4.4, planned, not yet designed — see "Planned: budget
+  export to QuickBooks" below) so QuickBooks' own Job/Customer:Job
+  reporting reflects the portal's approved numbers without a second,
+  manually-retyped budget living in QuickBooks. **Neither direction is
+  ever bidirectional live sync** — each is a discrete, reviewed,
+  audited, one-way transfer at a specific moment (import-batch confirm;
+  export-snapshot approval), matching the same "controlled, not
+  automatic" posture P4's import already established.
+- **No budget is ever editable in both systems.** Once a budget is
+  exported to QuickBooks, QuickBooks' own copy is a report artifact,
+  not a second editable original — the portal's own copy remains the
+  only place a revision can originate, and re-export (never a
+  QuickBooks-side edit reconciled backward) is how QuickBooks' copy
+  stays current. This is the same "one source of truth per fact, never
+  two editable copies" rule the whole backbone already runs on,
+  restated for the export direction specifically.
+
 ## The backbone, as it exists today
 
 Anchor: **`cost_codes`** (`id, project_id`, unique together). Every
@@ -135,6 +178,7 @@ in the same commit that introduces it, never invented ad hoc:**
 | `manual` | `expenses` | Hand-entered by staff | 001 (existing default) |
 | `quickbooks_import` | `expenses` | Confirmed from an `import_batches` row | P4 |
 | `bid_award` | `committed_costs` | Created from an awarded `bid_submissions` row | P5 |
+| `material_order` | `committed_costs` | Created from a committed `material_orders` row (`commit_material_order()`) — **one order may produce multiple rows sharing the same `source_id`, one per distinct cost code among its line items**, the same multi-row-per-event shape `change_order` (below) already uses; `source_id` was never a promise of exactly one row | P5 |
 | `change_order` | `budget_ledger` | Approved change order | P7 (slot already reserved, per `PRODUCTION-ROADMAP.md`'s P7 section) |
 | `selection_overage` | `budget_ledger` | Approved selection over allowance | P8 |
 | `vendor_invoice` | `expenses` | Confirmed from a vendor-submitted `vendor_invoices` row | P11 |
@@ -142,6 +186,48 @@ in the same commit that introduces it, never invented ad hoc:**
 
 Any package introducing a new financial event type adds its row here
 in the same PR that adds the schema/code using it.
+
+## Bid awards and material orders: two parallel paths today (procurement-efficiency note, 2026-09-01)
+
+Recorded during the P5 Tasks 7–9 owner preview, in response to a
+duplicate-manual-entry concern. `bid_award` and `material_order` (the
+table above) are **intentionally two separate, non-converting event
+types today** — `award_bid()` never touches `material_orders`, and
+`commit_material_order()` never reads `bid_submissions`. There is no
+schema or code path connecting them, by design: P5 never proposed one.
+
+The owner's stated long-term intent is a pipeline — Estimate/vendor
+quote → Material Order → Purchase Order → receipt → QuickBooks bill/
+actual — with small incidental purchases flowing in as plain
+QuickBooks actuals (`expenses`, `source_type='quickbooks_import'`)
+without ever requiring a Material Order. That intent does not require
+any change to the backbone above; it requires future *efficiency*
+capabilities layered on top of it, none of which are built or
+schema-homed yet:
+
+- Converting an awarded `bid_submissions` row directly into a
+  `material_orders`/`material_order_line_items` row.
+- Duplicating/copying a prior `material_orders` row as a starting
+  point for a new one (including recurring orders).
+- Bulk CSV/spreadsheet import of `material_order_line_items` — distinct
+  from P4's QuickBooks import, which is explicitly scoped to producing
+  `expenses` rows only (see P4-DESIGN.md's exclusions).
+- Creating a `material_orders` row directly from an approved
+  `budget_ledger` line (estimate-to-order), distinct from P4.2/P4.3,
+  which are read-only/estimating-side features that never write to
+  procurement tables.
+- Converting a vendor-supplied quote document into structured order
+  data.
+- A reusable, per-vendor catalog of commonly-ordered items/prices
+  (`vendors` today stores identity only, no item/price child table).
+
+None of these are scheduled to any package as of this writing — see
+`PRODUCT-COMPLETENESS-MATRIX.md` Section D for tracking. **Do not build
+any of them speculatively.** If a future package takes one on, it must
+still route through the existing backbone (`committed_costs` via
+`commit_material_order()`/`award_bid()`, never a parallel table) — this
+note exists so that decision doesn't get re-derived from scratch, not
+to pre-approve a design.
 
 ## Confirmation: P5 through at least P13 need no redesign of the existing backbone
 
@@ -191,6 +277,87 @@ Every other addition described above is a **new table plus a foreign
 key into the existing backbone** — never an alteration to
 `budget_ledger`, `expenses`, `committed_costs`, `forecast_entries`, or
 `cost_codes`'s core shape.
+
+## Detailed budget foundation (P4.1) — confirmed to satisfy the owner's requirement, no redesign needed
+
+The owner's 2026-08-20 "detailed budget foundation" requirement
+(canonical parent cost code + project-specific, renameable, reorderable,
+archivable child breakdown items, each with its own scope/original-
+revised-budget/commitments/actual-costs/forecast, parent rollup,
+unallocated-by-default) is **already the exact shape**
+`docs/production-build/P4.1-DESIGN.md` designed on 2026-08-15 — a new
+`cost_code_children` table plus a nullable `cost_code_child_id` column
+(with the same composite-FK pattern) on `budget_ledger`, `expenses`,
+`committed_costs`, `forecast_entries`, `bid_packages`, and
+`material_order_line_items`. No redesign is needed; P4.1 remains design-
+only and unimplemented, its own approval and sequencing tracked in
+`PRODUCTION-ROADMAP.md`, not restated here.
+
+## Planned: budget export to QuickBooks (P4.4, not yet designed)
+
+Recorded here now, ahead of P4.4's own design pass, as the constraint
+that design must satisfy — not a schema proposal:
+
+- **What's exported**: an approved budget/estimate **snapshot**, never
+  a draft, never a live query result recomputed at read time — matching
+  `issued_documents` (P5)'s own "immutable, versioned snapshot" pattern,
+  the closest existing precedent in this codebase for "freeze a
+  point-in-time financial artifact and keep the exact bytes that
+  produced it reproducible later."
+- **What's mapped**: each *parent* cost code needs an explicit mapping
+  to a QuickBooks item/account (a new, small mapping table, org- or
+  project-scoped — shape TBD by P4.4's own design). A child (P4.1) only
+  appears as its own QuickBooks line if an equivalent QuickBooks item
+  exists for it; otherwise its dollars roll into the mapped parent for
+  export purposes only — **the portal's own child-level detail is never
+  lost or overwritten by this rollup**, only the QuickBooks-side
+  representation is coarser than the portal's.
+- **A new table for export history** (name/shape TBD by P4.4): user,
+  timestamp, project, budget version, mapping version, output artifact,
+  and result — additive to the backbone, referencing it via the same
+  `source_type`/`source_id` convention every other package uses, never
+  a parallel financial model. Idempotency (the same approved snapshot
+  never double-exports) and pre-export validation/post-import
+  reconciliation are P4.4 acceptance-criteria concerns, not schema
+  concerns this document needs to settle now.
+- **The one undecided, evidence-gated question**: whether the correct
+  QuickBooks target is a QuickBooks **Estimate**, a job-specific
+  QuickBooks **Budget**, or both for distinct reporting purposes. This
+  is explicitly **not** a decision this document — or any design
+  written before P4.4 begins — should guess at. P4.4's own design pass
+  must first inspect Stone Column's actual QuickBooks Desktop
+  Enterprise Contractor setup (or a representative export) the same way
+  `WORKBOOK-GAP-ANALYSIS.md` inspected the real cost-plus workbook
+  before P2.1 was designed — precedent, not a new pattern.
+
+## Planned: historical pricing intelligence & tiered pricing (P4.2/P4.3, not yet designed)
+
+Also recorded now as a constraint for later design, not a schema
+proposal:
+
+- **Historical pricing intelligence (P4.2) is a read-only analytical
+  layer over the existing backbone — it introduces no new source of
+  truth for any dollar amount.** It reads `budget_ledger` (original/
+  revised estimates), `bid_submissions` (vendor bids, P5), `committed_costs`
+  (POs/commitments), and `expenses` (QuickBooks actuals) — exactly the
+  tables that already exist — grouped by cost code/child item, project
+  type, location, size, and completion date, to surface averages,
+  ranges, most-recent cost, and source provenance. It never writes back
+  into `budget_ledger` or any other backbone table on its own; every
+  suggested number remains subject to the same standing rule already in
+  `CLAUDE.md`: **suggested numbers are never official until a human
+  accepts or edits them** — the existing `budget_suggestions` table
+  (already built, already governed by that rule) is the natural landing
+  spot for a historical-pricing-derived suggestion, not a new table
+  that reinvents "suggestion, not fact."
+- **Tiered pricing (Value/Standard/Premium, P4.3) is a per-cost-item
+  (or per-child-item) selector, never a whole-project multiplier field**
+  — per the owner's explicit requirement. This means it's naturally
+  expressed as an attribute on whatever P4.1's `cost_code_children`
+  design lands on for a project's line items, not a new top-level
+  `projects.pricing_tier` column that would apply uniformly. P4.3's own
+  design must confirm the exact attachment point once P4.1 is
+  implemented and real child-item rows exist to attach a tier to.
 
 ## What this document is not
 

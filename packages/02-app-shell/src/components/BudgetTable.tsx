@@ -1,7 +1,8 @@
 import React from "react";
-import { colors, spacing, typography, radius } from "../design/tokens";
+import { colors, spacing, typography, radius, shadow } from "../design/tokens";
 import type { CategoryFinancials } from "../../../01-financial-engine/src/types";
 import { formatCents } from "../../../01-financial-engine/src/money";
+import { Badge, type BadgeTone } from "./ui";
 
 /**
  * RESTORED to the original prototype's exact column set (Cost Code /
@@ -38,7 +39,8 @@ export function BudgetTable({ categories }: BudgetTableProps) {
 
   return (
     <div className="sc-budget-table-wrap">
-      <table className="sc-budget-table sc-desktop-only">
+      <div className="sc-budget-table-scroll sc-desktop-only">
+      <table className="sc-budget-table">
         <thead>
           <tr>
             <th style={{ textAlign: "left" }}>Cost Code</th>
@@ -83,6 +85,7 @@ export function BudgetTable({ categories }: BudgetTableProps) {
           </tr>
         </tfoot>
       </table>
+      </div>
 
       <div className="sc-budget-cards sc-mobile-only">
         {categories.map((c) => {
@@ -104,7 +107,7 @@ export function BudgetTable({ categories }: BudgetTableProps) {
         })}
       </div>
 
-      <style>{tableStyles}</style>
+      <style dangerouslySetInnerHTML={{ __html: tableStyles }} />
     </div>
   );
 }
@@ -123,27 +126,39 @@ function classifyBudgetHealth(c: CategoryFinancials): BudgetHealth {
   return "on-track";
 }
 
+const HEALTH_TONE: Record<BudgetHealth, BadgeTone> = {
+  complete: "sage",
+  "on-track": "sage",
+  over: "brick",
+  "not-started": "neutral",
+};
+
 function StatusBadge({ health }: { health: BudgetHealth }) {
   const label = health.replace("-", " ");
-  return <span className={`sc-status-badge sc-status-${health}`}>{label}</span>;
+  return <Badge tone={HEALTH_TONE[health]}>{label}</Badge>;
 }
 
 const tableStyles = `
+/* The bordered/shadowed "card" treatment wraps only the actual table
+   (not the mobile card list below it, which already has its own
+   per-card border) — a separate inner div rather than styling the
+   <table> element directly, since border-radius doesn't clip cleanly
+   through a collapsed-border table's own cell borders. overflow-x
+   lets a wide table scroll horizontally on its own instead of
+   widening the page. */
+.sc-budget-table-scroll { border: 1px solid ${colors.line}; border-radius: ${radius.lg}; overflow-x: auto; overflow-y: hidden; background: ${colors.white}; box-shadow: ${shadow.sm}; }
 .sc-budget-table { width: 100%; border-collapse: collapse; font-family: ${typography.fontFamily}; font-size: ${typography.sizeSm}; min-width: 760px; }
-.sc-budget-table th { text-align: right; padding: 9px 8px; color: ${colors.stoneDark}; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; border-bottom: 1px solid ${colors.line}; }
-.sc-budget-table td { padding: 9px 8px; border-bottom: 1px solid ${colors.paperDim}; text-align: right; color: ${colors.ink2}; }
-.sc-budget-table tfoot td { padding: 11px 8px; border-bottom: none; border-top: 1px solid ${colors.line}; }
+.sc-budget-table thead th { text-align: right; padding: ${spacing.sm} ${spacing.sm}; color: ${colors.stoneDark}; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; border-bottom: 1px solid ${colors.line}; background: ${colors.paperDim}; }
+.sc-budget-table td { padding: ${spacing.sm} ${spacing.sm}; border-bottom: 1px solid ${colors.paperDim}; text-align: right; color: ${colors.ink2}; }
+.sc-budget-table tbody tr:last-child td { border-bottom: none; }
+.sc-budget-table tbody tr:hover td { background: ${colors.paperDim}; }
+.sc-budget-table tfoot td { padding: ${spacing.sm} ${spacing.sm}; border-bottom: none; border-top: 1px solid ${colors.line}; background: ${colors.paperDim}; }
 .sc-changes-positive { color: ${colors.gold}; }
 .sc-muted { color: ${colors.ink2}; }
 .sc-remaining-negative { color: ${colors.brick}; }
 
-.sc-status-badge { display: inline-block; padding: 3px 9px; border-radius: ${radius.pill}; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: ${colors.paperDim}; color: ${colors.ink2}; }
-.sc-status-complete, .sc-status-on-track { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
-.sc-status-over { background: ${colors.brickTint}; color: ${colors.brick}; }
-.sc-status-not-started { background: ${colors.paperDim}; color: ${colors.stoneDark}; }
-
 .sc-budget-cards { display: flex; flex-direction: column; gap: ${spacing.sm}; }
-.sc-budget-card { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.md}; background: ${colors.white}; }
+.sc-budget-card { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.md}; background: ${colors.white}; box-shadow: ${shadow.sm}; }
 .sc-budget-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: ${spacing.sm}; }
 .sc-budget-card-title { font-weight: ${typography.weightSemibold}; color: ${colors.ink}; }
 .sc-budget-card-row { display: flex; justify-content: space-between; font-size: ${typography.sizeSm}; padding: 2px 0; color: ${colors.ink2}; }
@@ -151,7 +166,7 @@ const tableStyles = `
 .sc-desktop-only { display: none; }
 .sc-mobile-only { display: block; }
 @media (min-width: 768px) {
-  .sc-desktop-only { display: table; }
+  .sc-desktop-only { display: block; }
   .sc-mobile-only { display: none; }
 }
 `;

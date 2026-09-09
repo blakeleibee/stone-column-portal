@@ -1,8 +1,41 @@
 import React from "react";
 import { colors, spacing, radius, typography } from "../design/tokens";
 import { BudgetTable } from "../components/BudgetTable";
+import { Card, PageHeader, Badge, Alert } from "../components/ui";
 import { formatCents } from "../../../01-financial-engine/src/money";
 import { AdminFinancialsViewModel } from "../viewmodels/types";
+import type { ProjectPhase } from "../services/projectService";
+
+// P3.1 Task 1's own follow-up note (see
+// docs/superpowers/plans/2026-08-26-p3.1-project-intake-and-handoff.md,
+// Task 1 section): once schema/018 converted `projects.phase` to a real
+// `project_phase` enum, this screen's raw `{projectMeta.phase} phase`
+// render needed humanizing (e.g. `contract_pending` -> "Contract
+// Pending") instead of showing the slug as-is. ProjectBriefWorkspace.tsx
+// (Task 5, P3.1's Concept & Scope form) independently defines an
+// identical, un-exported `PHASE_LABELS` map — not imported from here
+// deliberately: Task 5 is a different in-flight task's file, and this is
+// a small enough duplication (one 6-entry lookup table, both matching
+// schema/018's `project_phase` enum verbatim) that it's safer to
+// duplicate than to add a cross-task edit dependency. Worth unifying
+// into one shared constant later (see this task's report).
+const PHASE_LABELS: Record<ProjectPhase, string> = {
+  lead: "Lead",
+  feasibility: "Feasibility",
+  preconstruction: "Preconstruction",
+  pricing: "Pricing",
+  contract_pending: "Contract Pending",
+  ready_to_start: "Ready to Start",
+};
+
+/** `projectMeta.phase` is a plain optional string (ProjectMeta, not yet
+ *  narrowed to ProjectPhase — see financialRepository.ts), so this falls
+ *  back to the raw value for anything not in the known enum rather than
+ *  rendering nothing. */
+function humanizePhase(phase: string | undefined): string | undefined {
+  if (!phase) return phase;
+  return PHASE_LABELS[phase as ProjectPhase] ?? phase;
+}
 
 /**
  * PRODUCTION SCREEN — imports NO fixture, NO Supabase client, and NO
@@ -27,15 +60,22 @@ export function AdminFinancialsScreen({ viewModel }: AdminFinancialsScreenProps)
 
   return (
     <div className="sc-financials-screen">
-      <header className="sc-financials-header">
-        <h1>Budget &amp; Financials</h1>
-        <p className="sc-financials-sub">
-          {projectMeta.name} · {projectMeta.pricingLabel} · {projectMeta.phase} phase
-        </p>
-      </header>
+      <PageHeader
+        title="Budget & Financials"
+        subtitle={`${projectMeta.name} · ${projectMeta.pricingLabel} · ${humanizePhase(projectMeta.phase)} phase`}
+      />
 
       <div className="sc-stat-grid">
-        <StatMini label="Fee Accrued" value={formatCents(feeSummary.feeAccruedCents)} />
+        {feeSummary ? (
+          <StatMini label="Fee Accrued" value={formatCents(feeSummary.feeAccruedCents)} />
+        ) : (
+          <StatMini
+            label="Fee Accrued"
+            value="Not yet determined"
+            preview
+            note="Pricing not yet determined — set contract terms to see fee figures"
+          />
+        )}
         <StatMini label="Invoiced to Date" value="Preview" preview note="Package 4 — Invoices & Draws" />
         <StatMini label="Payments Received" value="Preview" preview note="Package 4 — Invoices & Draws" />
         <StatMini label="Current Balance Due" value="Preview" preview accent note="Package 4 — Invoices & Draws" />
@@ -68,7 +108,7 @@ export function AdminFinancialsScreen({ viewModel }: AdminFinancialsScreenProps)
           <ul className="sc-suggestions-list">
             {suggestions.map(({ suggestion, key }) => (
               <li key={key} className={`sc-suggestion sc-suggestion-${suggestion.direction}`}>
-                <span className="sc-suggestion-badge">{suggestion.confidence}</span>
+                <Badge tone={suggestion.direction === "over" ? "brick" : "gold"}>{suggestion.confidence}</Badge>
                 <span>{suggestion.reason}</span>
               </li>
             ))}
@@ -84,7 +124,7 @@ export function AdminFinancialsScreen({ viewModel }: AdminFinancialsScreenProps)
         </p>
       </section>
 
-      <style>{screenStyles}</style>
+      <style dangerouslySetInnerHTML={{ __html: screenStyles }} />
     </div>
   );
 }
@@ -100,22 +140,27 @@ function StatMini({ label, value, accent, preview, note }: { label: string; valu
 
 function SummaryCard({ label, value, emphasis }: { label: string; value: string; emphasis?: "danger" }) {
   return (
-    <div className={`sc-summary-card ${emphasis ? `sc-summary-card--${emphasis}` : ""}`}>
+    <Card padding="compact" className={`sc-summary-card ${emphasis ? `sc-summary-card--${emphasis}` : ""}`}>
       <span className="sc-summary-label">{label}</span>
       <span className="sc-summary-value">{value}</span>
-    </div>
+    </Card>
   );
 }
 
 function ReconciliationPanel({ report }: { report: import("../../../01-financial-engine/src/types").ReconciliationReport }) {
   if (report.ok) {
-    return <div className="sc-reconciliation-banner sc-reconciliation-ok">Financials reconcile to the cent.</div>;
+    return (
+      <Alert tone="success" className="sc-reconciliation-banner">
+        Financials reconcile to the cent.
+      </Alert>
+    );
   }
   return (
-    <div className="sc-reconciliation-banner sc-reconciliation-bad">
-      <p className="sc-reconciliation-headline">
-        Reconciliation issue{report.issues.length > 1 ? "s" : ""} detected ({report.issues.length}):
-      </p>
+    <Alert
+      tone="error"
+      className="sc-reconciliation-banner"
+      title={`Reconciliation issue${report.issues.length > 1 ? "s" : ""} detected (${report.issues.length}):`}
+    >
       <ul className="sc-reconciliation-issue-list">
         {report.issues.map((issue, i) => (
           <li key={`${issue.scope}-${i}`}>
@@ -124,14 +169,11 @@ function ReconciliationPanel({ report }: { report: import("../../../01-financial
           </li>
         ))}
       </ul>
-    </div>
+    </Alert>
   );
 }
 
 const screenStyles = `
-.sc-financials-header h1 { font-family: ${typography.fontFamilyDisplay}; font-weight: 500; font-size: ${typography.sizeXl}; margin: 0; color: ${colors.ink}; }
-.sc-financials-sub { color: ${colors.stoneDark}; margin: 4px 0 ${spacing.lg} 0; font-size: ${typography.sizeSm}; }
-
 .sc-stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 18px; background: ${colors.paperDim}; padding: 16px; border-radius: ${radius.lg}; }
 .sc-stat-mini { display: flex; flex-direction: column; gap: 3px; }
 .sc-stat-mini-label { font-size: 11px; color: ${colors.stoneDark}; text-transform: uppercase; letter-spacing: 0.03em; }
@@ -139,16 +181,20 @@ const screenStyles = `
 .sc-stat-mini-value--accent { color: ${colors.sageDeep}; }
 .sc-stat-mini-value--preview { color: ${colors.stoneDark}; font-style: italic; font-weight: 500; font-size: 15px; }
 
+/* .sc-ui-card (compact padding) supplies SummaryCard's own background/
+   border/radius/padding — this rule only adds the internal label+value
+   stack layout and the danger-state border override, neither of which
+   the shared Card primitive itself owns an opinion about. */
 .sc-summary-cards { display: flex; flex-direction: column; gap: ${spacing.sm}; margin-bottom: ${spacing.md}; }
-.sc-summary-card { background: ${colors.white}; border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.md}; display: flex; flex-direction: column; gap: 4px; }
+.sc-summary-card { display: flex; flex-direction: column; gap: 4px; }
 .sc-summary-card--danger { border-color: ${colors.brick}; }
 .sc-summary-label { font-size: 11px; color: ${colors.stoneDark}; text-transform: uppercase; letter-spacing: 0.03em; }
 .sc-summary-value { font-size: ${typography.sizeLg}; font-weight: ${typography.weightSemibold}; color: ${colors.ink}; font-variant-numeric: tabular-nums; }
 
-.sc-reconciliation-banner { padding: ${spacing.sm} ${spacing.md}; border-radius: ${radius.sm}; font-size: ${typography.sizeSm}; margin-bottom: ${spacing.md}; }
-.sc-reconciliation-ok { background: ${colors.sageTint}; color: ${colors.sageDeep}; }
-.sc-reconciliation-bad { background: ${colors.brickTint}; color: ${colors.brick}; }
-.sc-reconciliation-headline { margin: 0 0 ${spacing.xs} 0; font-weight: ${typography.weightMedium}; }
+/* The reconciliation banner's background/border-radius/padding/font-size
+   now come from the shared Alert primitive's info/success/warning/error
+   tones — this only adds the bottom margin before the next section. */
+.sc-reconciliation-banner { margin-bottom: ${spacing.md}; }
 .sc-reconciliation-issue-list { margin: 0; padding-left: 18px; }
 
 .sc-financials-section { margin-bottom: ${spacing.lg}; }
@@ -156,8 +202,7 @@ const screenStyles = `
 
 .sc-suggestions-note { font-size: 11px; color: ${colors.stoneDark}; margin-bottom: ${spacing.sm}; }
 .sc-suggestions-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: ${spacing.xs}; }
-.sc-suggestion { display: flex; gap: ${spacing.sm}; align-items: flex-start; font-size: ${typography.sizeSm}; padding: ${spacing.sm}; border-radius: ${radius.sm}; background: ${colors.paperDim}; }
-.sc-suggestion-badge { font-size: 11px; text-transform: uppercase; font-weight: ${typography.weightBold}; color: ${colors.stoneDark}; }
+.sc-suggestion { display: flex; gap: ${spacing.sm}; align-items: center; font-size: ${typography.sizeSm}; padding: ${spacing.sm}; border-radius: ${radius.sm}; background: ${colors.paperDim}; }
 
 .sc-preview-note { font-size: 11px; color: ${colors.stoneDark}; font-style: italic; margin: -4px 0 8px; }
 .sc-doc-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid ${colors.paperDim}; font-size: ${typography.sizeSm}; color: ${colors.ink}; }

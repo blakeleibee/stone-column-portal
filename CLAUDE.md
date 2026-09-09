@@ -26,6 +26,23 @@ approval.** P0 (Next.js migration, environment/secrets scaffolding —
 no product scope change, no new backend) is the current active
 package.
 
+## Product vision & completeness — required reading before planning any package
+
+Before designing or scoping any future package (P3 onward), consult
+these three standing records — do not restate their contents here or
+re-derive them from first principles:
+
+- `docs/production-build/PRODUCT-VISION.md` — the permanent north star:
+  what the portal is for, who uses it, and what "done" means for any
+  feature.
+- `docs/production-build/PRODUCT-COMPLETENESS-MATRIX.md` — the living
+  tracker of role/lifecycle-workflow coverage against the roadmap,
+  current foundation gaps, and prioritized missing capabilities. Update
+  it, don't bypass it, when a package's scope changes what it says.
+- `docs/production-build/OWNER-PREVIEW-CHECKLIST.md` — use this for
+  every live owner preview of every future package; a preview is a
+  workflow review against this checklist, not proof the app compiles.
+
 ## What's real vs. what's a placeholder — read this before touching any screen
 
 | Category | Where | Status |
@@ -47,6 +64,7 @@ package.
 - Every mobile-facing screen is designed portrait-first.
 - **The project + cost-code ledger (`budget_ledger`/`expenses`/`committed_costs`/`forecast_entries`/`fee_ledger`, all joined to `cost_codes` via the composite `(cost_code_id, project_id)` foreign key) is the permanent financial backbone.** No future package introduces a parallel or duplicate financial data model — every new financial concept (vendor quotes, commitments, POs, forecasts, change orders, selections, draws, invoices, payments, retainage) references this same backbone via new tables and the registered `source_type`/`source_id` provenance convention. See `docs/production-build/FINANCIAL-ARCHITECTURE.md` (standing record, required reading before any package from P4 onward touches money).
 - **Every package is built AI-ready, even though the AI assistant itself is not built until P15.** Business logic lives in a repository (reads) and plain service functions (writes) that Server Actions wrap thinly — never inline in the Server Action or the UI — so a future AI tool-calling layer can call the exact same functions, under the exact same asking-user's session, that the UI already calls. No package gives the assistant a service-role shortcut, a duplicated calculation, or a parallel data path. See `docs/production-build/AI-ASSISTANT-ARCHITECTURE.md` and `TARGET-ARCHITECTURE.md` §14.
+- **The visual design accepted at P3.1 (2026-08-27) is the working foundation, not the final product-quality design — a dedicated refinement package (P9.5) is planned after the P5–P9 operational workflows exist to evaluate holistically.** Until then, every new screen in every package must reuse the shared UI primitives in `packages/02-app-shell/src/components/ui/` (`Button`, `TextInput`/`Textarea`/`Select`/`Checkbox`, `FormField`/`FormGrid`, `Card`, `PageHeader`, `Badge`/`StatusBadge`, `Alert`, `EmptyState`, `Tabs`, `ProgressBar`, `ChecklistItem`, `MenuButton`) and stay visually consistent, responsive, and accessible — but no package should spend discretionary effort on additional cosmetic polish beyond what a screen's own usability genuinely requires. A real usability defect (confusing control, accessibility gap, inconsistent spacing that actively harms scanning) is still worth fixing as part of whatever package touches that screen; a fresh redesign pass is not. See `docs/production-build/VISUAL-MODERNIZATION-PLAN.md` and `docs/production-build/PRODUCTION-ROADMAP.md`'s P9.5 entry.
 
 ## Client approval rule (decided — schema/UI not yet built)
 

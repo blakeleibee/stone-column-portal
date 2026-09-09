@@ -14,10 +14,24 @@
  * in as a PROP rather than imported directly, so this package-level
  * component stays free of any dependency on apps/web's file layout (or,
  * transitively, on next/headers / @supabase/ssr).
+ *
+ * VISUAL MODERNIZATION (docs/production-build/VISUAL-MODERNIZATION-PLAN.md):
+ * every field now composes the shared `ui/` primitives (FormField/
+ * TextInput/Select/Button) instead of this file's own one-off
+ * `sc-mapping-*` input/button styling — each label, control, and hint
+ * still gets its own row (no compression into inline groups), matching
+ * the plan's requirement. This is embedded directly inside
+ * ImportWizard.tsx's own step Card, so it intentionally does NOT wrap
+ * itself in a second Card — this pass is visual/structural only, no
+ * prop, handler, or validation logic changed. The raw
+ * `<style>{formStyles}</style>` JSX child (hydration-unsafe) is now
+ * `dangerouslySetInnerHTML`, matching every other component in this
+ * directory.
  */
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { colors, spacing, typography, radius } from "../design/tokens";
+import { spacing, typography } from "../design/tokens";
+import { FormField, TextInput, Select, Button, Alert } from "./ui";
 
 type MappingProfileFormResult = { error?: string; id?: string };
 
@@ -117,75 +131,55 @@ export function MappingProfileForm({ orgId, createMappingProfile, onCreated }: M
 
   return (
     <form className="sc-mapping-form" onSubmit={handleSubmit}>
-      <div className="sc-mapping-field">
-        <label htmlFor="sc-mapping-name">Profile name</label>
-        <input
-          id="sc-mapping-name"
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="sc-mapping-input"
-        />
-      </div>
+      <FormField label="Profile name" htmlFor="sc-mapping-name">
+        <TextInput id="sc-mapping-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
+      </FormField>
 
       {COLUMN_FIELDS.map(({ key, label }) => (
-        <div className="sc-mapping-field" key={key}>
-          <label htmlFor={`sc-mapping-col-${key}`}>Which CSV column header contains the {label}</label>
-          <input
+        <FormField key={key} label={`Which CSV column header contains the ${label}`} htmlFor={`sc-mapping-col-${key}`}>
+          <TextInput
             id={`sc-mapping-col-${key}`}
             type="text"
             value={columns[key]}
             onChange={(e) => setColumns((prev) => ({ ...prev, [key]: e.target.value }))}
-            className="sc-mapping-input"
           />
-        </div>
+        </FormField>
       ))}
 
-      <div className="sc-mapping-field">
-        <label htmlFor="sc-mapping-strategy">Cost code match strategy</label>
-        <select
+      <FormField label="Cost code match strategy" htmlFor="sc-mapping-strategy">
+        <Select
           id="sc-mapping-strategy"
           value={strategy}
           onChange={(e) => setStrategy(e.target.value as "prefix" | "exact" | "manual_only")}
-          className="sc-mapping-input"
         >
           <option value="prefix">Prefix</option>
           <option value="exact">Exact</option>
           <option value="manual_only">Manual only</option>
-        </select>
-      </div>
+        </Select>
+      </FormField>
 
       {strategy === "prefix" && (
-        <div className="sc-mapping-field">
-          <label htmlFor="sc-mapping-prefix-length">Prefix length</label>
-          <input
+        <FormField label="Prefix length" htmlFor="sc-mapping-prefix-length">
+          <TextInput
             id="sc-mapping-prefix-length"
             type="number"
             min={1}
             step={1}
             value={prefixLength}
             onChange={(e) => setPrefixLength(e.target.value)}
-            className="sc-mapping-input"
           />
-        </div>
+        </FormField>
       )}
 
-      <button type="submit" className="sc-mapping-btn sc-mapping-btn-primary" disabled={submitting}>
-        {submitting ? "Saving…" : "Save mapping profile"}
-      </button>
-      {error && <div className="sc-mapping-error">{error}</div>}
-      <style>{formStyles}</style>
+      <Button type="submit" variant="primary" disabled={submitting} loading={submitting} loadingText="Saving…">
+        Save mapping profile
+      </Button>
+      {error && <Alert tone="error">{error}</Alert>}
+      <style dangerouslySetInnerHTML={{ __html: formStyles }} />
     </form>
   );
 }
 
 const formStyles = `
 .sc-mapping-form { display: flex; flex-direction: column; gap: ${spacing.md}; font-family: ${typography.fontFamily}; max-width: 420px; }
-.sc-mapping-field { display: flex; flex-direction: column; gap: 4px; }
-.sc-mapping-field label { font-size: ${typography.sizeXs}; color: ${colors.stoneDark}; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; }
-.sc-mapping-input { padding: 7px 9px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; font-family: ${typography.fontFamily}; font-size: ${typography.sizeSm}; color: ${colors.ink}; background: ${colors.white}; }
-.sc-mapping-btn { padding: 8px 14px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; background: ${colors.white}; color: ${colors.ink2}; font-size: ${typography.sizeSm}; cursor: pointer; align-self: flex-start; }
-.sc-mapping-btn-primary { background: ${colors.sage}; color: ${colors.white}; border-color: ${colors.sage}; }
-.sc-mapping-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.sc-mapping-error { color: ${colors.brick}; font-size: ${typography.sizeXs}; }
 `;

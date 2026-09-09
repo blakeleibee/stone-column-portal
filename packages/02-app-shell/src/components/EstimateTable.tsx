@@ -27,9 +27,10 @@
  */
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { colors, spacing, typography, radius } from "../design/tokens";
+import { colors, spacing, typography, radius, shadow } from "../design/tokens";
 import type { CategoryFinancials, CostCode } from "../../../01-financial-engine/src/types";
 import { formatCents } from "../../../01-financial-engine/src/money";
+import { TextInput, Checkbox, Button } from "./ui";
 
 type ActionResult = { error?: string } | void | undefined;
 
@@ -167,39 +168,41 @@ export function EstimateTable({
 
   return (
     <div className="sc-estimate-table-wrap">
-      <table className="sc-estimate-table">
-        <thead>
-          <tr>
-            <th style={{ textAlign: "left" }}>Cost Code</th>
-            <th style={{ textAlign: "left" }}>Activity</th>
-            <th style={{ textAlign: "left" }}>Scope</th>
-            <th>Original Est.</th>
-            <th>Revised Est.</th>
-            <th>Include</th>
-            <th>Billable</th>
-            <th style={{ textAlign: "left" }}>Budget Entry</th>
-          </tr>
-        </thead>
-        <tbody>
-          {categories.map((c) => {
-            const costCode = costCodesById.get(c.costCodeId);
-            if (!costCode) return null;
-            return (
-              <EstimateRow
-                key={c.costCodeId}
-                category={c}
-                costCode={costCode}
-                hasOriginalEntry={!!hasOriginalEntry[c.costCodeId]}
-                projectId={projectId}
-                enterOriginalBudget={enterOriginalBudget}
-                adjustBudget={adjustBudget}
-                updateCostCodeMetadata={updateCostCodeMetadata}
-              />
-            );
-          })}
-        </tbody>
-      </table>
-      <style>{tableStyles}</style>
+      <div className="sc-estimate-table-scroll">
+        <table className="sc-estimate-table">
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>Cost Code</th>
+              <th style={{ textAlign: "left" }}>Activity</th>
+              <th style={{ textAlign: "left" }}>Scope</th>
+              <th>Original Est.</th>
+              <th>Revised Est.</th>
+              <th>Include</th>
+              <th>Billable</th>
+              <th style={{ textAlign: "left" }}>Budget Entry</th>
+            </tr>
+          </thead>
+          <tbody>
+            {categories.map((c) => {
+              const costCode = costCodesById.get(c.costCodeId);
+              if (!costCode) return null;
+              return (
+                <EstimateRow
+                  key={c.costCodeId}
+                  category={c}
+                  costCode={costCode}
+                  hasOriginalEntry={!!hasOriginalEntry[c.costCodeId]}
+                  projectId={projectId}
+                  enterOriginalBudget={enterOriginalBudget}
+                  adjustBudget={adjustBudget}
+                  updateCostCodeMetadata={updateCostCodeMetadata}
+                />
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <style dangerouslySetInnerHTML={{ __html: tableStyles }} />
     </div>
   );
 }
@@ -254,7 +257,7 @@ function EstimateRow({
     <tr>
       <td style={{ textAlign: "left", fontWeight: typography.weightSemibold }}>{category.code}</td>
       <td style={{ textAlign: "left" }}>
-        <input
+        <TextInput
           type="text"
           value={activityNameField.value}
           onChange={(e) => activityNameField.setValue(e.target.value)}
@@ -268,7 +271,7 @@ function EstimateRow({
         />
       </td>
       <td style={{ textAlign: "left" }}>
-        <input
+        <TextInput
           type="text"
           value={scopeDescriptionField.value}
           onChange={(e) => scopeDescriptionField.setValue(e.target.value)}
@@ -288,8 +291,7 @@ function EstimateRow({
       <td>{formatCents(category.originalEstimateCents)}</td>
       <td style={{ fontWeight: typography.weightSemibold }}>{formatCents(category.revisedEstimateCents)}</td>
       <td>
-        <input
-          type="checkbox"
+        <Checkbox
           checked={includeInEstimateField.value}
           onChange={(e) => {
             const next = e.target.checked;
@@ -300,8 +302,7 @@ function EstimateRow({
         />
       </td>
       <td>
-        <input
-          type="checkbox"
+        <Checkbox
           checked={billableField.value}
           onChange={(e) => {
             const next = e.target.checked;
@@ -413,22 +414,22 @@ function BudgetEntryControl({
 
   if (!open) {
     return (
-      <button
-        type="button"
-        className="sc-estimate-btn"
+      <Button
+        variant="secondary"
+        size="sm"
         onClick={() => {
           setOpen(true);
           setError(null);
         }}
       >
         {hasOriginalEntry ? "Adjust" : "Enter Original"}
-      </button>
+      </Button>
     );
   }
 
   return (
     <div className="sc-estimate-inline-form">
-      <input
+      <TextInput
         type="text"
         inputMode="decimal"
         placeholder={hasOriginalEntry ? "+/- amount" : "amount"}
@@ -437,7 +438,7 @@ function BudgetEntryControl({
         className="sc-estimate-input"
         aria-label={hasOriginalEntry ? `Adjustment amount for ${category.code}` : `Original amount for ${category.code}`}
       />
-      <input
+      <TextInput
         type="text"
         placeholder={hasOriginalEntry ? "Reason (required)" : "Note (optional)"}
         value={note}
@@ -445,41 +446,52 @@ function BudgetEntryControl({
         className="sc-estimate-input"
         aria-label={hasOriginalEntry ? `Adjustment reason for ${category.code}` : `Original entry note for ${category.code}`}
       />
-      <button
-        type="button"
-        className="sc-estimate-btn sc-estimate-btn-primary"
-        disabled={submitting}
-        onClick={hasOriginalEntry ? handleAdjust : handleEnterOriginal}
-      >
-        {submitting ? "Saving…" : "Save"}
-      </button>
-      <button
-        type="button"
-        className="sc-estimate-btn"
-        disabled={submitting}
-        onClick={() => {
-          setOpen(false);
-          setError(null);
-          setAmount("");
-          setNote("");
-        }}
-      >
-        Cancel
-      </button>
+      <div className="sc-estimate-inline-form-actions">
+        <Button
+          variant="primary"
+          size="sm"
+          loading={submitting}
+          loadingText="Saving…"
+          onClick={hasOriginalEntry ? handleAdjust : handleEnterOriginal}
+        >
+          Save
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={submitting}
+          onClick={() => {
+            setOpen(false);
+            setError(null);
+            setAmount("");
+            setNote("");
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
       {error && <div className="sc-estimate-error">{error}</div>}
     </div>
   );
 }
 
 const tableStyles = `
+/* Bordered/shadowed "card" treatment around the actual table, same
+   pattern as BudgetTable.tsx's own .sc-budget-table-scroll — a separate
+   wrapping div (not the <table> itself, whose collapsed cell borders
+   don't clip cleanly to a parent border-radius) with its own
+   horizontal scroll for this table's wider column set. */
+.sc-estimate-table-scroll { border: 1px solid ${colors.line}; border-radius: ${radius.lg}; overflow-x: auto; overflow-y: hidden; background: ${colors.white}; box-shadow: ${shadow.sm}; }
 .sc-estimate-table { width: 100%; border-collapse: collapse; font-family: ${typography.fontFamily}; font-size: ${typography.sizeSm}; min-width: 900px; }
-.sc-estimate-table th { text-align: right; padding: 9px 8px; color: ${colors.stoneDark}; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; border-bottom: 1px solid ${colors.line}; }
-.sc-estimate-table td { padding: 9px 8px; border-bottom: 1px solid ${colors.paperDim}; text-align: right; color: ${colors.ink2}; vertical-align: top; }
-.sc-estimate-input { width: 100%; min-width: 90px; padding: 5px 7px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; font-family: ${typography.fontFamily}; font-size: ${typography.sizeSm}; color: ${colors.ink}; background: ${colors.white}; }
-.sc-estimate-btn { padding: 5px 11px; border: 1px solid ${colors.line}; border-radius: ${radius.sm}; background: ${colors.white}; color: ${colors.ink2}; font-size: ${typography.sizeSm}; cursor: pointer; margin-right: 6px; }
-.sc-estimate-btn-primary { background: ${colors.sage}; color: ${colors.white}; border-color: ${colors.sage}; }
-.sc-estimate-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-.sc-estimate-inline-form { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
-.sc-estimate-inline-form .sc-estimate-input { margin-bottom: 2px; }
-.sc-estimate-error { color: ${colors.brick}; font-size: ${typography.sizeXs}; margin-top: 4px; }
+.sc-estimate-table th { text-align: right; padding: ${spacing.sm} ${spacing.sm}; color: ${colors.stoneDark}; font-weight: 600; font-size: 11px; letter-spacing: 0.03em; text-transform: uppercase; border-bottom: 1px solid ${colors.line}; background: ${colors.paperDim}; }
+.sc-estimate-table td { padding: ${spacing.sm} ${spacing.sm}; border-bottom: 1px solid ${colors.paperDim}; text-align: right; color: ${colors.ink2}; vertical-align: top; }
+.sc-estimate-table tbody tr:last-child td { border-bottom: none; }
+.sc-estimate-table tbody tr:hover td { background: ${colors.paperDim}; }
+/* The shared TextInput primitive's own "sc-ui-input" class already
+   supplies width/padding/border/radius/font/color/background — this only
+   adds the narrow-table-column width floor inline editing needs. */
+.sc-estimate-input { min-width: 90px; }
+.sc-estimate-inline-form { display: flex; flex-direction: column; gap: ${spacing.xs}; align-items: flex-start; }
+.sc-estimate-inline-form-actions { display: flex; gap: ${spacing.xs}; }
+.sc-estimate-error { color: ${colors.brick}; font-size: ${typography.sizeXs}; margin-top: ${spacing.xs}; }
 `;

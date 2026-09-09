@@ -9,7 +9,7 @@
 import { PGlite } from "@electric-sql/pglite";
 import { uuid_ossp } from "@electric-sql/pglite/contrib/uuid_ossp";
 import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,14 +32,84 @@ const FILES = [
   "schema/012_financial_master_data.sql",
   "schema/013_estimating_and_qb_import.sql",
   "schema/014_import_amount_canonicalization_and_audit_attribution.sql",
+  "schema/015_commitments_bids_procurement.sql",
+  "schema/016_project_staff_access_foundation.sql",
+  "schema/017_project_status_reversible_lifecycle.sql",
+  "schema/018_project_intake_and_handoff.sql",
+  "schema/019_project_staff_assignments_self_read.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",
   "tests/sql/package_p4_estimating_qb_import_tests.sql",
+  "tests/sql/package_p5_commitments_bids_procurement_tests.sql",
   "tests/sql/committed_forecast_hardening_tests.sql",
+  "tests/sql/package_p3_project_staff_access_tests.sql",
+  "tests/sql/package_p3_project_status_reversible_lifecycle_tests.sql",
+  "tests/sql/package_p3_1_project_intake_and_handoff_tests.sql",
 ];
 
+// `schema/0NN_*.sql` is the single source of truth; `supabase/migrations/
+// <timestamp>_*.sql` is a committed, regeneratable mirror in the CLI's
+// required naming (see docs/production-build/ENVIRONMENTS-RUNBOOK.md's
+// "Standing rule" section). `supabase db push` reads only the mirror, so a
+// mirror that drifts from its schema/ source ships a stale (or even
+// reverted) bug to every environment applied through it while the repo's
+// own SQL-test suite -- which runs schema/ directly -- stays green and
+// hides the drift. This has happened before in this repo's history (see
+// docs/milestones/P4-complete.md, Task 2's found-during-review stale
+// mirror). Fail loudly, before running anything, if any schema/ file with
+// a corresponding mirror has drifted from it.
+function checkMigrationMirrorsByteIdentical() {
+  const schemaDir = path.join(ROOT, "schema");
+  const migrationsDir = path.join(ROOT, "supabase/migrations");
+
+  const schemaFiles = readdirSync(schemaDir).filter(
+    (f) => f.endsWith(".sql") && !f.endsWith("_down.sql"),
+  );
+  const migrationFiles = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql"));
+
+  process.stdout.write("Checking schema/ <-> supabase/migrations/ mirror byte-equality ... ");
+
+  let checked = 0;
+  for (const schemaFile of schemaFiles) {
+    const schemaMatch = schemaFile.match(/^\d+_(.+)\.sql$/);
+    if (!schemaMatch) continue;
+    const name = schemaMatch[1];
+
+    const migrationFile = migrationFiles.find((f) => {
+      const migrationMatch = f.match(/^\d+_(.+)\.sql$/);
+      return migrationMatch && migrationMatch[1] === name;
+    });
+    // Not every schema/ file is required to have a mirror yet (e.g. one
+    // just added and not yet regenerated as part of a separate,
+    // in-flight change) -- this guard only checks pairs that exist.
+    if (!migrationFile) continue;
+
+    const schemaPath = path.join(schemaDir, schemaFile);
+    const migrationPath = path.join(migrationsDir, migrationFile);
+    const schemaContent = readFileSync(schemaPath, "utf8");
+    const migrationContent = readFileSync(migrationPath, "utf8");
+    checked++;
+
+    if (schemaContent !== migrationContent) {
+      console.log("FAILED");
+      console.error(
+        `\nschema/${schemaFile} and supabase/migrations/${migrationFile} have diverged.\n` +
+          `supabase/migrations/ must remain a byte-identical mirror of schema/ (see\n` +
+          `docs/production-build/ENVIRONMENTS-RUNBOOK.md's "Standing rule" section).\n` +
+          `Regenerate the mirror with:\n` +
+          `  cp schema/${schemaFile} supabase/migrations/${migrationFile}\n`,
+      );
+      process.exit(1);
+    }
+  }
+
+  console.log(`ok (${checked} mirrored pair(s) checked)`);
+}
+
 async function main() {
+  checkMigrationMirrorsByteIdentical();
+
   const db = new PGlite({ extensions: { uuid_ossp, pgcrypto } });
 
   // Migration-runner setting, not a schema edit: is_org_staff() in

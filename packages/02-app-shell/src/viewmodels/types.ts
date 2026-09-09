@@ -3,6 +3,7 @@ import type {
   ReconciliationReport,
   BudgetSuggestion,
 } from "../../../01-financial-engine/src/types";
+import type { ProjectFeeSummary } from "../../../01-financial-engine/src/fee";
 import type { ProjectMeta, ClientSafeInvoice } from "../data/financialRepository";
 
 /** A suggestion plus a stable, deterministic key for React lists — the
@@ -41,12 +42,16 @@ export interface AdminFinancialsViewModel {
     forecastToCompleteCents: number;
     projectedFinalCostCents: number;
   };
-  feeSummary: {
-    feeEligibleBasisCents: number;
-    feeAccruedCents: number;
-    feeInvoicedCents: number;
-    feeUnbilledCents: number;
-  };
+  /** `null` means this project has no active fee rule yet — pricing was
+   *  deliberately left "to be determined" at creation (P3.1). This must
+   *  never be papered over with a fabricated `0`: an absent fee rule is
+   *  not the same fact as "the fee is zero," and CLAUDE.md's "suggested
+   *  numbers are never official" / "no screen computes its own
+   *  financial numbers" spirit both forbid rendering a computed-looking
+   *  answer for a question that hasn't actually been answered yet.
+   *  Consumers (AdminFinancialsScreen) must render an explicit
+   *  "pricing not yet determined" state instead of dereferencing this. */
+  feeSummary: ProjectFeeSummary | null;
   reconciliation: ReconciliationReport;
   suggestions: SuggestionViewItem[];
 }
