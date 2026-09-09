@@ -189,6 +189,8 @@ An owner preview/approval checkpoint sits between Task 12's closeout and the sta
 
 **Vendor history view:** no new table — a read-only screen querying `bid_submissions`/`committed_costs`/`issued_documents`/`material_orders` filtered by `vendor_id`, reusing existing repository functions.
 
+**Cross-navigation from Bids/Material Orders, owner-approved 2026-09-09: the vendor model stays single and organization-level — no duplication, no project-specific vendor records.** `BidPackageWorkspace.tsx`'s and `MaterialOrderWorkspace.tsx`'s existing vendor `<select>` (already reading from the one real `vendors` table, unchanged) gains a small "Add Vendor" / "Manage Vendors" link beside it, pointing at P5.1's directory screen. This is a navigation convenience only — clicking it leaves the current bid package or material order exactly as it was, takes the user to the organization-level directory to create or edit a vendor, and relies on the existing screens' own data reload (already re-fetched on next visit) to pick up a newly-created vendor in the selector afterward. No new table, no new vendor concept scoped to a project or a bid package — this is explicitly the requirement this decision protects against.
+
 ### P5.2 — Vendor Bid Access, Documents, Invitations & Correspondence
 
 **Answers owner items #2, #3, #4, #5, and the vendor-RLS-access bug found in Section 1.**
