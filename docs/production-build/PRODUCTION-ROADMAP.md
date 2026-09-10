@@ -31,9 +31,11 @@ exposed as repository/service functions a future AI layer can reuse).
 complete** (`p5-complete` tag) — see `docs/production-build/P5-DESIGN.md`
 and `docs/milestones/P5-complete.md`. **P5.0 (Project-Context
 Write-Safety) and P5's own Task 11 are also complete**, folded into the
-same closeout — see the milestone doc for why. **The next package is
-P5.1** (Vendor Directory & Onboarding — see
-`docs/production-build/P5-EXTENSION-PACKAGES-DESIGN.md`), not P6: P5.1–P5.4
+same closeout — see the milestone doc for why. **P5.1 (Vendor Directory
+& Onboarding) complete** (`p5.1-complete` tag) — see
+`docs/milestones/P5.1-complete.md`. **The next package is P5.2**
+(Vendor Bid Access, Documents, Invitations & Correspondence — see
+`docs/production-build/P5-EXTENSION-PACKAGES-DESIGN.md`), not P6: P5.2–P5.4
 are owner-approved sub-packages sequenced ahead of P6, per that design
 document's Section 4.
 
@@ -586,7 +588,8 @@ duplicate-logic path for the assistant to use later.
 `docs/milestones/P4-complete.md`. Built via subagent-driven development
 (12 tasks, fresh implementer + independent reviewer per task) per
 `docs/superpowers/plans/2026-08-06-p4-estimating-budgeting-qbimport.md`.
-**The next package is P5.**
+**The next package is P5.2** (see the top of this document — P5, P5.0,
+P5's own Task 11, and P5.1 are all complete as of this writing).
 
 - **Scope:** Real cost-code/budget-ledger entry UI (replacing
   read-only `AdminFinancialsScreen`/`ClientBudgetAndInvoicesScreen`
@@ -822,7 +825,7 @@ decision recorded in `P5-EXTENSION-PACKAGES-DESIGN.md` Section 4.
 
 ### Package P5.1 — Vendor Directory & Onboarding
 
-**Status: Approved design, not yet implemented.** Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5. Closes the "no admin-side UI to create/manage a `vendors` row" gap recorded in `PRODUCT-COMPLETENESS-MATRIX.md` Section D.
+**Status: Complete.** Tag `p5.1-complete`. Full closeout record: `docs/milestones/P5.1-complete.md`. Closes the "no admin-side UI to create/manage a `vendors` row" gap recorded in `PRODUCT-COMPLETENESS-MATRIX.md` Section D. Full design: `P5-EXTENSION-PACKAGES-DESIGN.md` Section 5.
 
 - **Scope:** org-level vendor management — company/legal name, active/inactive, trades, contacts (primary bidding contact + additional), phone/address, preferred communication method, service area, compliance documents (W-9/certificate of insurance with expiration/licensing), payment terms, internal notes, cross-linked history, exact-match duplicate detection at creation (a warning, never a hard block).
 - **Schema/migrations:** `vendor_contacts`, `vendor_documents` (new); additive columns on `vendors` (`legal_name`, `trades`, `service_area`, `preferred_communication_method`, `payment_terms`; `is_archived` reused, inverted, as active/inactive rather than a new column).
