@@ -563,7 +563,19 @@ export function MaterialOrderWorkspace({
                   optional
                 />
               </FormField>
-              <FormField label="Vendor (optional)" htmlFor="sc-proc-create-vendor">
+              <FormField
+                label="Vendor (optional)"
+                htmlFor="sc-proc-create-vendor"
+                hint={
+                  // P5.1: navigation convenience only — creating/editing a
+                  // vendor happens on the org-level directory, not inline
+                  // here. Doesn't touch this file's own order/commit/
+                  // receive logic at all.
+                  <a href="/admin/vendors" target="_blank" rel="noopener noreferrer">
+                    Manage Vendors
+                  </a>
+                }
+              >
                 <Select id="sc-proc-create-vendor" value={createVendorId} onChange={(e) => setCreateVendorId(e.target.value)}>
                   <option value="">— none —</option>
                   {vendors.map((v) => (

@@ -106,8 +106,24 @@ export interface VendorRow {
   name: string;
 }
 
+/** The ONE real vendors list every selector-style screen (Bids,
+ *  Material Orders) reads from — see vendorService.ts's own doc
+ *  comment. P5.1 addition: also excludes merged-away vendors
+ *  explicitly (`merged_into_vendor_id is null`), not just archived
+ *  ones. In practice a merged vendor is always archived too (schema/020's
+ *  `vendors_merged_implies_archived` CHECK constraint guarantees this),
+ *  so `is_archived = false` alone already excludes every merged-away
+ *  row today — this second filter is defense in depth against that
+ *  invariant ever being the only thing keeping a merged vendor out of a
+ *  brand-new bid/order, not a fix for an observed gap. */
 export async function listVendors(supabase: SupabaseClient, orgId: string): Promise<VendorRow[]> {
-  const { data, error } = await supabase.from("vendors").select("id, name").eq("org_id", orgId).eq("is_archived", false).order("name");
+  const { data, error } = await supabase
+    .from("vendors")
+    .select("id, name")
+    .eq("org_id", orgId)
+    .eq("is_archived", false)
+    .is("merged_into_vendor_id", null)
+    .order("name");
   if (error) throw error;
   return (data ?? []).map((row: any) => ({ id: row.id, name: row.name }));
 }

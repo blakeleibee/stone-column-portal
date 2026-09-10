@@ -1,4 +1,4 @@
-import type { StorageAdapter } from "./StorageAdapter";
+import type { StorageAdapter, StorageAdapterDownloadOptions } from "./StorageAdapter";
 
 /**
  * INTERFACE BOUNDARY ONLY — per TARGET-ARCHITECTURE.md §8-9, OneDrive/
@@ -19,10 +19,15 @@ export class OneDriveStorageAdapter implements StorageAdapter {
     throw notImplemented("upload", key);
   }
 
-  async getDownloadUrl(key: string): Promise<string> {
+  async getDownloadUrl(key: string, _options?: StorageAdapterDownloadOptions): Promise<string> {
     // GET https://graph.microsoft.com/v1.0/drives/{drive-id}/root:/{key}
     // then use the returned @microsoft.graph.downloadUrl (short-lived,
-    // pre-authenticated) — never the item's permanent webUrl.
+    // pre-authenticated) — never the item's permanent webUrl. Graph's
+    // own download URLs already expire on their own (typically ~1 hour)
+    // regardless of `_options.expiresInSeconds` — a real implementation
+    // has no lever to shorten that further, so this parameter would be
+    // accepted but not independently enforced, same as any other
+    // provider-managed expiry.
     throw notImplemented("getDownloadUrl", key);
   }
 
