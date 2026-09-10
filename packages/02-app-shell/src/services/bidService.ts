@@ -69,10 +69,48 @@ export interface BidPackageDetail extends BidPackageRow {
   submissions: BidSubmissionRow[];
 }
 
-export async function inviteVendor(supabase: SupabaseClient, bidPackageId: string, vendorId: string) {
+export interface InviteVendorResult {
+  error?: string;
+  warning?: string;
+  /** P5.2 Phase A's temporary testing affordance: a real, working
+   *  magic-link token, returned directly so staff can copy/paste it
+   *  into a message by hand. There is no email infrastructure in this
+   *  codebase yet (Phase D adds real delivery via bid_invitation_emails/
+   *  EmailService and this field goes away in favor of a real "sent"
+   *  status) -- this is an honest stand-in, not the final invitation UX. */
+  accessToken?: string;
+}
+
+/** Writes the real bid_submissions invite row (unchanged from P5), then
+ *  additionally issues a bid_vendor_access_invitations row (schema/022)
+ *  so the invited vendor has a real, working first-access magic link —
+ *  closing the gap where "Invite" previously told the vendor nothing.
+ *  Does NOT create/maintain any project_members row: schema/022 chose
+ *  the self-sufficient RLS fix (bid_packages_vendor_read now derives
+ *  access transitively from vendor_members + bid_submissions alone), so
+ *  there is no second write path to keep in sync here, ever. */
+export async function inviteVendor(supabase: SupabaseClient, bidPackageId: string, vendorId: string): Promise<InviteVendorResult> {
   const { error } = await supabase.from("bid_submissions").insert({ bid_package_id: bidPackageId, vendor_id: vendorId });
   if (error) return { error: error.message };
-  return {};
+
+  const { data: vendorRow, error: vendorError } = await supabase
+    .from("vendors")
+    .select("email, org_id")
+    .eq("id", vendorId)
+    .maybeSingle();
+  if (vendorError) return { error: vendorError.message };
+  if (!vendorRow?.email) {
+    return { warning: "Vendor invited, but has no bidding email on file — no access link was generated. Add one from the vendor directory, then invite again." };
+  }
+
+  const { data: invitationRow, error: invitationError } = await supabase
+    .from("bid_vendor_access_invitations")
+    .insert({ bid_package_id: bidPackageId, vendor_id: vendorId, org_id: vendorRow.org_id, email: vendorRow.email })
+    .select("token")
+    .single();
+  if (invitationError) return { error: invitationError.message };
+
+  return { accessToken: invitationRow.token as string };
 }
 
 export async function getBidPackageDetail(supabase: SupabaseClient, bidPackageId: string): Promise<BidPackageDetail | null> {
@@ -293,4 +331,50 @@ export async function listBidAddenda(supabase: SupabaseClient, bidPackageId: str
     issuedBy: row.issued_by,
     issuedAt: row.issued_at,
   }));
+}
+
+export interface VendorBidPackageView {
+  id: string;
+  title: string;
+  scopeDescription: string | null;
+  dueAt: string | null;
+  status: BidPackageRow["status"];
+  /** Resolved from cost_codes.code (schema/022's new cost_codes_vendor_read
+   *  policy) — this codebase's own established convention of never
+   *  showing a raw UUID to any user, applied to the vendor-facing
+   *  screen for the first time. */
+  costCodeCode: string;
+}
+
+/** P5.2 Phase A's one real vendor-facing read. Deliberately relies
+ *  entirely on RLS (bid_packages_vendor_read/cost_codes_vendor_read,
+ *  schema/022) to decide what this call can ever see — a vendor session
+ *  querying a package it isn't invited to gets zero rows back here, not
+ *  a thrown error, so the caller (the /vendor/bids/[id] Server
+ *  Component) can render a clean "not found," never a crash and never
+ *  another vendor's data. */
+export async function getVendorVisibleBidPackage(supabase: SupabaseClient, bidPackageId: string): Promise<VendorBidPackageView | null> {
+  const { data: pkg, error } = await supabase
+    .from("bid_packages")
+    .select("id, title, scope_description, due_at, status, cost_code_id")
+    .eq("id", bidPackageId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!pkg) return null;
+
+  const { data: costCode, error: costCodeError } = await supabase
+    .from("cost_codes")
+    .select("code")
+    .eq("id", pkg.cost_code_id)
+    .maybeSingle();
+  if (costCodeError) throw costCodeError;
+
+  return {
+    id: pkg.id,
+    title: pkg.title,
+    scopeDescription: pkg.scope_description,
+    dueAt: pkg.due_at,
+    status: pkg.status,
+    costCodeCode: costCode?.code ?? "Unknown cost code",
+  };
 }

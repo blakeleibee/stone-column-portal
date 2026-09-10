@@ -76,7 +76,13 @@ export interface BidPackageWorkspaceProps {
     dueAt?: string
   ) => Promise<{ id?: string; error?: string }>;
   publishBidPackage: (bidPackageId: string) => Promise<ActionResult>;
-  inviteVendor: (bidPackageId: string, vendorId: string) => Promise<ActionResult>;
+  /** P5.2 Phase A: on success, may also return a real, working
+   *  first-access magic-link token (bid_vendor_access_invitations,
+   *  schema/022) — a temporary manual copy/paste testing affordance
+   *  until Phase D adds real email delivery. `warning` covers the one
+   *  expected non-error case: the vendor has no bidding email on file,
+   *  so no link could be generated (the invite itself still succeeded). */
+  inviteVendor: (bidPackageId: string, vendorId: string) => Promise<{ error?: string; warning?: string; accessToken?: string } | void | undefined>;
   getBidPackageDetail: (bidPackageId: string) => Promise<{ detail?: BidPackageDetail; error?: string }>;
   listBidQuestions: (bidPackageId: string) => Promise<{ questions?: BidQuestionRow[]; error?: string }>;
   listBidAddenda: (bidPackageId: string) => Promise<{ addenda?: BidAddendumRow[]; error?: string }>;
@@ -213,6 +219,9 @@ export function BidPackageWorkspace({
   const [inviteVendorId, setInviteVendorId] = useState("");
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteWarning, setInviteWarning] = useState<string | null>(null);
+  // P5.2 Phase A temporary testing affordance — see inviteVendor prop doc.
+  const [inviteAccessLink, setInviteAccessLink] = useState<string | null>(null);
 
   // --- Record submission (per-row, keyed by submission id) ---
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
@@ -403,12 +412,21 @@ export function BidPackageWorkspace({
       return;
     }
     setInviteError(null);
+    setInviteWarning(null);
+    setInviteAccessLink(null);
     setInviteSubmitting(true);
     try {
       const result = await inviteVendor(detail.id, inviteVendorId);
       if (result && "error" in result && result.error) {
         setInviteError(result.error);
         return;
+      }
+      if (result && "warning" in result && result.warning) {
+        setInviteWarning(result.warning);
+      }
+      if (result && "accessToken" in result && result.accessToken) {
+        const origin = typeof window !== "undefined" ? window.location.origin : "";
+        setInviteAccessLink(`${origin}/vendor/invite/${result.accessToken}`);
       }
       setInviteVendorId("");
       await loadDetail(detail.id);
@@ -710,6 +728,15 @@ export function BidPackageWorkspace({
                   </a>
                 </div>
                 {inviteError && <Alert tone="error">{inviteError}</Alert>}
+                {inviteWarning && <Alert tone="warning">{inviteWarning}</Alert>}
+                {inviteAccessLink && (
+                  <Alert tone="info">
+                    Vendor invited. <strong>Temporary testing link (Phase A only)</strong> — copy/paste this to the
+                    vendor manually; real email delivery ships in a later phase:
+                    <br />
+                    <code className="sc-bids-access-link">{inviteAccessLink}</code>
+                  </Alert>
+                )}
 
                 {detail.submissions.length === 0 ? (
                   <EmptyState title="No vendors invited yet" />
@@ -1008,6 +1035,7 @@ const workspaceStyles = `
 .sc-bids-input-narrow { max-width: 140px; }
 .sc-bids-empty { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
 .sc-bids-muted { color: ${colors.stoneDark}; font-size: ${typography.sizeSm}; }
+.sc-bids-access-link { word-break: break-all; font-size: ${typography.sizeSm}; }
 .sc-bids-detail-error { display: flex; align-items: center; gap: ${spacing.sm}; }
 .sc-bids-detail-header { display: flex; align-items: center; gap: ${spacing.sm}; }
 .sc-bids-detail-header h3 { margin: 0; min-width: 0; overflow-wrap: break-word; }
