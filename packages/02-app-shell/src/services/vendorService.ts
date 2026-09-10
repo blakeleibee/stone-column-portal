@@ -337,10 +337,36 @@ export interface UpsertVendorContactInput {
  *  sequential writes, same non-transactional multi-step pattern
  *  procurementService.ts's recordReceivedQuantity() already uses in
  *  this codebase), then the mirror columns on `vendors` are updated to
- *  match — never edited independently of this function. */
+ *  match — never edited independently of this function.
+ *
+ *  Fix (post-review follow-up): the mirror only ever gets WRITTEN, never
+ *  CLEARED, by the code above — so demoting an existing contact that is
+ *  currently the vendor's mirrored primary (calling this with that
+ *  contact's `id` and `isPrimaryBiddingContact: false`, with no other
+ *  contact being promoted in the same call) used to leave
+ *  `vendors.contact_name/email/phone` pointing at a contact no longer
+ *  flagged primary — stale, not reflecting current reality. Before any
+ *  write, this now checks (only when demoting, i.e. only when
+ *  `input.id` is present and this call is NOT setting the flag true)
+ *  whether the row being updated is CURRENTLY the vendor's primary; if
+ *  so, once the demotion is written, the vendor's headline fields are
+ *  cleared to null rather than left stale. Deliberately does not
+ *  auto-promote some other remaining contact — an honest empty state
+ *  until staff explicitly designates a new primary. */
 export async function upsertVendorContact(supabase: SupabaseClient, input: UpsertVendorContactInput) {
   const trimmedName = input.name?.trim();
   if (!trimmedName) return { error: "Contact name is required." };
+
+  let demotingCurrentPrimary = false;
+  if (!input.isPrimaryBiddingContact && input.id) {
+    const { data: existing, error: existingError } = await supabase
+      .from("vendor_contacts")
+      .select("is_primary_bidding_contact")
+      .eq("id", input.id)
+      .maybeSingle();
+    if (existingError) return { error: existingError.message };
+    demotingCurrentPrimary = !!existing?.is_primary_bidding_contact;
+  }
 
   if (input.isPrimaryBiddingContact) {
     const { error: clearError } = await supabase
@@ -372,14 +398,44 @@ export async function upsertVendorContact(supabase: SupabaseClient, input: Upser
       .update({ contact_name: trimmedName, email: input.email || null, phone: input.phone || null })
       .eq("id", input.vendorId);
     if (mirrorError) return { error: mirrorError.message };
+  } else if (demotingCurrentPrimary) {
+    const { error: clearMirrorError } = await supabase
+      .from("vendors")
+      .update({ contact_name: null, email: null, phone: null })
+      .eq("id", input.vendorId);
+    if (clearMirrorError) return { error: clearMirrorError.message };
   }
 
   return { id: data.id as string };
 }
 
+/** Fix (post-review follow-up, same stale-mirror issue as
+ *  upsertVendorContact() above): archiving a contact that IS the
+ *  vendor's current mirrored primary, with no replacement designated in
+ *  the same call, used to leave `vendors.contact_name/email/phone`
+ *  pointing at a now-archived, no-longer-primary contact. Reads the
+ *  contact's vendor_id + current primary flag before archiving it, and
+ *  — only when it was the mirrored primary — clears the vendor's
+ *  headline fields to null once the archive write succeeds. */
 export async function archiveVendorContact(supabase: SupabaseClient, contactId: string) {
+  const { data: contact, error: readError } = await supabase
+    .from("vendor_contacts")
+    .select("vendor_id, is_primary_bidding_contact")
+    .eq("id", contactId)
+    .maybeSingle();
+  if (readError) return { error: readError.message };
+
   const { error } = await supabase.from("vendor_contacts").update({ is_archived: true }).eq("id", contactId);
   if (error) return { error: error.message };
+
+  if (contact?.is_primary_bidding_contact) {
+    const { error: clearMirrorError } = await supabase
+      .from("vendors")
+      .update({ contact_name: null, email: null, phone: null })
+      .eq("id", contact.vendor_id);
+    if (clearMirrorError) return { error: clearMirrorError.message };
+  }
+
   return {};
 }
 
@@ -701,7 +757,7 @@ export async function getVendorHistory(supabase: SupabaseClient, vendorId: strin
   const bidPackageIds = Array.from(new Set(bidSubs.map((s) => s.bid_package_id)));
   const orderIds = orders.map((o) => o.id);
 
-  const [committedFromBids, committedFromOrders, subcontracts, purchaseOrders] = await Promise.all([
+  const [committedFromBids, committedFromOrders, subcontracts, purchaseOrders, awardedSubmissionsForSubcontracts] = await Promise.all([
     bidSubs.length
       ? supabase.from("committed_costs").select("id, source_id, amount_cents, status, created_at").eq("source_type", "bid_submission").in("source_id", bidSubs.map((s) => s.id))
       : Promise.resolve({ data: [], error: null }),
@@ -714,14 +770,28 @@ export async function getVendorHistory(supabase: SupabaseClient, vendorId: strin
     orderIds.length
       ? supabase.from("issued_documents").select("id, source_id, document_number, version, issued_at").eq("document_type", "purchase_order").in("source_id", orderIds)
       : Promise.resolve({ data: [], error: null }),
+    // Fix (post-review follow-up): a subcontract's real originating
+    // vendor is whichever vendor's bid_submission was actually AWARDED
+    // for that bid package — resolved the same way bid-submission
+    // entries themselves already are, below — never the vendor id the
+    // caller happens to be viewing history for (that hardcode misattributed
+    // a merged-away vendor's own subcontract to the surviving vendor it's
+    // now viewed through).
+    bidPackageIds.length
+      ? supabase.from("bid_submissions").select("bid_package_id, vendor_id").eq("status", "awarded").in("bid_package_id", bidPackageIds)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (committedFromBids.error) throw committedFromBids.error;
   if (committedFromOrders.error) throw committedFromOrders.error;
   if (subcontracts.error) throw subcontracts.error;
   if (purchaseOrders.error) throw purchaseOrders.error;
+  if (awardedSubmissionsForSubcontracts.error) throw awardedSubmissionsForSubcontracts.error;
 
   const bidSubById = new Map(bidSubs.map((s) => [s.id, s]));
   const orderById = new Map(orders.map((o) => [o.id, o]));
+  const awardedVendorIdByBidPackageId = new Map(
+    ((awardedSubmissionsForSubcontracts.data ?? []) as any[]).map((s) => [s.bid_package_id, s.vendor_id])
+  );
 
   const entries: VendorHistoryEntry[] = [];
 
@@ -779,7 +849,7 @@ export async function getVendorHistory(supabase: SupabaseClient, vendorId: strin
       amountCents: null,
       status: null,
       occurredAt: doc.issued_at,
-      fromVendorId: vendorId,
+      fromVendorId: awardedVendorIdByBidPackageId.get(doc.source_id) ?? vendorId,
     });
   }
   for (const doc of (purchaseOrders.data ?? []) as any[]) {

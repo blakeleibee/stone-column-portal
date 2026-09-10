@@ -21,10 +21,12 @@ import {
   normalizeVendorEmail,
   checkVendorDuplicate,
   upsertVendorContact,
+  archiveVendorContact,
   mergeVendors,
   unmergeVendor,
   setVendorDocumentStatus,
   summarizeVendorOnboardingStatus,
+  getVendorHistory,
 } from "../../../packages/02-app-shell/src/services/vendorService";
 
 let checks = 0;
@@ -153,6 +155,148 @@ async function testUpsertVendorContactMirror() {
   {
     const result = await upsertVendorContact(throwingClient() as never, { vendorId: "v-1", name: "   " });
     check("rejects a blank contact name before any write", result.error === "Contact name is required.");
+  }
+}
+
+// --- upsertVendorContact / archiveVendorContact: stale headline-mirror ----
+// (Fix 2, post-review follow-up) When the vendor's CURRENT mirrored
+// primary contact is demoted or archived, with no other contact
+// promoted to primary in the same call, vendors.contact_name/email/phone
+// must be cleared to null rather than left pointing at a no-longer-
+// primary contact.
+
+function makeDemoteViaUpsertClient(currentlyPrimary: boolean) {
+  const calls: { table: string; op: string; payload?: any }[] = [];
+  return {
+    calls,
+    from(table: string) {
+      if (table === "vendor_contacts") {
+        return {
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: { is_primary_bidding_contact: currentlyPrimary }, error: null }) }),
+          }),
+          update(patch: any) {
+            calls.push({ table, op: "update-contact", payload: patch });
+            return { eq: () => ({ select: () => ({ single: async () => ({ data: { id: "contact-1" }, error: null }) }) }) };
+          },
+        };
+      }
+      if (table === "vendors") {
+        return {
+          update(patch: any) {
+            calls.push({ table, op: "clear-mirror", payload: patch });
+            return { eq: async () => ({ error: null }) };
+          },
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
+    },
+  };
+}
+
+async function testStaleHeadlineMirrorOnDemoteOrArchive() {
+  console.log("--- upsertVendorContact / archiveVendorContact: stale headline-mirror clearing ---");
+
+  {
+    // Demoting the contact that IS the vendor's current mirrored primary
+    // (no replacement promoted in the same call) clears the mirror.
+    const client = makeDemoteViaUpsertClient(true);
+    const result = await upsertVendorContact(client as never, {
+      id: "contact-1",
+      vendorId: "v-1",
+      name: "Pat Plumber",
+      isPrimaryBiddingContact: false,
+    });
+    check("demoting the current primary succeeds", !result.error);
+    check(
+      "clears vendors.contact_name/email/phone to null when demoting the current mirrored primary",
+      client.calls.some((c) => c.op === "clear-mirror" && c.payload.contact_name === null && c.payload.email === null && c.payload.phone === null)
+    );
+  }
+
+  {
+    // Demoting a contact that was NOT already primary leaves the mirror
+    // untouched — nothing stale to clear.
+    const client = makeDemoteViaUpsertClient(false);
+    const result = await upsertVendorContact(client as never, {
+      id: "contact-2",
+      vendorId: "v-1",
+      name: "Non-primary contact",
+      isPrimaryBiddingContact: false,
+    });
+    check("demoting a non-primary contact succeeds", !result.error);
+    check("never touches vendors' mirror columns when the demoted contact wasn't already primary", client.calls.every((c) => c.op !== "clear-mirror"));
+  }
+
+  {
+    // archiveVendorContact: archiving the vendor's current primary
+    // (no replacement designated) clears the mirror the same way.
+    const calls: { table: string; op: string; payload?: any }[] = [];
+    const client = {
+      calls,
+      from(table: string) {
+        if (table === "vendor_contacts") {
+          return {
+            select: () => ({
+              eq: () => ({ maybeSingle: async () => ({ data: { vendor_id: "v-1", is_primary_bidding_contact: true }, error: null }) }),
+            }),
+            update(patch: any) {
+              calls.push({ table, op: "archive", payload: patch });
+              return { eq: async () => ({ error: null }) };
+            },
+          };
+        }
+        if (table === "vendors") {
+          return {
+            update(patch: any) {
+              calls.push({ table, op: "clear-mirror", payload: patch });
+              return { eq: async () => ({ error: null }) };
+            },
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    };
+    const result = await archiveVendorContact(client as never, "contact-1");
+    check("archiving the current primary succeeds", !result.error);
+    check(
+      "clears vendors.contact_name/email/phone to null when archiving the current mirrored primary",
+      calls.some((c) => c.op === "clear-mirror" && c.payload.contact_name === null && c.payload.email === null && c.payload.phone === null)
+    );
+  }
+
+  {
+    // archiveVendorContact: archiving a non-primary contact leaves the
+    // mirror untouched.
+    const calls: { table: string; op: string; payload?: any }[] = [];
+    const client = {
+      calls,
+      from(table: string) {
+        if (table === "vendor_contacts") {
+          return {
+            select: () => ({
+              eq: () => ({ maybeSingle: async () => ({ data: { vendor_id: "v-1", is_primary_bidding_contact: false }, error: null }) }),
+            }),
+            update(patch: any) {
+              calls.push({ table, op: "archive", payload: patch });
+              return { eq: async () => ({ error: null }) };
+            },
+          };
+        }
+        if (table === "vendors") {
+          return {
+            update(patch: any) {
+              calls.push({ table, op: "clear-mirror", payload: patch });
+              return { eq: async () => ({ error: null }) };
+            },
+          };
+        }
+        throw new Error(`unexpected table ${table}`);
+      },
+    };
+    const result = await archiveVendorContact(client as never, "contact-2");
+    check("archiving a non-primary contact succeeds", !result.error);
+    check("never touches vendors' mirror columns when archiving a contact that wasn't the mirrored primary", calls.every((c) => c.op !== "clear-mirror"));
   }
 }
 
@@ -343,13 +487,108 @@ function testSummarizeVendorOnboardingStatus() {
   );
 }
 
+// --- getVendorHistory: subcontract attribution in a merge scenario -------
+// (Fix 3, post-review follow-up) A subcontract history entry must
+// attribute to the vendor whose bid_submission was actually AWARDED for
+// that bid package — resolved the same way bid-submission entries
+// themselves already are — never hardcoded to the vendor id the caller
+// happens to be viewing history for. Proven specifically in a merge
+// scenario: vendor A (merged away) was awarded bid package "pkg-1" and
+// a subcontract was issued against it; viewing history through the
+// SURVIVOR (vendor B, "v-b") must still show that subcontract entry
+// attributed to vendor A ("v-a"), not v-b.
+//
+// A small generic chainable-query fake stands in for the real
+// supabase-js query builder (which is both chainable AND awaitable at
+// every step) since getVendorHistory issues several distinctly-shaped
+// chained queries against the same tables (e.g. bid_submissions is
+// queried once for "this vendor's own submissions" and again for "which
+// submission was awarded").
+function makeChain(resolve: (filters: { field: string; value: unknown }[]) => unknown, filters: { field: string; value: unknown }[] = []): any {
+  const step: any = {
+    eq: (field: string, value: unknown) => makeChain(resolve, [...filters, { field, value }]),
+    in: (field: string, value: unknown) => makeChain(resolve, [...filters, { field, value }]),
+    is: (field: string, value: unknown) => makeChain(resolve, [...filters, { field, value }]),
+    order: () => step,
+    limit: () => step,
+    maybeSingle: async () => resolve(filters),
+    then: (onFulfilled: any, onRejected: any) => Promise.resolve(resolve(filters)).then(onFulfilled, onRejected),
+  };
+  return step;
+}
+
+function makeVendorHistoryMergeClient() {
+  const mergedAwayRows = [{ id: "v-a" }]; // v-a was merged into v-b
+  const bidSubs = [
+    {
+      id: "sub-1",
+      bid_package_id: "pkg-1",
+      vendor_id: "v-a",
+      status: "awarded",
+      amount_cents: 500000,
+      submitted_at: "2026-01-05T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      bid_packages: { title: "Framing package" },
+    },
+  ];
+  const subcontractDocs = [{ id: "doc-1", source_id: "pkg-1", document_number: "SC-001", version: 1, issued_at: "2026-01-10T00:00:00Z" }];
+  const awardedSubs = [{ bid_package_id: "pkg-1", vendor_id: "v-a" }];
+
+  return {
+    from(table: string) {
+      return {
+        select: () =>
+          makeChain((filters) => {
+            switch (table) {
+              case "vendors":
+                return { data: mergedAwayRows, error: null };
+              case "bid_submissions": {
+                const statusFilter = filters.find((f) => f.field === "status");
+                return { data: statusFilter?.value === "awarded" ? awardedSubs : bidSubs, error: null };
+              }
+              case "material_orders":
+                return { data: [], error: null };
+              case "committed_costs":
+                return { data: [], error: null };
+              case "issued_documents": {
+                const docTypeFilter = filters.find((f) => f.field === "document_type");
+                return { data: docTypeFilter?.value === "subcontract" ? subcontractDocs : [], error: null };
+              }
+              default:
+                throw new Error(`unexpected table ${table}`);
+            }
+          }),
+      };
+    },
+  };
+}
+
+async function testGetVendorHistorySubcontractAttribution() {
+  console.log("--- getVendorHistory: subcontract attribution in a merge scenario ---");
+
+  const client = makeVendorHistoryMergeClient();
+  const history = await getVendorHistory(client as never, "v-b");
+
+  const subcontractEntry = history.find((h) => h.sourceType === "issued_document" && h.label.startsWith("Subcontract"));
+  check("a subcontract history entry is produced for the merged-away vendor's awarded bid package", !!subcontractEntry);
+  check(
+    "the subcontract entry attributes to the originating vendor A (v-a), not the surviving vendor B (v-b) it's viewed through",
+    subcontractEntry?.fromVendorId === "v-a"
+  );
+
+  const bidEntry = history.find((h) => h.sourceType === "bid_submission");
+  check("the bid-submission entry (already-correct precedent) also attributes to v-a", bidEntry?.fromVendorId === "v-a");
+}
+
 async function main() {
   testNormalization();
   await testCheckVendorDuplicate();
   await testUpsertVendorContactMirror();
+  await testStaleHeadlineMirrorOnDemoteOrArchive();
   await testMergeVendors();
   await testVendorDocumentStatusVocabulary();
   testSummarizeVendorOnboardingStatus();
+  await testGetVendorHistorySubcontractAttribution();
   console.log(`\nvendor_service_unit.ts: all ${checks} checks passed.`);
 }
 

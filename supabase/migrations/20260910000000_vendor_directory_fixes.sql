@@ -1,0 +1,56 @@
+-- =====================================================================
+-- Stone Column Portal — Migration 021: P5.1 vendor-directory fixes
+-- (post-review follow-up, logged as non-blocking findings against the
+-- "GO"-verdict P5.1 review and fixed before merge per the owner's
+-- request). schema/020_vendor_directory.sql has already been applied
+-- multiple times to the real hosted dev database during this package's
+-- own implementation and review, so per this repo's standing
+-- convention it is never edited after the fact — this is a NEW
+-- migration on top of it instead.
+--
+-- Scope: exactly one fix (Fix 1 of the three logged findings) belongs
+-- at the schema level. Fix 2 (stale headline-contact mirror on
+-- demote/archive) and Fix 3 (subcontract history misattribution) are
+-- both service-layer-only, in
+-- packages/02-app-shell/src/services/vendorService.ts, and need no
+-- migration.
+--
+-- Before writing this migration, the real hosted dev database was
+-- queried directly (vendor_contacts grouped by vendor_id, filtered to
+-- is_primary_bidding_contact = true and is_archived = false, having
+-- count(*) > 1) to check whether any existing data already violates
+-- the invariant this migration's index enforces. Result: zero
+-- violations found (2 non-archived primary-flagged contacts total,
+-- across 2 distinct vendors, none duplicated) — so no cleanup step is
+-- needed here; the index can be created directly.
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- Fix 1 — concurrent primary-contact protection. "One primary contact
+-- per vendor" was previously enforced ONLY by vendorService.ts's
+-- upsertVendorContact() doing two sequential, non-transactional writes
+-- (clear the old primary, then set the new one) — unlike this same
+-- package's other consequential invariants (merge-chain prevention via
+-- enforce_vendor_merge_no_chain, vendor_documents.org_id match via
+-- enforce_vendor_document_org_match, access-log self-attribution via
+-- enforce_vendor_document_access_log_self), which all have a real
+-- trigger or constraint backing them, this one had a narrow race window
+-- if two requests to set a primary contact for the same vendor landed
+-- concurrently: both could pass the service layer's sequential
+-- clear-then-set independently and end up with two non-archived primary
+-- contacts on the same vendor.
+--
+-- A partial unique index is the correct, minimal DB-level fix (rather
+-- than a trigger, which would just be a slower, more complex
+-- restatement of the same constraint): at most one non-archived
+-- vendor_contacts row per vendor_id may have
+-- is_primary_bidding_contact = true. An archived row is excluded from
+-- the predicate deliberately — an archived contact that happens to
+-- still carry a stale is_primary_bidding_contact = true flag (nothing
+-- clears that flag on archive, only the mirror columns on `vendors`,
+-- per Fix 2) must never block a live contact from being flagged
+-- primary.
+-- ---------------------------------------------------------------------
+create unique index vendor_contacts_one_primary_per_vendor
+  on vendor_contacts (vendor_id)
+  where is_primary_bidding_contact and not is_archived;
