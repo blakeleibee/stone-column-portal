@@ -39,6 +39,7 @@ const FILES = [
   "schema/019_project_staff_assignments_self_read.sql",
   "schema/020_vendor_directory.sql",
   "schema/021_vendor_directory_fixes.sql",
+  "schema/022_vendor_bid_access_phase_a.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",
@@ -50,6 +51,7 @@ const FILES = [
   "tests/sql/package_p3_1_project_intake_and_handoff_tests.sql",
   "tests/sql/package_p5_1_vendor_directory_tests.sql",
   "tests/sql/package_p5_1_vendor_directory_fixes_tests.sql",
+  "tests/sql/package_p5_2_vendor_bid_access_phase_a_tests.sql",
 ];
 
 // `schema/0NN_*.sql` is the single source of truth; `supabase/migrations/
