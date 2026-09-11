@@ -10,6 +10,7 @@ import {
   getVendorBidAddendumAcknowledgments,
   type BidPackageDocumentCategory,
 } from "../../../../../../packages/02-app-shell/src/services/bidService";
+import { listEntityMessages } from "../../../../../../packages/02-app-shell/src/services/correspondenceService";
 import { VendorBidWorkspace } from "../../../../../../packages/02-app-shell/src/components/VendorBidWorkspace";
 import {
   submitVendorBid,
@@ -20,6 +21,8 @@ import {
   listVendorVisibleBidQuestions as listVendorVisibleBidQuestionsAction,
   listVendorVisibleBidAddenda as listVendorVisibleBidAddendaAction,
   getVendorBidAddendumAcknowledgments as getVendorBidAddendumAcknowledgmentsAction,
+  listEntityMessages as listEntityMessagesAction,
+  sendVendorMessage,
 } from "./actions";
 
 const DOCUMENT_CATEGORY_LABELS: Record<BidPackageDocumentCategory, string> = {
@@ -124,6 +127,13 @@ export default async function VendorBidPackagePage({
   // vendor, but handled honestly) means an empty history, not an error.
   const revisions = submission ? await listBidSubmissionRevisions(supabase, submission.id) : [];
 
+  // P5.2 Phase D — this vendor's own private correspondence thread.
+  // Relies entirely on RLS (entity_messages_vendor_read, schema/028) to
+  // decide what this session can ever see, same posture as everything
+  // else on this page. Empty (never an error) when there's no
+  // submission row to resolve a vendorId from at all.
+  const messages = submission ? await listEntityMessages(supabase, bidPackageId, submission.vendorId) : [];
+
   // "Accepting submissions" is resolved here, once, from real data —
   // never guessed client-side from a possibly-stale clock. Mirrors
   // exactly what schema/026's own triggers enforce as the real DB-level
@@ -205,6 +215,9 @@ export default async function VendorBidPackagePage({
         initialQuestions={questions}
         initialAddenda={addenda}
         initialAcknowledgments={acknowledgments}
+        initialMessages={messages}
+        listEntityMessages={listEntityMessagesAction}
+        sendVendorMessage={sendVendorMessage}
         submitVendorBid={submitVendorBid}
         askVendorBidQuestion={askVendorBidQuestion}
         acknowledgeBidAddendum={acknowledgeBidAddendum}

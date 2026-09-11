@@ -58,6 +58,8 @@ import type {
   BidAddendumAcknowledgmentRow,
 } from "../services/bidService";
 import type { IssuedDocumentRow } from "../services/documentIssuanceService";
+import type { EntityMessageRow, QuarantinedInboundMessageRow } from "../services/correspondenceService";
+import type { EmailSendStatus } from "../services/email/EmailService";
 import { Card, PageHeader, Button, TextInput, Textarea, Select, Checkbox, FormField, StatusBadge, Alert, EmptyState } from "./ui";
 import type { BadgeTone } from "./ui";
 
@@ -101,13 +103,23 @@ export interface BidPackageWorkspaceProps {
     dueAt?: string
   ) => Promise<{ id?: string; error?: string }>;
   publishBidPackage: (bidPackageId: string) => Promise<ActionResult>;
-  /** P5.2 Phase A: on success, may also return a real, working
-   *  first-access magic-link token (bid_vendor_access_invitations,
-   *  schema/022) — a temporary manual copy/paste testing affordance
-   *  until Phase D adds real email delivery. `warning` covers the one
-   *  expected non-error case: the vendor has no bidding email on file,
-   *  so no link could be generated (the invite itself still succeeded). */
-  inviteVendor: (bidPackageId: string, vendorId: string) => Promise<{ error?: string; warning?: string; accessToken?: string } | void | undefined>;
+  /** P5.2 Phase A's first-access magic-link token is still generated on
+   *  every successful invite (Phase D never removes it — see
+   *  bidService.ts's own inviteVendor doc comment) but the UI now only
+   *  ever shows it as a fallback when `emailStatus` is not 'sent'.
+   *  Phase D additions: `recipientEmail` (who the invitation actually
+   *  went/would go to) and `emailStatus`/`emailError` (the honest
+   *  EmailService outcome — never coerced to a false success). `warning`
+   *  still covers the vendor-has-no-email case (invite succeeded, no
+   *  notification of any kind was possible). */
+  inviteVendor: (
+    bidPackageId: string,
+    vendorId: string
+  ) => Promise<
+    | { error?: string; warning?: string; accessToken?: string; recipientEmail?: string; emailStatus?: EmailSendStatus; emailError?: string }
+    | void
+    | undefined
+  >;
   getBidPackageDetail: (bidPackageId: string) => Promise<{ detail?: BidPackageDetail; error?: string }>;
   listBidQuestions: (bidPackageId: string) => Promise<{ questions?: BidQuestionRow[]; error?: string }>;
   listBidAddenda: (bidPackageId: string) => Promise<{ addenda?: BidAddendumRow[]; error?: string }>;
@@ -147,6 +159,23 @@ export interface BidPackageWorkspaceProps {
    *  directly off `detail`, refreshed by the same loadDetail() call as
    *  everything else. */
   listBidAddendumAcknowledgments: (bidPackageId: string) => Promise<{ acknowledgments?: BidAddendumAcknowledgmentRow[]; error?: string }>;
+  /** P5.2 Phase D — correspondence. listEntityMessages reads ONE
+   *  vendor's private thread at a time (staff picks which invited
+   *  vendor's thread to view) — matching this domain's own "load detail
+   *  on selection" shape used everywhere else in this file. Attachment
+   *  upload itself goes straight to a multipart Route Handler via
+   *  fetch(), exactly like the Documents section above — never a Server
+   *  Action for the file bytes themselves. */
+  listEntityMessages: (bidPackageId: string, vendorId: string) => Promise<{ messages?: EntityMessageRow[]; error?: string }>;
+  sendStaffMessage: (
+    bidPackageId: string,
+    vendorId: string,
+    subject: string | undefined,
+    body: string
+  ) => Promise<{ messageId?: string; emailStatus?: EmailSendStatus; emailError?: string; recipientEmail?: string; error?: string }>;
+  listQuarantinedMessages: (bidPackageId: string) => Promise<{ messages?: QuarantinedInboundMessageRow[]; error?: string }>;
+  discardQuarantinedMessage: (id: string) => Promise<{ error?: string }>;
+  promoteQuarantinedMessage: (id: string) => Promise<{ messageId?: string; error?: string }>;
 }
 
 const PACKAGE_STATUS_LABELS: Record<BidPackageRow["status"], string> = {
@@ -247,6 +276,11 @@ export function BidPackageWorkspace({
   updateBidPackageAssemblyDetails,
   listBidPackageDocuments,
   listBidAddendumAcknowledgments,
+  listEntityMessages,
+  sendStaffMessage,
+  listQuarantinedMessages,
+  discardQuarantinedMessage,
+  promoteQuarantinedMessage,
 }: BidPackageWorkspaceProps) {
   const [packages, setPackages] = useState<BidPackageRow[]>(bidPackages);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -287,6 +321,29 @@ export function BidPackageWorkspace({
   const [inviteWarning, setInviteWarning] = useState<string | null>(null);
   // P5.2 Phase A temporary testing affordance — see inviteVendor prop doc.
   const [inviteAccessLink, setInviteAccessLink] = useState<string | null>(null);
+  // P5.2 Phase D — the honest EmailService outcome of the invitation
+  // send, alongside the resolved recipient. Only when emailStatus is
+  // anything other than 'sent' does the UI fall back to showing
+  // inviteAccessLink at all.
+  const [inviteRecipientEmail, setInviteRecipientEmail] = useState<string | null>(null);
+  const [inviteEmailStatus, setInviteEmailStatus] = useState<EmailSendStatus | null>(null);
+
+  // --- Correspondence (P5.2 Phase D) ---
+  const [threadVendorId, setThreadVendorId] = useState("");
+  const [messages, setMessages] = useState<EntityMessageRow[]>([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messagesError, setMessagesError] = useState<string | null>(null);
+  const [composeSubject, setComposeSubject] = useState("");
+  const [composeBody, setComposeBody] = useState("");
+  const [composeSubmitting, setComposeSubmitting] = useState(false);
+  const [composeError, setComposeError] = useState<string | null>(null);
+  const [composeResult, setComposeResult] = useState<{ recipientEmail: string; emailStatus?: EmailSendStatus; emailError?: string } | null>(null);
+  const [composeFile, setComposeFile] = useState<File | null>(null);
+  const [composeAttachError, setComposeAttachError] = useState<string | null>(null);
+  const [quarantined, setQuarantined] = useState<QuarantinedInboundMessageRow[]>([]);
+  const [quarantinedError, setQuarantinedError] = useState<string | null>(null);
+  const [quarantineActionSubmitting, setQuarantineActionSubmitting] = useState<Record<string, boolean>>({});
+  const [quarantineActionErrors, setQuarantineActionErrors] = useState<Record<string, string | null>>({});
 
   // --- Record submission (per-row, keyed by submission id) ---
   const [amountDrafts, setAmountDrafts] = useState<Record<string, string>>({});
@@ -362,14 +419,24 @@ export function BidPackageWorkspace({
   // fresh detail response so status-badge changes (publish/award) show
   // up in the list without a separate listBidPackages round trip.
   async function loadDetail(id: string) {
-    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult, documentsResult, acknowledgmentsResult] = await Promise.all([
-      getBidPackageDetail(id),
-      listBidQuestions(id),
-      listBidAddenda(id),
-      getLatestIssuedSubcontract(id),
-      listBidPackageDocuments(id),
-      listBidAddendumAcknowledgments(id),
-    ]);
+    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult, documentsResult, acknowledgmentsResult, quarantinedResult] =
+      await Promise.all([
+        getBidPackageDetail(id),
+        listBidQuestions(id),
+        listBidAddenda(id),
+        getLatestIssuedSubcontract(id),
+        listBidPackageDocuments(id),
+        listBidAddendumAcknowledgments(id),
+        listQuarantinedMessages(id),
+      ]);
+
+    if (quarantinedResult.error) {
+      setQuarantinedError(quarantinedResult.error);
+      setQuarantined([]);
+    } else {
+      setQuarantinedError(null);
+      setQuarantined(quarantinedResult.messages ?? []);
+    }
 
     if (detailResult.error || !detailResult.detail) {
       setDetail(null);
@@ -384,6 +451,8 @@ export function BidPackageWorkspace({
       setDocumentsError(null);
       setAcknowledgments([]);
       setAcknowledgmentsError(null);
+      setQuarantined([]);
+      setQuarantinedError(null);
       return;
     }
 
@@ -468,6 +537,13 @@ export function BidPackageWorkspace({
     setHistoryOpenId(null);
     setDetailsError(null);
     setDetailsSaved(false);
+    setThreadVendorId("");
+    setMessages([]);
+    setMessagesError(null);
+    setComposeError(null);
+    setComposeResult(null);
+    setQuarantined([]);
+    setQuarantinedError(null);
     setDetailLoading(true);
     try {
       await loadDetail(id);
@@ -544,6 +620,8 @@ export function BidPackageWorkspace({
     setInviteError(null);
     setInviteWarning(null);
     setInviteAccessLink(null);
+    setInviteRecipientEmail(null);
+    setInviteEmailStatus(null);
     setInviteSubmitting(true);
     try {
       const result = await inviteVendor(detail.id, inviteVendorId);
@@ -554,6 +632,15 @@ export function BidPackageWorkspace({
       if (result && "warning" in result && result.warning) {
         setInviteWarning(result.warning);
       }
+      if (result && "recipientEmail" in result && result.recipientEmail) {
+        setInviteRecipientEmail(result.recipientEmail);
+      }
+      if (result && "emailStatus" in result && result.emailStatus) {
+        setInviteEmailStatus(result.emailStatus);
+      }
+      // The magic-link token is ALWAYS captured (bidService.ts's own
+      // inviteVendor doc comment: it never goes away) — the JSX below,
+      // not this handler, decides whether it is ever actually shown.
       if (result && "accessToken" in result && result.accessToken) {
         const origin = typeof window !== "undefined" ? window.location.origin : "";
         setInviteAccessLink(`${origin}/vendor/invite/${result.accessToken}`);
@@ -758,7 +845,107 @@ export function BidPackageWorkspace({
     }
   }
 
+  // --- Correspondence (P5.2 Phase D) ---
+  async function loadThread(bidPackageId: string, vendorId: string) {
+    setMessagesLoading(true);
+    setMessagesError(null);
+    try {
+      const result = await listEntityMessages(bidPackageId, vendorId);
+      if (result.error) {
+        setMessagesError(result.error);
+        setMessages([]);
+        return;
+      }
+      setMessages(result.messages ?? []);
+    } finally {
+      setMessagesLoading(false);
+    }
+  }
+
+  async function handleSelectThreadVendor(vendorId: string) {
+    setThreadVendorId(vendorId);
+    setComposeError(null);
+    setComposeResult(null);
+    if (!detail || !vendorId) {
+      setMessages([]);
+      return;
+    }
+    await loadThread(detail.id, vendorId);
+  }
+
+  async function handleSendMessage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!detail || !threadVendorId) return;
+    if (!composeBody.trim()) {
+      setComposeError("Message text is required.");
+      return;
+    }
+    setComposeError(null);
+    setComposeAttachError(null);
+    setComposeResult(null);
+    setComposeSubmitting(true);
+    try {
+      const result = await sendStaffMessage(detail.id, threadVendorId, composeSubject.trim() || undefined, composeBody);
+      if (result.error) {
+        setComposeError(result.error);
+        return;
+      }
+      setComposeResult({ recipientEmail: result.recipientEmail ?? "", emailStatus: result.emailStatus, emailError: result.emailError });
+      setComposeSubject("");
+      setComposeBody("");
+
+      if (composeFile && result.messageId) {
+        const formData = new FormData();
+        formData.append("file", composeFile);
+        const response = await fetch(`/api/bid-packages/${detail.id}/messages/${result.messageId}/attachments`, { method: "POST", body: formData });
+        if (!response.ok) {
+          const attachBody = await response.json().catch(() => ({}));
+          setComposeAttachError(attachBody.error ?? "Message sent, but the attachment failed to upload.");
+        }
+        setComposeFile(null);
+      }
+
+      await loadThread(detail.id, threadVendorId);
+    } finally {
+      setComposeSubmitting(false);
+    }
+  }
+
+  async function handleDiscardQuarantined(id: string) {
+    setQuarantineActionErrors((prev) => ({ ...prev, [id]: null }));
+    setQuarantineActionSubmitting((prev) => ({ ...prev, [id]: true }));
+    try {
+      const result = await discardQuarantinedMessage(id);
+      if (result.error) {
+        setQuarantineActionErrors((prev) => ({ ...prev, [id]: result.error! }));
+        return;
+      }
+      if (detail) await loadDetail(detail.id);
+    } finally {
+      setQuarantineActionSubmitting((prev) => ({ ...prev, [id]: false }));
+    }
+  }
+
+  async function handlePromoteQuarantined(id: string) {
+    setQuarantineActionErrors((prev) => ({ ...prev, [id]: null }));
+    setQuarantineActionSubmitting((prev) => ({ ...prev, [id]: true }));
+    try {
+      const result = await promoteQuarantinedMessage(id);
+      if (result.error) {
+        setQuarantineActionErrors((prev) => ({ ...prev, [id]: result.error! }));
+        return;
+      }
+      if (detail) {
+        await loadDetail(detail.id);
+        if (threadVendorId) await loadThread(detail.id, threadVendorId);
+      }
+    } finally {
+      setQuarantineActionSubmitting((prev) => ({ ...prev, [id]: false }));
+    }
+  }
+
   const availableVendors = detail ? vendors.filter((v) => !detail.submissions.some((s) => s.vendorId === v.id)) : vendors;
+  const selectedInviteVendorEmail = vendors.find((v) => v.id === inviteVendorId)?.email ?? null;
 
   return (
     <div className="sc-bids-workspace">
@@ -1084,14 +1271,33 @@ export function BidPackageWorkspace({
                     Manage Vendors
                   </a>
                 </div>
+                {/* P5.2 Phase D — owner's explicit requirement: show
+                    exactly who will receive the invitation BEFORE
+                    sending, not only after. */}
+                {inviteVendorId && (
+                  <p className="sc-bids-muted">
+                    {selectedInviteVendorEmail
+                      ? `Will be sent to: ${selectedInviteVendorEmail}`
+                      : "This vendor has no bidding email on file — add one from the vendor directory before inviting, or the invite will succeed with no notification sent."}
+                  </p>
+                )}
                 {inviteError && <Alert tone="error">{inviteError}</Alert>}
                 {inviteWarning && <Alert tone="warning">{inviteWarning}</Alert>}
-                {inviteAccessLink && (
-                  <Alert tone="info">
-                    Vendor invited. <strong>Temporary testing link (Phase A only)</strong> — copy/paste this to the
-                    vendor manually; real email delivery ships in a later phase:
-                    <br />
-                    <code className="sc-bids-access-link">{inviteAccessLink}</code>
+                {inviteEmailStatus === "sent" && (
+                  <Alert tone="success">Invitation sent to {inviteRecipientEmail}.</Alert>
+                )}
+                {inviteEmailStatus && inviteEmailStatus !== "sent" && (
+                  <Alert tone="warning">
+                    {inviteEmailStatus === "pending_provider_configuration"
+                      ? "Email delivery is not yet configured — no message was sent."
+                      : `The invitation email could not be delivered${inviteEmailStatus === "failed" && inviteRecipientEmail ? ` to ${inviteRecipientEmail}` : ""}.`}
+                    {" "}Use the link below to give the vendor access manually in the meantime.
+                    {inviteAccessLink && (
+                      <>
+                        <br />
+                        <code className="sc-bids-access-link">{inviteAccessLink}</code>
+                      </>
+                    )}
                   </Alert>
                 )}
 
@@ -1422,6 +1628,161 @@ export function BidPackageWorkspace({
                   {addendumError && <Alert tone="error">{addendumError}</Alert>}
                 </form>
               </section>
+
+              <section className="sc-bids-section">
+                <h4>Correspondence</h4>
+                <p className="sc-bids-muted">
+                  A private thread with one invited vendor at a time — other invited vendors on this package never see
+                  it. Sent via email when delivery is configured (with an in-app fallback while it isn&rsquo;t); a
+                  vendor&rsquo;s reply, in-app or by email, appears here.
+                </p>
+
+                {detail.submissions.length === 0 ? (
+                  <EmptyState title="Invite a vendor above to start a correspondence thread." />
+                ) : (
+                  <>
+                    <FormField label="Thread with" htmlFor="sc-bids-thread-vendor">
+                      <Select
+                        id="sc-bids-thread-vendor"
+                        value={threadVendorId}
+                        onChange={(e) => handleSelectThreadVendor(e.target.value)}
+                      >
+                        <option value="">— select an invited vendor —</option>
+                        {detail.submissions.map((sub) => (
+                          <option key={sub.vendorId} value={sub.vendorId}>
+                            {sub.vendorName}
+                          </option>
+                        ))}
+                      </Select>
+                    </FormField>
+
+                    {threadVendorId && (
+                      <>
+                        {messagesLoading && <p className="sc-bids-muted">Loading…</p>}
+                        {messagesError && <Alert tone="error">{messagesError}</Alert>}
+                        {!messagesLoading && !messagesError && messages.length === 0 && (
+                          <EmptyState title="No messages yet on this thread." />
+                        )}
+                        {!messagesLoading && messages.length > 0 && (
+                          <ul className="sc-bids-message-list">
+                            {messages.map((m) => (
+                              <li key={m.id} className={`sc-bids-message sc-bids-message-${m.direction}`}>
+                                <p className="sc-bids-qa-meta">
+                                  {m.direction === "outbound" ? `To ${m.recipient}` : `From ${m.sender}`} ·{" "}
+                                  {formatDateTime(m.direction === "outbound" ? m.sentAt : m.receivedAt ?? m.createdAt)}
+                                  {m.deliveryStatus && m.direction === "outbound" && (
+                                    <>
+                                      {" "}
+                                      · <StatusBadge label={m.deliveryStatus} tone={m.deliveryStatus === "sent" ? "sage" : "gold"} />
+                                    </>
+                                  )}
+                                </p>
+                                {m.subject && <p className="sc-bids-qa-question">{m.subject}</p>}
+                                <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{m.body}</p>
+                                {m.attachments.length > 0 && (
+                                  <ul className="sc-bids-attachment-list">
+                                    {m.attachments.map((a) => (
+                                      <li key={a.id}>
+                                        <a
+                                          href={`/api/bid-packages/${detail.id}/messages/attachments/${a.id}/download`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {a.fileName}
+                                        </a>{" "}
+                                        <span className="sc-bids-muted">({formatBytes(a.sizeBytes)})</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <form onSubmit={handleSendMessage} className="sc-bids-form">
+                          <h5>Send a message</h5>
+                          <FormField label="Subject (optional)" htmlFor="sc-bids-message-subject">
+                            <TextInput
+                              id="sc-bids-message-subject"
+                              value={composeSubject}
+                              onChange={(e) => setComposeSubject(e.target.value)}
+                            />
+                          </FormField>
+                          <FormField label="Message" htmlFor="sc-bids-message-body">
+                            <Textarea
+                              id="sc-bids-message-body"
+                              rows={3}
+                              value={composeBody}
+                              onChange={(e) => setComposeBody(e.target.value)}
+                            />
+                          </FormField>
+                          <FormField label="Attachment (optional)" htmlFor="sc-bids-message-file">
+                            <input id="sc-bids-message-file" type="file" onChange={(e) => setComposeFile(e.target.files?.[0] ?? null)} />
+                          </FormField>
+                          <Button type="submit" variant="primary" disabled={composeSubmitting} loading={composeSubmitting} loadingText="Sending…">
+                            Send
+                          </Button>
+                          {composeError && <Alert tone="error">{composeError}</Alert>}
+                          {composeAttachError && <Alert tone="error">{composeAttachError}</Alert>}
+                          {composeResult && composeResult.emailStatus === "sent" && (
+                            <Alert tone="success">Sent to {composeResult.recipientEmail}.</Alert>
+                          )}
+                          {composeResult && composeResult.emailStatus === "pending_provider_configuration" && (
+                            <Alert tone="warning">
+                              Saved to this thread, but email delivery is not yet configured — {composeResult.recipientEmail} was not
+                              actually notified. They will see this message the next time they sign into the vendor portal.
+                            </Alert>
+                          )}
+                          {composeResult && composeResult.emailStatus === "failed" && (
+                            <Alert tone="error">
+                              Saved to this thread, but delivery to {composeResult.recipientEmail} failed
+                              {composeResult.emailError ? `: ${composeResult.emailError}` : "."}
+                            </Alert>
+                          )}
+                        </form>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {(quarantined.length > 0 || quarantinedError) && (
+                  <div className="sc-bids-quarantine">
+                    <h5>Needs review ({quarantined.length})</h5>
+                    <p className="sc-bids-muted">
+                      Inbound email replies that couldn&rsquo;t be safely routed into a thread automatically — never
+                      shown to any vendor.
+                    </p>
+                    {quarantinedError && <Alert tone="error">{quarantinedError}</Alert>}
+                    <ul className="sc-bids-qa-list">
+                      {quarantined.map((q) => (
+                        <li key={q.id} className="sc-bids-qa-item">
+                          <p className="sc-bids-qa-meta">
+                            {formatDateTime(q.receivedAt)} · reason: {q.reason}
+                          </p>
+                          <p style={{ margin: "0 0 8px 0", fontSize: 12, wordBreak: "break-word" }}>
+                            {JSON.stringify(q.rawPayload)}
+                          </p>
+                          <div className="sc-bids-confirm-actions">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              disabled={!!quarantineActionSubmitting[q.id] || !q.vendorId}
+                              onClick={() => handlePromoteQuarantined(q.id)}
+                            >
+                              Promote to thread
+                            </Button>
+                            <Button variant="secondary" size="sm" disabled={!!quarantineActionSubmitting[q.id]} onClick={() => handleDiscardQuarantined(q.id)}>
+                              Discard
+                            </Button>
+                          </div>
+                          {quarantineActionErrors[q.id] && <Alert tone="error">{quarantineActionErrors[q.id]}</Alert>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
             </div>
           )}
         </Card>
@@ -1473,6 +1834,14 @@ const workspaceStyles = `
 .sc-bids-revision-list li { border: 1px solid ${colors.line}; border-radius: ${radius.sm}; padding: 4px 6px; }
 
 .sc-bids-table-scroll { overflow-x: auto; }
+
+.sc-bids-message-list { list-style: none; padding: 0; margin: 0 0 ${spacing.md} 0; display: flex; flex-direction: column; gap: ${spacing.sm}; }
+.sc-bids-message { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.sm}; font-size: ${typography.sizeSm}; }
+.sc-bids-message-outbound { background: ${colors.white}; }
+.sc-bids-message-inbound { background: ${colors.sageTint}; }
+.sc-bids-attachment-list { list-style: none; padding: 0; margin: ${spacing.xs} 0 0 0; font-size: ${typography.sizeXs}; }
+.sc-bids-quarantine { margin-top: ${spacing.lg}; padding-top: ${spacing.md}; border-top: 1px dashed ${colors.line}; }
+.sc-bids-quarantine h5 { margin: 0 0 4px 0; }
 
 /* Pre-Task-10-owner-preview mobile fix: below the 768px breakpoint
    AppShell.tsx itself already uses for sidebar-vs-drawer, the list and

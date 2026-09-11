@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { sendAndRecordOutboundMessage, ensureInboundReplyToken } from "./correspondenceService";
+import type { EmailSendStatus } from "./email/EmailService";
 
 export interface BidPackageRow {
   id: string;
@@ -231,30 +233,65 @@ export interface BidPackageDetail extends BidPackageRow, BidPackageAssemblyField
 export interface InviteVendorResult {
   error?: string;
   warning?: string;
-  /** P5.2 Phase A's temporary testing affordance: a real, working
-   *  magic-link token, returned directly so staff can copy/paste it
-   *  into a message by hand. There is no email infrastructure in this
-   *  codebase yet (Phase D adds real delivery via bid_invitation_emails/
-   *  EmailService and this field goes away in favor of a real "sent"
-   *  status) -- this is an honest stand-in, not the final invitation UX. */
+  /** P5.2 Phase A's magic-link token, still generated and returned on
+   *  EVERY successful invite (Phase D never removes it — see this
+   *  function's own header comment) but only ever DISPLAYED by the UI
+   *  as a manual copy/paste fallback when `emailStatus` is anything
+   *  other than 'sent'. */
   accessToken?: string;
+  /** P5.2 Phase D — the exact address the invitation was (or would be)
+   *  sent to, resolved server-side from the vendor's own canonical
+   *  bidding email (vendors.email) — surfaced so staff can see who
+   *  actually receives it, per the owner's explicit requirement. */
+  recipientEmail?: string;
+  /** The real, honest outcome of the EmailService.send() attempt —
+   *  'sent' only when a configured provider actually accepted it,
+   *  'pending_provider_configuration' when no provider is configured at
+   *  all (RESEND_API_KEY absent), 'failed' for a real provider error.
+   *  Never silently coerced to a success. */
+  emailStatus?: EmailSendStatus;
+  emailError?: string;
 }
 
 /** Writes the real bid_submissions invite row (unchanged from P5), then
  *  additionally issues a bid_vendor_access_invitations row (schema/022)
- *  so the invited vendor has a real, working first-access magic link —
- *  closing the gap where "Invite" previously told the vendor nothing.
- *  Does NOT create/maintain any project_members row: schema/022 chose
- *  the self-sufficient RLS fix (bid_packages_vendor_read now derives
- *  access transitively from vendor_members + bid_submissions alone), so
- *  there is no second write path to keep in sync here, ever. */
-export async function inviteVendor(supabase: SupabaseClient, bidPackageId: string, vendorId: string): Promise<InviteVendorResult> {
+ *  so the invited vendor has a real, working first-access magic link,
+ *  and (P5.2 Phase D) sends a real invitation email through EmailService
+ *  containing that same link — closing the gap where "Invite" was a
+ *  manual copy/paste-only affordance. Does NOT create/maintain any
+ *  project_members row: schema/022 chose the self-sufficient RLS fix
+ *  (bid_packages_vendor_read now derives access transitively from
+ *  vendor_members + bid_submissions alone), so there is no second write
+ *  path to keep in sync here, ever.
+ *
+ * `baseUrl` (e.g. `https://portal.stonecolumn.com` or, in dev,
+ * `http://127.0.0.1:5173`) is supplied by the caller (the Server Action,
+ * which resolves it from the real inbound request's own host header via
+ * next/headers) — this package deliberately carries no apps/web/Next.js
+ * dependency of its own (matching every other service file here), so it
+ * cannot resolve its own origin.
+ *
+ * The magic-link token is ALWAYS still generated and returned, even
+ * once real email is configured and used — per the owner's explicit
+ * instruction, removing it entirely would leave zero way to test
+ * invitations locally without sending a real email. The UI (not this
+ * function) is what decides whether to ever actually show it: only when
+ * emailStatus is not 'sent'.
+ *
+ * A failure recording the invitation email itself (sendAndRecord's own
+ * database write) is surfaced as a `warning`, never a top-level `error`
+ * — the vendor genuinely WAS invited (bid_submissions/bid_vendor_access_
+ * invitations both already committed) by that point; only the
+ * correspondence record of the notification failed, which staff can see
+ * and retry via the ordinary compose-a-message flow.
+ */
+export async function inviteVendor(supabase: SupabaseClient, bidPackageId: string, vendorId: string, baseUrl: string): Promise<InviteVendorResult> {
   const { error } = await supabase.from("bid_submissions").insert({ bid_package_id: bidPackageId, vendor_id: vendorId });
   if (error) return { error: error.message };
 
   const { data: vendorRow, error: vendorError } = await supabase
     .from("vendors")
-    .select("email, org_id")
+    .select("email, name, org_id")
     .eq("id", vendorId)
     .maybeSingle();
   if (vendorError) return { error: vendorError.message };
@@ -269,7 +306,55 @@ export async function inviteVendor(supabase: SupabaseClient, bidPackageId: strin
     .single();
   if (invitationError) return { error: invitationError.message };
 
-  return { accessToken: invitationRow.token as string };
+  const accessToken = invitationRow.token as string;
+
+  const { data: userRes } = await supabase.auth.getUser();
+  const staffProfileId = userRes.user?.id;
+  if (!staffProfileId) return { error: "Not authenticated." };
+
+  const { data: pkgRow } = await supabase.from("bid_packages").select("title").eq("id", bidPackageId).maybeSingle();
+  const tokenResult = await ensureInboundReplyToken(supabase, bidPackageId, vendorId);
+  const replyToToken = "token" in tokenResult ? tokenResult.token : undefined;
+
+  const accessLink = `${baseUrl}/vendor/invite/${accessToken}`;
+  const packageTitle = pkgRow?.title ?? "a Stone Column project";
+  const subject = `You're invited to bid: ${packageTitle}`;
+  const body = [
+    `${vendorRow.name ?? "Hello"},`,
+    "",
+    `You have been invited to submit a bid for "${packageTitle}".`,
+    "",
+    `Access your bid package here: ${accessLink}`,
+    "",
+    "If you have any questions, reply directly to this email.",
+    "",
+    "— Stone Column Custom Homes",
+  ].join("\n");
+
+  const sendResult = await sendAndRecordOutboundMessage(supabase, {
+    bidPackageId,
+    vendorId,
+    to: vendorRow.email,
+    subject,
+    body,
+    createdBy: staffProfileId,
+    replyToToken,
+  });
+
+  if (sendResult.error) {
+    return {
+      warning: `Vendor invited, but recording the invitation notification failed: ${sendResult.error}`,
+      accessToken,
+      recipientEmail: vendorRow.email,
+    };
+  }
+
+  return {
+    accessToken,
+    recipientEmail: vendorRow.email,
+    emailStatus: sendResult.emailStatus,
+    emailError: sendResult.emailError,
+  };
 }
 
 export async function getBidPackageDetail(supabase: SupabaseClient, bidPackageId: string): Promise<BidPackageDetail | null> {
@@ -401,6 +486,13 @@ export async function listOrgStaffProfiles(supabase: SupabaseClient, orgId: stri
 export interface VendorRow {
   id: string;
   name: string;
+  /** P5.2 Phase D — surfaced so the invite UI can show exactly which
+   *  address an invitation will be sent to BEFORE staff clicks Invite,
+   *  per the owner's explicit "show exactly who will receive it before
+   *  sending" requirement. Null when the vendor has no bidding email on
+   *  file (inviteVendor's own existing warning path already handles
+   *  that case at invite time). */
+  email: string | null;
 }
 
 /** The ONE real vendors list every selector-style screen (Bids,
@@ -416,13 +508,13 @@ export interface VendorRow {
 export async function listVendors(supabase: SupabaseClient, orgId: string): Promise<VendorRow[]> {
   const { data, error } = await supabase
     .from("vendors")
-    .select("id, name")
+    .select("id, name, email")
     .eq("org_id", orgId)
     .eq("is_archived", false)
     .is("merged_into_vendor_id", null)
     .order("name");
   if (error) throw error;
-  return (data ?? []).map((row: any) => ({ id: row.id, name: row.name }));
+  return (data ?? []).map((row: any) => ({ id: row.id, name: row.name, email: row.email ?? null }));
 }
 
 /** revoked_by is deliberately NOT a parameter — the DB trigger

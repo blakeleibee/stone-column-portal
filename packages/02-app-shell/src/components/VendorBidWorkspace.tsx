@@ -28,6 +28,7 @@ import type {
   VendorVisibleBidAddendumRow,
   BidAddendumAcknowledgmentRow,
 } from "../services/bidService";
+import type { EntityMessageRow } from "../services/correspondenceService";
 
 type ActionResult = { error?: string } | void | undefined;
 
@@ -48,6 +49,15 @@ export interface VendorBidWorkspaceProps {
   initialQuestions: VendorVisibleBidQuestionRow[];
   initialAddenda: VendorVisibleBidAddendumRow[];
   initialAcknowledgments: BidAddendumAcknowledgmentRow[];
+  /** P5.2 Phase D — this vendor's own private thread with staff. Never
+   *  another invited vendor's thread (RLS-enforced, schema/028) — this
+   *  prop's own initial value and every subsequent refreshAll() re-fetch
+   *  both rely entirely on entity_messages_vendor_read to guarantee
+   *  that, the same "RLS is the only real gate" posture as every other
+   *  vendor-visible read in this file. */
+  initialMessages: EntityMessageRow[];
+  listEntityMessages: (bidPackageId: string, vendorId: string) => Promise<{ messages?: EntityMessageRow[]; error?: string }>;
+  sendVendorMessage: (bidPackageId: string, vendorId: string, body: string) => Promise<{ messageId?: string; error?: string }>;
   submitVendorBid: (bidSubmissionId: string, amountCents: number, notes?: string) => Promise<{ revisionId?: string; error?: string }>;
   askVendorBidQuestion: (bidPackageId: string, vendorId: string, questionText: string) => Promise<ActionResult>;
   acknowledgeBidAddendum: (bidAddendumId: string, vendorId: string) => Promise<ActionResult>;
@@ -83,6 +93,9 @@ export function VendorBidWorkspace({
   initialQuestions,
   initialAddenda,
   initialAcknowledgments,
+  initialMessages,
+  listEntityMessages,
+  sendVendorMessage,
   submitVendorBid,
   askVendorBidQuestion,
   acknowledgeBidAddendum,
@@ -111,13 +124,20 @@ export function VendorBidWorkspace({
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
   const [acknowledgeErrors, setAcknowledgeErrors] = useState<Record<string, string | null>>({});
 
+  const [messages, setMessages] = useState<EntityMessageRow[]>(initialMessages);
+  const [messageText, setMessageText] = useState("");
+  const [messageSubmitting, setMessageSubmitting] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
+
   async function refreshAll() {
-    const [submissionResult, questionsResult, addendaResult, acknowledgmentsResult] = await Promise.all([
+    const [submissionResult, questionsResult, addendaResult, acknowledgmentsResult, messagesResult] = await Promise.all([
       getVendorOwnBidSubmission(bidPackageId),
       listVendorVisibleBidQuestions(bidPackageId),
       listVendorVisibleBidAddenda(bidPackageId),
       getVendorBidAddendumAcknowledgments(bidPackageId),
+      listEntityMessages(bidPackageId, vendorId),
     ]);
+    setMessages(messagesResult.messages ?? []);
 
     const nextSubmission = submissionResult.submission ?? null;
     setSubmission(nextSubmission);
@@ -191,6 +211,27 @@ export function VendorBidWorkspace({
       await refreshAll();
     } finally {
       setAcknowledgingId(null);
+    }
+  }
+
+  async function handleSendMessage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!messageText.trim()) {
+      setMessageError("Message text is required.");
+      return;
+    }
+    setMessageError(null);
+    setMessageSubmitting(true);
+    try {
+      const result = await sendVendorMessage(bidPackageId, vendorId, messageText);
+      if (result.error) {
+        setMessageError(result.error);
+        return;
+      }
+      setMessageText("");
+      await refreshAll();
+    } finally {
+      setMessageSubmitting(false);
     }
   }
 
@@ -354,6 +395,57 @@ export function VendorBidWorkspace({
           </ul>
         </div>
       )}
+
+      <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd" }}>
+        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Messages</h2>
+        <p style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>
+          A private conversation between your company and the Stone Column team on this bid package. No other invited
+          vendor can see this thread.
+        </p>
+
+        {messages.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#888" }}>No messages yet.</p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: "0 0 16px 0", display: "flex", flexDirection: "column", gap: 8 }}>
+            {messages.map((m) => (
+              <li key={m.id} style={{ ...boxStyle, background: m.direction === "outbound" ? "#fff" : "#f3f7f4" }}>
+                <p style={{ margin: "0 0 4px 0", fontSize: 11, color: "#888" }}>
+                  {m.direction === "outbound" ? "From Stone Column" : "From you"} ·{" "}
+                  {formatDateTime(m.direction === "outbound" ? m.sentAt : m.receivedAt ?? m.createdAt)}
+                </p>
+                {m.subject && <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>{m.subject}</p>}
+                <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{m.body}</p>
+                {m.attachments.length > 0 && (
+                  <ul style={{ listStyle: "none", padding: 0, margin: "8px 0 0 0", fontSize: 12 }}>
+                    {m.attachments.map((a) => (
+                      <li key={a.id}>
+                        <a href={`/api/bid-packages/${bidPackageId}/messages/attachments/${a.id}/download`} target="_blank" rel="noopener noreferrer">
+                          {a.fileName}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form onSubmit={handleSendMessage} style={{ display: "flex", flexDirection: "column", gap: 8, maxWidth: 480 }}>
+          <textarea
+            rows={3}
+            style={{ ...inputStyle, fontFamily: "inherit" }}
+            placeholder="Type a message to the Stone Column team…"
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            aria-label="Message text"
+          />
+          <button type="submit" style={secondaryButtonStyle} disabled={messageSubmitting}>
+            {messageSubmitting ? "Sending…" : "Send"}
+          </button>
+          {messageError && <p style={errorStyle}>{messageError}</p>}
+        </form>
+      </div>
     </>
   );
 }

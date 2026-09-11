@@ -48,6 +48,19 @@ function base64ToBuffer(value: string): Buffer | null {
   }
 }
 
+/** Node's crypto typings (in the @types/node version this monorepo
+ *  pins) declare createHmac/timingSafeEqual against `Uint8Array<
+ *  ArrayBuffer>` specifically, which a plain `Buffer` (typed as
+ *  `Uint8Array<ArrayBufferLike>`, i.e. possibly backed by a
+ *  SharedArrayBuffer) doesn't structurally satisfy — even though every
+ *  Buffer this file ever constructs (via Buffer.from) is really backed
+ *  by a plain ArrayBuffer at runtime. Re-wrapping in `new Uint8Array()`
+ *  copies into a definitely-plain-ArrayBuffer-backed view, satisfying
+ *  the stricter type with zero behavioral change. */
+function toHmacBytes(buffer: Buffer): Uint8Array {
+  return new Uint8Array(buffer);
+}
+
 export function verifySvixSignature(
   headers: SvixHeaders,
   rawBody: string,
@@ -75,7 +88,7 @@ export function verifySvixSignature(
   }
 
   const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
-  const expectedSignature = createHmac("sha256", secretBytes).update(signedContent).digest();
+  const expectedSignature = createHmac("sha256", toHmacBytes(secretBytes)).update(signedContent).digest();
 
   const candidates = svixSignature
     .split(" ")
@@ -86,7 +99,7 @@ export function verifySvixSignature(
     const candidateBuffer = base64ToBuffer(candidate);
     if (!candidateBuffer) continue;
     if (candidateBuffer.length !== expectedSignature.length) continue;
-    if (timingSafeEqual(candidateBuffer, expectedSignature)) {
+    if (timingSafeEqual(toHmacBytes(candidateBuffer), toHmacBytes(expectedSignature))) {
       return { valid: true };
     }
   }
@@ -103,6 +116,6 @@ export function signSvixPayloadForTesting(svixId: string, svixTimestamp: string,
   const secretMaterial = secret.startsWith("whsec_") ? secret.slice("whsec_".length) : secret;
   const secretBytes = Buffer.from(secretMaterial, "base64");
   const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
-  const signature = createHmac("sha256", secretBytes).update(signedContent).digest("base64");
+  const signature = createHmac("sha256", toHmacBytes(secretBytes)).update(signedContent).digest("base64");
   return `v1,${signature}`;
 }

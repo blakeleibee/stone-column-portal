@@ -18,6 +18,11 @@ import {
   updateBidPackageAssemblyDetails,
   listBidPackageDocuments,
   listBidAddendumAcknowledgments,
+  listEntityMessages,
+  sendStaffMessage,
+  listQuarantinedMessages,
+  discardQuarantinedMessage,
+  promoteQuarantinedMessage,
 } from "./actions";
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum, issueSubcontract, getLatestIssuedSubcontract } from "./submissionActions";
 
@@ -84,6 +89,11 @@ export default async function AdminBidsPage() {
         updateBidPackageAssemblyDetails={updateBidPackageAssemblyDetails}
         listBidPackageDocuments={listBidPackageDocuments}
         listBidAddendumAcknowledgments={listBidAddendumAcknowledgments}
+        listEntityMessages={listEntityMessages}
+        sendStaffMessage={sendStaffMessage}
+        listQuarantinedMessages={listQuarantinedMessages}
+        discardQuarantinedMessage={discardQuarantinedMessage}
+        promoteQuarantinedMessage={promoteQuarantinedMessage}
       />
     </AdminChrome>
   );

@@ -245,6 +245,11 @@ async function main() {
         updateBidPackageAssemblyDetails={server.updateBidPackageAssemblyDetails}
         listBidPackageDocuments={server.listBidPackageDocuments}
         listBidAddendumAcknowledgments={server.listBidAddendumAcknowledgments}
+        listEntityMessages={async () => ({ messages: [] })}
+        sendStaffMessage={async () => ({ error: "not exercised in this test" })}
+        listQuarantinedMessages={async () => ({ messages: [] })}
+        discardQuarantinedMessage={async () => ({})}
+        promoteQuarantinedMessage={async () => ({ error: "not exercised in this test" })}
       />
     );
   });

@@ -36,6 +36,11 @@ import {
   type BidSubmissionRevisionRow,
   type BidAddendumAcknowledgmentRow,
 } from "../../../../../../packages/02-app-shell/src/services/bidService";
+import {
+  listEntityMessages as listEntityMessagesService,
+  sendVendorMessage as sendVendorMessageService,
+  type EntityMessageRow,
+} from "../../../../../../packages/02-app-shell/src/services/correspondenceService";
 
 export async function listVendorVisibleBidPackageDocuments(bidPackageId: string): Promise<{ documents?: BidPackageDocumentRow[]; error?: string }> {
   await requireRole(["vendor"]);
@@ -119,4 +124,22 @@ export async function acknowledgeBidAddendum(bidAddendumId: string, vendorId: st
   await requireRole(["vendor"]);
   const supabase = await createServerSupabaseClient();
   return acknowledgeBidAddendumService(supabase, bidAddendumId, vendorId);
+}
+
+// P5.2 Phase D — this vendor's own private correspondence thread.
+export async function listEntityMessages(bidPackageId: string, vendorId: string): Promise<{ messages?: EntityMessageRow[]; error?: string }> {
+  await requireRole(["vendor"]);
+  const supabase = await createServerSupabaseClient();
+  try {
+    const messages = await listEntityMessagesService(supabase, bidPackageId, vendorId);
+    return { messages };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to load messages." };
+  }
+}
+
+export async function sendVendorMessage(bidPackageId: string, vendorId: string, body: string) {
+  await requireRole(["vendor"]);
+  const supabase = await createServerSupabaseClient();
+  return sendVendorMessageService(supabase, { bidPackageId, vendorId, body });
 }
