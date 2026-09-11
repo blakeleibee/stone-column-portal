@@ -5,8 +5,22 @@ import {
   listVendorVisibleBidQuestions,
   listVendorVisibleBidAddenda,
   listVendorVisibleBidPackageDocuments,
+  getVendorOwnBidSubmission,
+  listBidSubmissionRevisions,
+  getVendorBidAddendumAcknowledgments,
   type BidPackageDocumentCategory,
 } from "../../../../../../packages/02-app-shell/src/services/bidService";
+import { VendorBidWorkspace } from "../../../../../../packages/02-app-shell/src/components/VendorBidWorkspace";
+import {
+  submitVendorBid,
+  askVendorBidQuestion,
+  acknowledgeBidAddendum,
+  getVendorOwnBidSubmission as getVendorOwnBidSubmissionAction,
+  listMyBidSubmissionRevisions,
+  listVendorVisibleBidQuestions as listVendorVisibleBidQuestionsAction,
+  listVendorVisibleBidAddenda as listVendorVisibleBidAddendaAction,
+  getVendorBidAddendumAcknowledgments as getVendorBidAddendumAcknowledgmentsAction,
+} from "./actions";
 
 const DOCUMENT_CATEGORY_LABELS: Record<BidPackageDocumentCategory, string> = {
   plans: "Plans",
@@ -37,13 +51,15 @@ function formatDate(iso: string | null): string {
 }
 
 /**
- * P5.2 Phase A — the one real vendor-facing bid package screen this
- * phase ships. Deliberately minimal per this phase's explicit scope
- * boundary: title, scope description, cost code (resolved to its
- * human-readable code, never a raw UUID), due date, status. No
- * documents, no submission form, no Q&A/correspondence UI — those are
- * later phases; the RLS they'll eventually rely on already exists
- * (dormant) and is untouched here.
+ * P5.2 Phase A shipped this screen deliberately minimal: title, scope,
+ * cost code, due date, status. Phase B (Part C) added documents/
+ * addenda/Q&A as read-only. Phase C (this revision) adds the real
+ * interactive surface: submit/revise a bid with full history, ask a
+ * question, and acknowledge addenda — all via VendorBidWorkspace, a
+ * Client Component fed by this Server Component's initial reads and
+ * this route's own Server Actions (./actions.ts). No correspondence
+ * (entity_messages) and no email of any kind yet — those remain later
+ * phases (D+), untouched here.
  *
  * Always requires a real vendor-role session regardless of DEMO_MODE —
  * matching /admin/bids/page.tsx's own established precedent for this
@@ -93,11 +109,28 @@ export default async function VendorBidPackagePage({
   // schema/025, schema/022) to decide what this session can ever see —
   // same posture as getVendorVisibleBidPackage() above. Fetched in
   // parallel since none depends on another's result.
-  const [documents, addenda, questions] = await Promise.all([
+  const [documents, addenda, questions, submission, acknowledgments] = await Promise.all([
     listVendorVisibleBidPackageDocuments(supabase, bidPackageId),
     listVendorVisibleBidAddenda(supabase, bidPackageId),
     listVendorVisibleBidQuestions(supabase, bidPackageId),
+    getVendorOwnBidSubmission(supabase, bidPackageId),
+    getVendorBidAddendumAcknowledgments(supabase, bidPackageId),
   ]);
+
+  // Revisions depend on the submission's own id, so this is a real
+  // follow-up read, not something that can join the Promise.all above —
+  // matches getBidPackageDetail()'s own "one batched follow-up query"
+  // shape server-side. No submission (shouldn't happen for an invited
+  // vendor, but handled honestly) means an empty history, not an error.
+  const revisions = submission ? await listBidSubmissionRevisions(supabase, submission.id) : [];
+
+  // "Accepting submissions" is resolved here, once, from real data —
+  // never guessed client-side from a possibly-stale clock. Mirrors
+  // exactly what schema/026's own triggers enforce as the real DB-level
+  // boundary (bid_packages.status = 'published' AND (due_at is null OR
+  // due_at is in the future)) — this is a UI-honesty convenience, not
+  // the actual security boundary.
+  const isAcceptingSubmissions = pkg.status === "published" && (!pkg.dueAt || new Date(pkg.dueAt).getTime() > Date.now());
 
   // "Honest empty states" convention: an assembly field/section only
   // renders when actually populated — never an empty "Alternates:
@@ -163,51 +196,24 @@ export default async function VendorBidPackagePage({
         )}
       </div>
 
-      <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd" }}>
-        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Addenda</h2>
-        {addenda.length === 0 ? (
-          <p style={{ fontSize: 13, color: "#888" }}>No addenda have been issued yet.</p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-            {addenda.map((a) => (
-              <li key={a.id} style={{ border: "1px solid #ddd", borderRadius: 6, padding: 8, fontSize: 13 }}>
-                <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>
-                  {a.title} — {formatDate(a.issuedAt)}
-                </p>
-                <p style={{ margin: 0 }}>{a.bodyText}</p>
-                {a.revisedDueAt && <p style={{ margin: "4px 0 0 0", color: "#888" }}>Revised due date: {formatDate(a.revisedDueAt)}</p>}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div style={{ marginTop: 32, paddingTop: 16, borderTop: "1px solid #ddd" }}>
-        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Questions &amp; answers</h2>
-        {questions.length === 0 ? (
-          <p style={{ fontSize: 13, color: "#888" }}>No questions have been logged yet.</p>
-        ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-            {questions.map((q) => (
-              <li key={q.id} style={{ border: "1px solid #ddd", borderRadius: 6, padding: 8, fontSize: 13 }}>
-                <p style={{ margin: "0 0 4px 0", fontWeight: 600 }}>{q.questionText}</p>
-                {q.answerText ? (
-                  <p style={{ margin: 0 }}>
-                    <strong>Answer:</strong> {q.answerText}
-                  </p>
-                ) : (
-                  <p style={{ margin: 0, color: "#888" }}>Not answered yet.</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <p style={{ marginTop: 32, fontSize: 12, color: "#999" }}>
-        Asking a new question, acknowledging an addendum, and submitting a bid aren&rsquo;t available here yet —
-        those are coming in a later phase.
-      </p>
+      <VendorBidWorkspace
+        bidPackageId={bidPackageId}
+        vendorId={submission?.vendorId ?? ""}
+        isAcceptingSubmissions={isAcceptingSubmissions}
+        initialSubmission={submission}
+        initialRevisions={revisions}
+        initialQuestions={questions}
+        initialAddenda={addenda}
+        initialAcknowledgments={acknowledgments}
+        submitVendorBid={submitVendorBid}
+        askVendorBidQuestion={askVendorBidQuestion}
+        acknowledgeBidAddendum={acknowledgeBidAddendum}
+        getVendorOwnBidSubmission={getVendorOwnBidSubmissionAction}
+        listMyBidSubmissionRevisions={listMyBidSubmissionRevisions}
+        listVendorVisibleBidQuestions={listVendorVisibleBidQuestionsAction}
+        listVendorVisibleBidAddenda={listVendorVisibleBidAddendaAction}
+        getVendorBidAddendumAcknowledgments={getVendorBidAddendumAcknowledgmentsAction}
+      />
     </div>
   );
 }
