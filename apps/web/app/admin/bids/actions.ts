@@ -12,9 +12,12 @@ import {
   getBidPackageDetail as getBidPackageDetailService,
   listBidQuestions as listBidQuestionsService,
   listBidAddenda as listBidAddendaService,
+  updateBidPackageAssemblyDetails as updateBidPackageAssemblyDetailsService,
+  listBidPackageDocuments as listBidPackageDocumentsService,
   type BidPackageDetail,
   type BidQuestionRow,
   type BidAddendumRow,
+  type BidPackageDocumentRow,
 } from "../../../../../packages/02-app-shell/src/services/bidService";
 
 /**
@@ -100,5 +103,27 @@ export async function listBidAddenda(bidPackageId: string): Promise<{ addenda?: 
     return { addenda };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Failed to load addenda." };
+  }
+}
+
+// P5.2 Phase B (Part B) — "Package Details" section.
+export async function updateBidPackageAssemblyDetails(
+  bidPackageId: string,
+  fields: Parameters<typeof updateBidPackageAssemblyDetailsService>[2]
+) {
+  const supabase = await createServerSupabaseClient();
+  return updateBidPackageAssemblyDetailsService(supabase, bidPackageId, fields);
+}
+
+// P5.2 Phase B (Part C) — staff-side "Documents" section list (upload
+// itself goes through the multipart Route Handler, not a Server
+// Action, matching P5.1's vendor-documents upload wiring exactly).
+export async function listBidPackageDocuments(bidPackageId: string): Promise<{ documents?: BidPackageDocumentRow[]; error?: string }> {
+  const supabase = await createServerSupabaseClient();
+  try {
+    const documents = await listBidPackageDocumentsService(supabase, bidPackageId);
+    return { documents };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to load bid package documents." };
   }
 }

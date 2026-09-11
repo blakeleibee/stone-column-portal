@@ -5,10 +5,19 @@ import { isDemoMode } from "../../../src/server/demoMode";
 import { requireRole } from "../../../src/server/auth/require";
 import { getRepository } from "../../../src/data/getRepository";
 import { createServerSupabaseClient } from "../../../src/server/supabase/serverClient";
-import { listBidPackages, listVendors } from "../../../../../packages/02-app-shell/src/services/bidService";
+import { listBidPackages, listVendors, listOrgStaffProfiles } from "../../../../../packages/02-app-shell/src/services/bidService";
 import { resolveProjectAndSwitcherData } from "../../../src/server/project/resolveProjectAndSwitcherData";
 import { switchProject } from "../projects/switchAction";
-import { createBidPackage, publishBidPackage, inviteVendor, getBidPackageDetail, listBidQuestions, listBidAddenda } from "./actions";
+import {
+  createBidPackage,
+  publishBidPackage,
+  inviteVendor,
+  getBidPackageDetail,
+  listBidQuestions,
+  listBidAddenda,
+  updateBidPackageAssemblyDetails,
+  listBidPackageDocuments,
+} from "./actions";
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum, issueSubcontract, getLatestIssuedSubcontract } from "./submissionActions";
 
 /**
@@ -42,10 +51,11 @@ export default async function AdminBidsPage() {
     );
   }
 
-  const [bidPackages, costCodes, vendors] = await Promise.all([
+  const [bidPackages, costCodes, vendors, staffProfiles] = await Promise.all([
     listBidPackages(supabase, project.id),
     repo.getCostCodes(project.id),
     listVendors(supabase, user.orgId),
+    listOrgStaffProfiles(supabase, user.orgId),
   ]);
 
   return (
@@ -56,6 +66,7 @@ export default async function AdminBidsPage() {
         bidPackages={bidPackages}
         costCodes={costCodes}
         vendors={vendors}
+        staffProfiles={staffProfiles}
         createBidPackage={createBidPackage}
         publishBidPackage={publishBidPackage}
         inviteVendor={inviteVendor}
@@ -69,6 +80,8 @@ export default async function AdminBidsPage() {
         issueBidAddendum={issueBidAddendum}
         issueSubcontract={issueSubcontract}
         getLatestIssuedSubcontract={getLatestIssuedSubcontract}
+        updateBidPackageAssemblyDetails={updateBidPackageAssemblyDetails}
+        listBidPackageDocuments={listBidPackageDocuments}
       />
     </AdminChrome>
   );

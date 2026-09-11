@@ -50,12 +50,33 @@ import type {
   BidPackageDetail,
   BidSubmissionRow,
   VendorRow,
+  StaffProfileRow,
   BidQuestionRow,
   BidAddendumRow,
+  BidPackageDocumentRow,
+  BidPackageDocumentCategory,
 } from "../services/bidService";
 import type { IssuedDocumentRow } from "../services/documentIssuanceService";
-import { Card, PageHeader, Button, TextInput, Textarea, Select, FormField, StatusBadge, Alert, EmptyState } from "./ui";
+import { Card, PageHeader, Button, TextInput, Textarea, Select, Checkbox, FormField, StatusBadge, Alert, EmptyState } from "./ui";
 import type { BadgeTone } from "./ui";
+
+const DOCUMENT_CATEGORY_LABELS: Record<BidPackageDocumentCategory, string> = {
+  plans: "Plans",
+  specifications: "Specifications",
+  scope: "Scope documents",
+  photos: "Photos",
+  addenda: "Addenda",
+  reference: "Reference material",
+  other: "Other",
+};
+
+const DOCUMENT_CATEGORY_OPTIONS = Object.keys(DOCUMENT_CATEGORY_LABELS) as BidPackageDocumentCategory[];
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 type ActionResult = { error?: string } | void | undefined;
 
@@ -68,6 +89,9 @@ export interface BidPackageWorkspaceProps {
   bidPackages: BidPackageRow[];
   costCodes: CostCode[];
   vendors: VendorRow[];
+  /** P5.2 Phase B (Part B) — org staff, for the "Package Details"
+   *  section's Stone Column contact picker. */
+  staffProfiles: StaffProfileRow[];
   createBidPackage: (
     projectId: string,
     costCodeId: string,
@@ -93,6 +117,27 @@ export interface BidPackageWorkspaceProps {
   issueBidAddendum: (bidPackageId: string, title: string, bodyText: string, revisedDueAt?: string) => Promise<ActionResult>;
   issueSubcontract: (bidPackageId: string, documentNumber?: string) => Promise<{ issuedDocumentId?: string; error?: string }>;
   getLatestIssuedSubcontract: (bidPackageId: string) => Promise<{ document?: IssuedDocumentRow; error?: string }>;
+  /** P5.2 Phase B (Part B) — the "Package Details" section's Save
+   *  action. Every field is independently optional — omitting a key
+   *  leaves that column unchanged server-side. */
+  updateBidPackageAssemblyDetails: (
+    bidPackageId: string,
+    fields: Partial<{
+      inclusions: string;
+      exclusions: string;
+      alternates: string;
+      allowances: string;
+      pricingBreakdownInstructions: string;
+      scheduleExpectations: string;
+      bidInstructions: string;
+      stoneColumnContactId: string;
+    }>
+  ) => Promise<ActionResult>;
+  /** P5.2 Phase B (Part C) — the "Documents" section's list read.
+   *  Upload itself goes straight to the multipart Route Handler via
+   *  fetch(), matching P5.1's vendor-documents upload wiring — never a
+   *  Server Action for the file bytes themselves. */
+  listBidPackageDocuments: (bidPackageId: string) => Promise<{ documents?: BidPackageDocumentRow[]; error?: string }>;
 }
 
 const PACKAGE_STATUS_LABELS: Record<BidPackageRow["status"], string> = {
@@ -176,6 +221,7 @@ export function BidPackageWorkspace({
   bidPackages,
   costCodes,
   vendors,
+  staffProfiles,
   createBidPackage,
   publishBidPackage,
   inviteVendor,
@@ -189,6 +235,8 @@ export function BidPackageWorkspace({
   issueBidAddendum,
   issueSubcontract,
   getLatestIssuedSubcontract,
+  updateBidPackageAssemblyDetails,
+  listBidPackageDocuments,
 }: BidPackageWorkspaceProps) {
   const [packages, setPackages] = useState<BidPackageRow[]>(bidPackages);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -263,6 +311,31 @@ export function BidPackageWorkspace({
   const [issueSubcontractSubmitting, setIssueSubcontractSubmitting] = useState(false);
   const [issueSubcontractError, setIssueSubcontractError] = useState<string | null>(null);
 
+  // --- Package Details (P5.2 Phase B, Part B) ---
+  const [detailsDraft, setDetailsDraft] = useState({
+    inclusions: "",
+    exclusions: "",
+    alternates: "",
+    allowances: "",
+    pricingBreakdownInstructions: "",
+    scheduleExpectations: "",
+    bidInstructions: "",
+    stoneColumnContactId: "",
+  });
+  const [detailsSubmitting, setDetailsSubmitting] = useState(false);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [detailsSaved, setDetailsSaved] = useState(false);
+
+  // --- Documents (P5.2 Phase B, Part C) ---
+  const [documents, setDocuments] = useState<BidPackageDocumentRow[]>([]);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadCategory, setUploadCategory] = useState<BidPackageDocumentCategory>("reference");
+  const [uploadInternalOnly, setUploadInternalOnly] = useState(false);
+  const [uploadReplaces, setUploadReplaces] = useState("");
+  const [uploadSubmitting, setUploadSubmitting] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   const costCodesById = new Map(costCodes.map((cc) => [cc.id, cc]));
 
   // The single re-fetch every mutation below calls on success. Never
@@ -272,11 +345,12 @@ export function BidPackageWorkspace({
   // fresh detail response so status-badge changes (publish/award) show
   // up in the list without a separate listBidPackages round trip.
   async function loadDetail(id: string) {
-    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult] = await Promise.all([
+    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult, documentsResult] = await Promise.all([
       getBidPackageDetail(id),
       listBidQuestions(id),
       listBidAddenda(id),
       getLatestIssuedSubcontract(id),
+      listBidPackageDocuments(id),
     ]);
 
     if (detailResult.error || !detailResult.detail) {
@@ -288,16 +362,36 @@ export function BidPackageWorkspace({
       setAddendaError(null);
       setIssuedSubcontract(null);
       setIssuedSubcontractError(null);
+      setDocuments([]);
+      setDocumentsError(null);
       return;
     }
 
     setDetailError(null);
     setDetail(detailResult.detail);
+    setDetailsDraft({
+      inclusions: detailResult.detail.inclusions ?? "",
+      exclusions: detailResult.detail.exclusions ?? "",
+      alternates: detailResult.detail.alternates ?? "",
+      allowances: detailResult.detail.allowances ?? "",
+      pricingBreakdownInstructions: detailResult.detail.pricingBreakdownInstructions ?? "",
+      scheduleExpectations: detailResult.detail.scheduleExpectations ?? "",
+      bidInstructions: detailResult.detail.bidInstructions ?? "",
+      stoneColumnContactId: detailResult.detail.stoneColumnContactId ?? "",
+    });
     setPackages((prev) => {
       const row = toBidPackageRow(detailResult.detail!);
       const exists = prev.some((p) => p.id === id);
       return exists ? prev.map((p) => (p.id === id ? row : p)) : [row, ...prev];
     });
+
+    if (documentsResult.error) {
+      setDocumentsError(documentsResult.error);
+      setDocuments([]);
+    } else {
+      setDocumentsError(null);
+      setDocuments(documentsResult.documents ?? []);
+    }
 
     if (questionsResult.error) {
       setQuestionsError(questionsResult.error);
@@ -338,6 +432,11 @@ export function BidPackageWorkspace({
     setIssuedSubcontract(null);
     setIssuedSubcontractError(null);
     setIssueSubcontractError(null);
+    setDocuments([]);
+    setDocumentsError(null);
+    setUploadError(null);
+    setDetailsError(null);
+    setDetailsSaved(false);
     setDetailLoading(true);
     try {
       await loadDetail(id);
@@ -579,6 +678,55 @@ export function BidPackageWorkspace({
     }
   }
 
+  async function handleSaveDetails(e: React.FormEvent) {
+    e.preventDefault();
+    if (!detail) return;
+    setDetailsError(null);
+    setDetailsSaved(false);
+    setDetailsSubmitting(true);
+    try {
+      const result = await updateBidPackageAssemblyDetails(detail.id, { ...detailsDraft });
+      if (result && "error" in result && result.error) {
+        setDetailsError(result.error);
+        return;
+      }
+      setDetailsSaved(true);
+      await loadDetail(detail.id);
+    } finally {
+      setDetailsSubmitting(false);
+    }
+  }
+
+  async function handleUpload(e: React.FormEvent) {
+    e.preventDefault();
+    if (!detail) return;
+    if (!uploadFile) {
+      setUploadError("Choose a file to upload.");
+      return;
+    }
+    setUploadError(null);
+    setUploadSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("category", uploadCategory);
+      formData.append("internalOnly", uploadInternalOnly ? "true" : "false");
+      if (uploadReplaces) formData.append("replaces", uploadReplaces);
+      const response = await fetch(`/api/bid-packages/${detail.id}/documents`, { method: "POST", body: formData });
+      const body = await response.json();
+      if (!response.ok) {
+        setUploadError(body.error ?? "Upload failed.");
+        return;
+      }
+      setUploadFile(null);
+      setUploadReplaces("");
+      setUploadInternalOnly(false);
+      await loadDetail(detail.id);
+    } finally {
+      setUploadSubmitting(false);
+    }
+  }
+
   const availableVendors = detail ? vendors.filter((v) => !detail.submissions.some((s) => s.vendorId === v.id)) : vendors;
 
   return (
@@ -699,6 +847,184 @@ export function BidPackageWorkspace({
                   {publishError && <Alert tone="error">{publishError}</Alert>}
                 </div>
               )}
+
+              <section className="sc-bids-section">
+                <h4>Package details</h4>
+                <p className="sc-bids-muted">
+                  Shown to every invited vendor on their bid package view — leave a field blank to omit that section
+                  entirely rather than showing it empty.
+                </p>
+                <form onSubmit={handleSaveDetails} className="sc-bids-form">
+                  <FormField label="Inclusions" htmlFor="sc-bids-details-inclusions">
+                    <Textarea
+                      id="sc-bids-details-inclusions"
+                      rows={2}
+                      value={detailsDraft.inclusions}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, inclusions: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Exclusions" htmlFor="sc-bids-details-exclusions">
+                    <Textarea
+                      id="sc-bids-details-exclusions"
+                      rows={2}
+                      value={detailsDraft.exclusions}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, exclusions: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Alternates" htmlFor="sc-bids-details-alternates">
+                    <Textarea
+                      id="sc-bids-details-alternates"
+                      rows={2}
+                      value={detailsDraft.alternates}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, alternates: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Allowances" htmlFor="sc-bids-details-allowances">
+                    <Textarea
+                      id="sc-bids-details-allowances"
+                      rows={2}
+                      value={detailsDraft.allowances}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, allowances: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Pricing breakdown instructions" htmlFor="sc-bids-details-pricing">
+                    <Textarea
+                      id="sc-bids-details-pricing"
+                      rows={2}
+                      value={detailsDraft.pricingBreakdownInstructions}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, pricingBreakdownInstructions: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Schedule expectations" htmlFor="sc-bids-details-schedule">
+                    <Textarea
+                      id="sc-bids-details-schedule"
+                      rows={2}
+                      value={detailsDraft.scheduleExpectations}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, scheduleExpectations: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Bid instructions" htmlFor="sc-bids-details-instructions">
+                    <Textarea
+                      id="sc-bids-details-instructions"
+                      rows={2}
+                      value={detailsDraft.bidInstructions}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, bidInstructions: e.target.value }))}
+                    />
+                  </FormField>
+                  <FormField label="Stone Column contact" htmlFor="sc-bids-details-contact">
+                    <Select
+                      id="sc-bids-details-contact"
+                      value={detailsDraft.stoneColumnContactId}
+                      onChange={(e) => setDetailsDraft((prev) => ({ ...prev, stoneColumnContactId: e.target.value }))}
+                    >
+                      <option value="">— none designated —</option>
+                      {staffProfiles.map((sp) => (
+                        <option key={sp.id} value={sp.id}>
+                          {sp.fullName}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  <Button type="submit" variant="secondary" disabled={detailsSubmitting} loading={detailsSubmitting} loadingText="Saving…">
+                    Save Package Details
+                  </Button>
+                  {detailsSaved && !detailsError && <Alert tone="success">Saved.</Alert>}
+                  {detailsError && <Alert tone="error">{detailsError}</Alert>}
+                </form>
+              </section>
+
+              <section className="sc-bids-section">
+                <h4>Documents</h4>
+                {documentsError && <Alert tone="error">{documentsError}</Alert>}
+                {documents.length === 0 ? (
+                  <EmptyState title="No documents uploaded yet." />
+                ) : (
+                  <div className="sc-bids-table-scroll">
+                    <table className="sc-bids-table">
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: "left" }}>File</th>
+                          <th style={{ textAlign: "left" }}>Category</th>
+                          <th style={{ textAlign: "left" }}>Version</th>
+                          <th style={{ textAlign: "left" }}>Visibility</th>
+                          <th style={{ textAlign: "left" }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {documents.map((doc) => (
+                          <tr key={doc.id}>
+                            <td>
+                              {doc.fileName} <span className="sc-bids-muted">({formatBytes(doc.sizeBytes)})</span>
+                            </td>
+                            <td>{DOCUMENT_CATEGORY_LABELS[doc.category] ?? doc.category}</td>
+                            <td>v{doc.version}</td>
+                            <td>
+                              <StatusBadge label={doc.internalOnly ? "Internal only" : "Vendor-visible"} tone={doc.internalOnly ? "neutral" : "sage"} />
+                            </td>
+                            <td>
+                              <a
+                                href={`/api/bid-packages/${doc.bidPackageId}/documents/${doc.id}/download`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="sc-ui-btn sc-ui-btn-secondary sc-ui-btn-sm"
+                              >
+                                Download
+                              </a>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <form onSubmit={handleUpload} className="sc-bids-form">
+                  <h5>Upload a document</h5>
+                  <FormField label="File" htmlFor="sc-bids-doc-file">
+                    <input
+                      id="sc-bids-doc-file"
+                      type="file"
+                      onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                    />
+                  </FormField>
+                  <FormField label="Category" htmlFor="sc-bids-doc-category">
+                    <Select
+                      id="sc-bids-doc-category"
+                      value={uploadCategory}
+                      onChange={(e) => setUploadCategory(e.target.value as BidPackageDocumentCategory)}
+                    >
+                      {DOCUMENT_CATEGORY_OPTIONS.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {DOCUMENT_CATEGORY_LABELS[cat]}
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  <FormField label="Replaces (optional — links a new version)" htmlFor="sc-bids-doc-replaces">
+                    <Select
+                      id="sc-bids-doc-replaces"
+                      value={uploadReplaces}
+                      onChange={(e) => setUploadReplaces(e.target.value)}
+                    >
+                      <option value="">— new document —</option>
+                      {documents.map((doc) => (
+                        <option key={doc.id} value={doc.id}>
+                          {doc.fileName} (v{doc.version})
+                        </option>
+                      ))}
+                    </Select>
+                  </FormField>
+                  <Checkbox
+                    label="Internal only (never shown to vendors)"
+                    checked={uploadInternalOnly}
+                    onChange={(e) => setUploadInternalOnly(e.target.checked)}
+                  />
+                  <Button type="submit" variant="primary" disabled={uploadSubmitting} loading={uploadSubmitting} loadingText="Uploading…">
+                    Upload
+                  </Button>
+                  {uploadError && <Alert tone="error">{uploadError}</Alert>}
+                </form>
+              </section>
 
               <section className="sc-bids-section">
                 <h4>Vendors &amp; submissions</h4>

@@ -103,6 +103,15 @@ function makeFakeServer() {
     return {
       detail: {
         ...BASE_PACKAGE,
+        inclusions: null,
+        exclusions: null,
+        alternates: null,
+        allowances: null,
+        pricingBreakdownInstructions: null,
+        scheduleExpectations: null,
+        bidInstructions: null,
+        stoneColumnContactId: null,
+        stoneColumnContactName: null,
         submissions: [
           {
             id: "sub_1",
@@ -149,6 +158,12 @@ function makeFakeServer() {
   async function issueBidAddendum() {
     return {};
   }
+  async function updateBidPackageAssemblyDetails() {
+    return {};
+  }
+  async function listBidPackageDocuments() {
+    return { documents: [] };
+  }
 
   async function issueSubcontract(bidPackageId: string) {
     if (bidPackageId !== BASE_PACKAGE.id) return { error: "not found" };
@@ -190,6 +205,8 @@ function makeFakeServer() {
     issueBidAddendum,
     issueSubcontract,
     getLatestIssuedSubcontract,
+    updateBidPackageAssemblyDetails,
+    listBidPackageDocuments,
     getIssueCallCount: () => issueCallCount,
   };
 }
@@ -206,6 +223,7 @@ async function main() {
         bidPackages={[BASE_PACKAGE]}
         costCodes={COST_CODES}
         vendors={[]}
+        staffProfiles={[]}
         createBidPackage={server.createBidPackage}
         publishBidPackage={server.publishBidPackage}
         inviteVendor={server.inviteVendor}
@@ -219,6 +237,8 @@ async function main() {
         issueBidAddendum={server.issueBidAddendum}
         issueSubcontract={server.issueSubcontract}
         getLatestIssuedSubcontract={server.getLatestIssuedSubcontract}
+        updateBidPackageAssemblyDetails={server.updateBidPackageAssemblyDetails}
+        listBidPackageDocuments={server.listBidPackageDocuments}
       />
     );
   });
