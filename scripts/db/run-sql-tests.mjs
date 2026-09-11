@@ -40,6 +40,7 @@ const FILES = [
   "schema/020_vendor_directory.sql",
   "schema/021_vendor_directory_fixes.sql",
   "schema/022_vendor_bid_access_phase_a.sql",
+  "schema/023_vendor_bid_invitation_email_verification_fix.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",

@@ -400,12 +400,16 @@ select clear_test_user();
 -- Case (b): brand-new person accepting. Simulates the real flow: the
 -- app calls supabase.auth.signUp() first (here: a fresh auth.users row
 -- created directly, as the table owner, then set_test_user() makes it
--- the acting session), THEN calls accept_vendor_bid_invitation().
+-- the acting session), THEN calls accept_vendor_bid_invitation(). The
+-- auth.users email here MUST equal the invitation's own email
+-- ('newcontact@gammaroofing.example', inserted above) — schema/023
+-- verifies this real auth email against the invitation before creating
+-- the profile, exactly like a real signUp() call using that address.
 do $$
 declare
   v_new_person uuid := gen_random_uuid();
 begin
-  insert into auth.users (id) values (v_new_person);
+  insert into auth.users (id, email) values (v_new_person, 'newcontact@gammaroofing.example');
   insert into test_fixture_ids values ('p522_new_person', v_new_person);
 end $$;
 
@@ -647,6 +651,163 @@ begin
   perform assert_that(
     (select count(*) from audit_log where table_name = 'bid_vendor_access_invitations' and record_id = (select value from test_fixture_ids where key = 'p522_invitation_new_person')) > 0,
     'bid_vendor_access_invitations insert produced a readable audit_log row'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- =====================================================================
+-- SECTION 6 — schema/023 fix: accept_vendor_bid_invitation()'s
+-- brand-new-signup path (case (b)) must verify the calling session's
+-- REAL auth.users.email against the invitation's stored email, exactly
+-- like case (a) already verifies profiles.email. Before schema/023,
+-- this branch trusted v_invitation.email with zero verification that
+-- the caller's just-created Supabase Auth account actually owns it —
+-- a brand-new vendor_members-linked profile could be created for
+-- ANY email the caller chose at signUp() time. A fresh vendor company
+-- + bid package is used here so this section is fully self-contained
+-- and independent of gamma/delta/epsilon's own established state.
+-- =====================================================================
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+declare
+  v_vendor_zeta uuid;
+  v_bid_package_zeta uuid;
+  v_invitation_mismatch_id uuid;
+  v_token_mismatch text;
+  v_invitation_match_id uuid;
+  v_token_match text;
+begin
+  insert into vendors (org_id, name)
+  select org_id, 'Zeta Test Vendor' from profiles where id = (select value from test_fixture_ids where key = 'admin')
+  returning id into v_vendor_zeta;
+  insert into test_fixture_ids values ('p523_vendor_zeta', v_vendor_zeta);
+
+  insert into bid_packages (project_id, cost_code_id, title, status)
+  select value, (select value from test_fixture_ids where key = 'cost_code_a'), 'Zeta New-Signup Email Verification Package', 'published'
+  from test_fixture_ids where key = 'project_a'
+  returning id into v_bid_package_zeta;
+  insert into test_fixture_ids values ('p523_bid_package_zeta', v_bid_package_zeta);
+
+  insert into bid_submissions (bid_package_id, vendor_id)
+  values (v_bid_package_zeta, v_vendor_zeta);
+
+  -- Invitation email is deliberately mixed-case, to also exercise the
+  -- case-insensitive comparison on the ACCEPT side below.
+  insert into bid_vendor_access_invitations (org_id, bid_package_id, vendor_id, email)
+  values (
+    (select org_id from vendors where id = v_vendor_zeta),
+    v_bid_package_zeta,
+    v_vendor_zeta,
+    'Vendor@Example.com'
+  )
+  returning id, token into v_invitation_mismatch_id, v_token_mismatch;
+  insert into test_fixture_tokens values ('p523_invitation_mismatch_token', v_token_mismatch);
+  insert into test_fixture_ids values ('p523_invitation_mismatch_id', v_invitation_mismatch_id);
+
+  insert into bid_vendor_access_invitations (org_id, bid_package_id, vendor_id, email)
+  values (
+    (select org_id from vendors where id = v_vendor_zeta),
+    v_bid_package_zeta,
+    v_vendor_zeta,
+    'Vendor@Example.com'
+  )
+  returning id, token into v_invitation_match_id, v_token_match;
+  insert into test_fixture_tokens values ('p523_invitation_match_token', v_token_match);
+  insert into test_fixture_ids values ('p523_invitation_match_id', v_invitation_match_id);
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Simulates the real flow's FIRST step (supabase.auth.signUp()) with an
+-- email that does NOT match the invitation — an attacker who merely
+-- obtained the token/link, never the real invited email.
+do $$
+declare
+  v_mismatch_person uuid := gen_random_uuid();
+begin
+  insert into auth.users (id, email) values (v_mismatch_person, 'attacker@evil.example');
+  insert into test_fixture_ids values ('p523_mismatch_person', v_mismatch_person);
+end $$;
+
+select set_test_user((select value from test_fixture_ids where key = 'p523_mismatch_person'));
+set local role authenticated;
+
+select assert_raises(
+  format(
+    'select * from accept_vendor_bid_invitation(%L, %L)',
+    (select value from test_fixture_tokens where key = 'p523_invitation_mismatch_token'),
+    'Attacker Using Stolen Link'
+  ),
+  'schema/023 fix: a brand-new signup whose real auth email does NOT match the invitation''s email must be rejected'
+);
+
+reset role;
+select clear_test_user();
+
+select set_test_user((select value from test_fixture_ids where key = 'admin'));
+set local role authenticated;
+
+do $$
+begin
+  perform assert_that(
+    (select count(*) from profiles where id = (select value from test_fixture_ids where key = 'p523_mismatch_person')) = 0,
+    'schema/023 fix: the rejected mismatched-email signup created NO profile row'
+  );
+  perform assert_that(
+    (select accepted_at from bid_vendor_access_invitations where id = (select value from test_fixture_ids where key = 'p523_invitation_mismatch_id')) is null,
+    'schema/023 fix: the rejected attempt left the invitation itself un-accepted'
+  );
+end $$;
+
+reset role;
+select clear_test_user();
+
+-- Real signup with the CORRECT email, but a different CASE than the
+-- invitation's own stored email ('vendor@example.com' vs.
+-- 'Vendor@Example.com') — proves the comparison is genuinely
+-- case-insensitive, not merely an exact string match that happens to
+-- pass.
+do $$
+declare
+  v_match_person uuid := gen_random_uuid();
+begin
+  insert into auth.users (id, email) values (v_match_person, 'vendor@example.com');
+  insert into test_fixture_ids values ('p523_match_person', v_match_person);
+end $$;
+
+select set_test_user((select value from test_fixture_ids where key = 'p523_match_person'));
+set local role authenticated;
+
+do $$
+declare
+  v_result record;
+begin
+  select * into v_result from accept_vendor_bid_invitation(
+    (select value from test_fixture_tokens where key = 'p523_invitation_match_token'),
+    'Real Zeta Employee'
+  );
+
+  perform assert_that(
+    v_result.bid_package_id = (select value from test_fixture_ids where key = 'p523_bid_package_zeta'),
+    'schema/023 fix: a case-different but real email match succeeds and returns the correct bid_package_id'
+  );
+  perform assert_that(
+    (select role from profiles where id = (select value from test_fixture_ids where key = 'p523_match_person')) = 'vendor',
+    'schema/023 fix: the case-insensitive-matched signup creates a real vendor profile'
+  );
+  perform assert_that(
+    (select count(*) from vendor_members where vendor_id = (select value from test_fixture_ids where key = 'p523_vendor_zeta') and profile_id = (select value from test_fixture_ids where key = 'p523_match_person') and revoked_at is null) = 1,
+    'schema/023 fix: a real, active vendor_members row links the new profile to the invited vendor company'
+  );
+  perform assert_that(
+    (select count(*) from bid_packages where id = (select value from test_fixture_ids where key = 'p523_bid_package_zeta')) = 1,
+    'schema/023 fix: end-to-end proof — the newly accepted vendor session can now read its invited bid package via ordinary RLS'
   );
 end $$;
 
