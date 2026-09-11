@@ -352,9 +352,19 @@ export async function verifySenderMatchesVendor(supabase: SupabaseClient, vendor
   if (vendorError) throw vendorError;
   if (vendorRow?.email && vendorRow.email.toLowerCase() === normalized) return true;
 
+  // vendor_members carries TWO foreign keys into profiles (profile_id
+  // AND revoked_by) — an unqualified `profiles(email)` embed is
+  // genuinely ambiguous to PostgREST (it cannot infer which FK to
+  // follow) and throws at query time, not merely a style preference.
+  // Found live against the real hosted dev project during this
+  // feature's own verification (a sender-mismatch webhook case
+  // returned a 500 instead of a clean quarantine) — fixed here by
+  // naming the FK constraint explicitly, matching this codebase's own
+  // established "never rely on an ambiguous embed" convention
+  // (bidService.ts's askBidQuestion/listBidQuestions doc comment).
   const { data: memberRows, error: memberError } = await supabase
     .from("vendor_members")
-    .select("profiles(email)")
+    .select("profiles!vendor_members_profile_id_fkey(email)")
     .eq("vendor_id", vendorId)
     .is("revoked_at", null);
   if (memberError) throw memberError;
