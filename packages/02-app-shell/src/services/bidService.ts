@@ -98,6 +98,125 @@ export interface BidSubmissionRow {
   amountCents: number | null;
   notes: string | null;
   submittedAt: string | null;
+  /** P5.2 Phase C — the submission's full immutable revision history
+   *  (schema/026's bid_submission_revisions), oldest first. Empty for a
+   *  submission that was staff-recorded (recordBidSubmission) rather
+   *  than submitted by the vendor's own session — an honestly-empty
+   *  history, not a fetch failure, since a staff-recorded submission
+   *  never went through submit_bid_revision(). Populated by
+   *  getBidPackageDetail() below in one batched follow-up query, never
+   *  per-row (no N+1). */
+  revisions: BidSubmissionRevisionRow[];
+}
+
+/** P5.2 Phase C — one immutable, permanent row per vendor submit/revise
+ *  action (schema/026's bid_submission_revisions). Never mutated after
+ *  insert — see schema/026's own header comment for the full
+ *  versioning-pattern reasoning (bid_submissions itself keeps its
+ *  existing mutable-current-row shape; this is the real history,
+ *  living alongside it as a separate child table). */
+export interface BidSubmissionRevisionRow {
+  id: string;
+  bidSubmissionId: string;
+  revisionNumber: number;
+  amountCents: number;
+  notes: string | null;
+  submittedBy: string | null;
+  submittedAt: string;
+}
+
+function mapBidSubmissionRevision(row: any): BidSubmissionRevisionRow {
+  return {
+    id: row.id,
+    bidSubmissionId: row.bid_submission_id,
+    revisionNumber: row.revision_number,
+    amountCents: row.amount_cents,
+    notes: row.notes,
+    submittedBy: row.submitted_by,
+    submittedAt: row.submitted_at,
+  };
+}
+
+/** Reads bid_submission_revisions for a single submission, oldest
+ *  first. Relies entirely on RLS (bid_submission_revisions_staff_read/
+ *  vendor_read, schema/026) to decide what the calling session can ever
+ *  see — a staff session sees every revision for its own org's
+ *  packages, a vendor session sees only its OWN submission's revisions
+ *  (empty, never another vendor's, for anything else). Used directly by
+ *  the vendor-facing "my submission history" view and indirectly (via
+ *  getBidPackageDetail below) by the staff workspace. */
+export async function listBidSubmissionRevisions(supabase: SupabaseClient, bidSubmissionId: string): Promise<BidSubmissionRevisionRow[]> {
+  const { data, error } = await supabase
+    .from("bid_submission_revisions")
+    .select("*")
+    .eq("bid_submission_id", bidSubmissionId)
+    .order("revision_number", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(mapBidSubmissionRevision);
+}
+
+/** P5.2 Phase C — the one real vendor-facing write for a bid amount.
+ *  Wraps submit_bid_revision() (schema/026): inserts a new, permanent
+ *  bid_submission_revisions row AND updates bid_submissions' current
+ *  amount_cents/notes/status/submitted_at, atomically, in one RPC call.
+ *  amountCents MUST be a whole number of cents (CLAUDE.md's own
+ *  non-negotiable) — validated here for a fast, friendly error, and
+ *  independently re-validated inside the RPC itself (the real
+ *  boundary, not this check). All the "is this even allowed" business
+ *  rules (own submission only, package still accepting bids, submission
+ *  not already closed out) are enforced by schema/026's triggers, not
+ *  re-implemented here — see that migration's own doc comments for why
+ *  that's the single source of truth. */
+export async function submitVendorBid(
+  supabase: SupabaseClient,
+  bidSubmissionId: string,
+  amountCents: number,
+  notes?: string
+): Promise<{ revisionId?: string; error?: string }> {
+  if (!Number.isInteger(amountCents) || amountCents < 0) {
+    return { error: "Bid amount must be a whole number of cents, zero or greater." };
+  }
+  const { data, error } = await supabase.rpc("submit_bid_revision", {
+    p_bid_submission_id: bidSubmissionId,
+    p_amount_cents: amountCents,
+    p_notes: notes ?? null,
+  });
+  if (error) return { error: error.message };
+  return { revisionId: data as string };
+}
+
+/** P5.2 Phase C — the vendor-facing "which of my own bid_submissions
+ *  rows exists for this package" read, backing the /vendor/bids/[id]
+ *  submission form. Relies entirely on bid_submissions_vendor_read
+ *  (schema/015 — `is_vendor_member(vendor_id)`) to scope this to the
+ *  calling vendor session's own row(s) only: a vendor never invited to
+ *  this package gets an empty array back here, not an error. Returns at
+ *  most one row for the ordinary case (one vendor company per package);
+ *  if the calling profile is somehow a member of more than one vendor
+ *  company invited to the SAME package (not a case this codebase's
+ *  invite flow ever produces today), the first row is used — an
+ *  explicit, documented judgment call, not a silent one. */
+export async function getVendorOwnBidSubmission(supabase: SupabaseClient, bidPackageId: string): Promise<BidSubmissionRow | null> {
+  const { data, error } = await supabase
+    .from("bid_submissions")
+    .select("id, bid_package_id, vendor_id, status, amount_cents, notes, submitted_at, vendors(name)")
+    .eq("bid_package_id", bidPackageId)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as any;
+  return {
+    id: row.id,
+    bidPackageId: row.bid_package_id,
+    vendorId: row.vendor_id,
+    vendorName: row.vendors?.name ?? "Unknown vendor",
+    status: row.status,
+    amountCents: row.amount_cents,
+    notes: row.notes,
+    submittedAt: row.submitted_at,
+    revisions: [],
+  };
 }
 
 export interface BidPackageDetail extends BidPackageRow, BidPackageAssemblyFields {
@@ -164,6 +283,29 @@ export async function getBidPackageDetail(supabase: SupabaseClient, bidPackageId
     .eq("bid_package_id", bidPackageId);
   if (subError) throw subError;
 
+  // P5.2 Phase C: one batched follow-up query for every submission's
+  // full revision history — never N+1 (one query per submission row).
+  // Grouped in JS by bid_submission_id; a submission with zero
+  // vendor-authored revisions (e.g. staff-recorded via
+  // recordBidSubmission, which never calls submit_bid_revision())
+  // simply gets an empty array, not a fetch failure.
+  const submissionIds = (subRows ?? []).map((row: any) => row.id as string);
+  const revisionsBySubmissionId = new Map<string, BidSubmissionRevisionRow[]>();
+  if (submissionIds.length > 0) {
+    const { data: revisionRows, error: revisionError } = await supabase
+      .from("bid_submission_revisions")
+      .select("*")
+      .in("bid_submission_id", submissionIds)
+      .order("revision_number", { ascending: true });
+    if (revisionError) throw revisionError;
+    for (const row of revisionRows ?? []) {
+      const mapped = mapBidSubmissionRevision(row);
+      const existing = revisionsBySubmissionId.get(mapped.bidSubmissionId) ?? [];
+      existing.push(mapped);
+      revisionsBySubmissionId.set(mapped.bidSubmissionId, existing);
+    }
+  }
+
   let stoneColumnContactName: string | null = null;
   if (pkgRow.stone_column_contact_id) {
     const { data: contactRow, error: contactError } = await supabase
@@ -188,6 +330,7 @@ export async function getBidPackageDetail(supabase: SupabaseClient, bidPackageId
       amountCents: row.amount_cents,
       notes: row.notes,
       submittedAt: row.submitted_at,
+      revisions: revisionsBySubmissionId.get(row.id) ?? [],
     })),
   };
 }
@@ -401,6 +544,34 @@ export async function listBidQuestions(supabase: SupabaseClient, bidPackageId: s
     answerText: row.answer_text,
     answeredAt: row.answered_at,
   }));
+}
+
+/** P5.2 Phase C — wires the previously-dormant bid_questions_vendor_
+ *  insert policy (schema/015, tightened by schema/026) for real use.
+ *  Two columns deliberately override their own DB defaults, both
+ *  required by schema/026's WITH CHECK / the pre-existing
+ *  bid_questions_recorded_by_self trigger:
+ *  - recorded_by's column default is `auth.uid()` UNCONDITIONALLY (it
+ *    predates the vendor-submitted case) — explicitly nulling it here
+ *    is what keeps a vendor-submitted row from tripping "recorded_by
+ *    must be null for vendor_submitted rows."
+ *  - visible_to_all_vendors defaults to true — explicitly forcing
+ *    false here is what schema/026's WITH CHECK now requires: a
+ *    vendor's own question is private (visible only to that vendor and
+ *    staff) until a staff member deliberately broadens it, never
+ *    auto-broadcast to competing vendors. */
+export async function askVendorBidQuestion(supabase: SupabaseClient, bidPackageId: string, vendorId: string, questionText: string) {
+  if (!questionText.trim()) return { error: "Question text is required." };
+  const { error } = await supabase.from("bid_questions").insert({
+    bid_package_id: bidPackageId,
+    vendor_id: vendorId,
+    source: "vendor_submitted",
+    recorded_by: null,
+    question_text: questionText.trim(),
+    visible_to_all_vendors: false,
+  });
+  if (error) return { error: error.message };
+  return {};
 }
 
 export async function issueBidAddendum(supabase: SupabaseClient, bidPackageId: string, title: string, bodyText: string, revisedDueAt?: string) {
@@ -734,4 +905,108 @@ export async function uploadBidPackageDocument(
   if (linkError) return { error: linkError.message };
 
   return { id: newLink.id as string };
+}
+
+// ---------------------------------------------------------------------
+// P5.2 Phase C — addendum acknowledgment tracking (schema/026's new
+// bid_addendum_acknowledgments). Both list functions resolve the
+// package's own addendum ids FIRST (via the already-proven
+// listBidAddenda/listVendorVisibleBidAddenda) and query
+// bid_addendum_acknowledgments with `.in(...)` against that — never a
+// PostgREST embed through bid_addenda, matching this file's own
+// established "separate query per relationship, never an ambiguous
+// embed" convention (see listBidQuestions' own doc comment). RLS
+// (bid_addendum_acknowledgments_staff_read/vendor_read, schema/026)
+// does the actual isolation work in every case below; these are typed,
+// honest reads on top of it.
+// ---------------------------------------------------------------------
+
+export interface BidAddendumAcknowledgmentRow {
+  id: string;
+  bidAddendumId: string;
+  vendorId: string;
+  vendorName: string;
+  acknowledgedBy: string | null;
+  acknowledgedAt: string;
+}
+
+function mapBidAddendumAcknowledgment(row: any): BidAddendumAcknowledgmentRow {
+  return {
+    id: row.id,
+    bidAddendumId: row.bid_addendum_id,
+    vendorId: row.vendor_id,
+    vendorName: row.vendors?.name ?? "Unknown vendor",
+    acknowledgedBy: row.acknowledged_by,
+    acknowledgedAt: row.acknowledged_at,
+  };
+}
+
+/** A vendor may insert/read only their OWN acknowledgment rows
+ *  (schema/026's bid_addendum_acknowledgments_vendor_insert/vendor_read,
+ *  both gated through is_vendor_member() and, for insert, a real EXISTS
+ *  against bid_submissions proving this vendor is actually invited to
+ *  the package the addendum belongs to) — never on behalf of another
+ *  vendor, never for a package this vendor isn't invited to. Acking the
+ *  same addendum twice is rejected by a real unique constraint, not
+ *  merely a UI affordance; the vendor-facing screen is expected to
+ *  check getVendorBidAddendumAcknowledgments() first and only show the
+ *  "Acknowledge" action for addenda not yet acknowledged. */
+export async function acknowledgeBidAddendum(supabase: SupabaseClient, bidAddendumId: string, vendorId: string) {
+  const { error } = await supabase.from("bid_addendum_acknowledgments").insert({ bid_addendum_id: bidAddendumId, vendor_id: vendorId });
+  if (error) return { error: error.message };
+  return {};
+}
+
+/** Staff-side — every invited vendor's acknowledgment status for every
+ *  addendum on this package (bid_addendum_acknowledgments_staff_read,
+ *  schema/026 — financial-staff-only, matching this domain's own
+ *  already-corrected pricing/correspondence tables). Deliberately
+ *  returns only rows that EXIST (a vendor who hasn't acknowledged yet
+ *  simply has no row) — the caller (BidPackageWorkspace) cross-
+ *  references this against the invited-vendor list to render "not yet
+ *  acknowledged" for whoever's missing, rather than this function
+ *  inventing placeholder rows for something that hasn't happened. */
+export async function listBidAddendumAcknowledgments(supabase: SupabaseClient, bidPackageId: string): Promise<BidAddendumAcknowledgmentRow[]> {
+  const addenda = await listBidAddenda(supabase, bidPackageId);
+  if (addenda.length === 0) return [];
+  const { data, error } = await supabase
+    .from("bid_addendum_acknowledgments")
+    .select("id, bid_addendum_id, vendor_id, acknowledged_by, acknowledged_at, vendors(name)")
+    .in(
+      "bid_addendum_id",
+      addenda.map((a) => a.id)
+    )
+    .order("acknowledged_at", { ascending: true });
+  if (error) throw error;
+  return (data ?? []).map(mapBidAddendumAcknowledgment);
+}
+
+/** Vendor-side — this vendor's OWN acknowledgment status across every
+ *  addendum on the package it's viewing, backing the "Acknowledge" /
+ *  "Acknowledged on <date>" toggle per addendum on
+ *  /vendor/bids/[bidPackageId]. RLS scopes the query to this vendor's
+ *  own rows regardless of which vendor_id values happen to be present
+ *  among the package's addenda (there is only ever one vendor session's
+ *  worth of rows a vendor can read at all), so no explicit vendorId
+ *  filter is needed here — matching listVendorVisibleBidQuestions'/
+ *  listVendorVisibleBidAddenda's own "RLS is the only real gate" shape. */
+export async function getVendorBidAddendumAcknowledgments(supabase: SupabaseClient, bidPackageId: string): Promise<BidAddendumAcknowledgmentRow[]> {
+  const addenda = await listVendorVisibleBidAddenda(supabase, bidPackageId);
+  if (addenda.length === 0) return [];
+  const { data, error } = await supabase
+    .from("bid_addendum_acknowledgments")
+    .select("id, bid_addendum_id, vendor_id, acknowledged_by, acknowledged_at")
+    .in(
+      "bid_addendum_id",
+      addenda.map((a) => a.id)
+    );
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    bidAddendumId: row.bid_addendum_id,
+    vendorId: row.vendor_id,
+    vendorName: "",
+    acknowledgedBy: row.acknowledged_by,
+    acknowledgedAt: row.acknowledged_at,
+  }));
 }
