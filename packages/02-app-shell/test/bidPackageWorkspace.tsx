@@ -122,6 +122,7 @@ function makeFakeServer() {
             amountCents: 500000,
             notes: null,
             submittedAt: "2026-01-05T00:00:00Z",
+            revisions: [],
           },
         ],
       },
@@ -163,6 +164,9 @@ function makeFakeServer() {
   }
   async function listBidPackageDocuments() {
     return { documents: [] };
+  }
+  async function listBidAddendumAcknowledgments() {
+    return { acknowledgments: [] };
   }
 
   async function issueSubcontract(bidPackageId: string) {
@@ -207,6 +211,7 @@ function makeFakeServer() {
     getLatestIssuedSubcontract,
     updateBidPackageAssemblyDetails,
     listBidPackageDocuments,
+    listBidAddendumAcknowledgments,
     getIssueCallCount: () => issueCallCount,
   };
 }
@@ -239,6 +244,7 @@ async function main() {
         getLatestIssuedSubcontract={server.getLatestIssuedSubcontract}
         updateBidPackageAssemblyDetails={server.updateBidPackageAssemblyDetails}
         listBidPackageDocuments={server.listBidPackageDocuments}
+        listBidAddendumAcknowledgments={server.listBidAddendumAcknowledgments}
       />
     );
   });

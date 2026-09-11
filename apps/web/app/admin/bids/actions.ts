@@ -14,10 +14,14 @@ import {
   listBidAddenda as listBidAddendaService,
   updateBidPackageAssemblyDetails as updateBidPackageAssemblyDetailsService,
   listBidPackageDocuments as listBidPackageDocumentsService,
+  listBidSubmissionRevisions as listBidSubmissionRevisionsService,
+  listBidAddendumAcknowledgments as listBidAddendumAcknowledgmentsService,
   type BidPackageDetail,
   type BidQuestionRow,
   type BidAddendumRow,
   type BidPackageDocumentRow,
+  type BidSubmissionRevisionRow,
+  type BidAddendumAcknowledgmentRow,
 } from "../../../../../packages/02-app-shell/src/services/bidService";
 
 /**
@@ -125,5 +129,32 @@ export async function listBidPackageDocuments(bidPackageId: string): Promise<{ d
     return { documents };
   } catch (err) {
     return { error: err instanceof Error ? err.message : "Failed to load bid package documents." };
+  }
+}
+
+// P5.2 Phase C — staff-side reads. getBidPackageDetail (above) already
+// includes each submission's full revision history inline
+// (BidSubmissionRow.revisions), so listBidSubmissionRevisions is not
+// wired into BidPackageWorkspace's own re-fetch cycle today; exported
+// here anyway so the capability is typechecked/testable on its own,
+// matching this file's own established precedent (revokeVendorMember/
+// reactivateVendorMember above).
+export async function listBidSubmissionRevisions(bidSubmissionId: string): Promise<{ revisions?: BidSubmissionRevisionRow[]; error?: string }> {
+  const supabase = await createServerSupabaseClient();
+  try {
+    const revisions = await listBidSubmissionRevisionsService(supabase, bidSubmissionId);
+    return { revisions };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to load bid submission revisions." };
+  }
+}
+
+export async function listBidAddendumAcknowledgments(bidPackageId: string): Promise<{ acknowledgments?: BidAddendumAcknowledgmentRow[]; error?: string }> {
+  const supabase = await createServerSupabaseClient();
+  try {
+    const acknowledgments = await listBidAddendumAcknowledgmentsService(supabase, bidPackageId);
+    return { acknowledgments };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to load addendum acknowledgments." };
   }
 }

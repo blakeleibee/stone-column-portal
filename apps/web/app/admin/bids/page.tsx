@@ -17,6 +17,7 @@ import {
   listBidAddenda,
   updateBidPackageAssemblyDetails,
   listBidPackageDocuments,
+  listBidAddendumAcknowledgments,
 } from "./actions";
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum, issueSubcontract, getLatestIssuedSubcontract } from "./submissionActions";
 
@@ -82,6 +83,7 @@ export default async function AdminBidsPage() {
         getLatestIssuedSubcontract={getLatestIssuedSubcontract}
         updateBidPackageAssemblyDetails={updateBidPackageAssemblyDetails}
         listBidPackageDocuments={listBidPackageDocuments}
+        listBidAddendumAcknowledgments={listBidAddendumAcknowledgments}
       />
     </AdminChrome>
   );

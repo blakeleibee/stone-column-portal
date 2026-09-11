@@ -55,6 +55,7 @@ import type {
   BidAddendumRow,
   BidPackageDocumentRow,
   BidPackageDocumentCategory,
+  BidAddendumAcknowledgmentRow,
 } from "../services/bidService";
 import type { IssuedDocumentRow } from "../services/documentIssuanceService";
 import { Card, PageHeader, Button, TextInput, Textarea, Select, Checkbox, FormField, StatusBadge, Alert, EmptyState } from "./ui";
@@ -138,6 +139,14 @@ export interface BidPackageWorkspaceProps {
    *  fetch(), matching P5.1's vendor-documents upload wiring — never a
    *  Server Action for the file bytes themselves. */
   listBidPackageDocuments: (bidPackageId: string) => Promise<{ documents?: BidPackageDocumentRow[]; error?: string }>;
+  /** P5.2 Phase C — which invited vendors have acknowledged which
+   *  addenda. Submission-level revision history does NOT need its own
+   *  prop here: getBidPackageDetail already embeds each submission's
+   *  full revisions array (BidSubmissionRow.revisions) in one batched
+   *  query, so the "Vendors & submissions" table below reads it
+   *  directly off `detail`, refreshed by the same loadDetail() call as
+   *  everything else. */
+  listBidAddendumAcknowledgments: (bidPackageId: string) => Promise<{ acknowledgments?: BidAddendumAcknowledgmentRow[]; error?: string }>;
 }
 
 const PACKAGE_STATUS_LABELS: Record<BidPackageRow["status"], string> = {
@@ -237,6 +246,7 @@ export function BidPackageWorkspace({
   getLatestIssuedSubcontract,
   updateBidPackageAssemblyDetails,
   listBidPackageDocuments,
+  listBidAddendumAcknowledgments,
 }: BidPackageWorkspaceProps) {
   const [packages, setPackages] = useState<BidPackageRow[]>(bidPackages);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -250,6 +260,13 @@ export function BidPackageWorkspace({
 
   const [addenda, setAddenda] = useState<BidAddendumRow[]>([]);
   const [addendaError, setAddendaError] = useState<string | null>(null);
+
+  // --- Addendum acknowledgments (P5.2 Phase C) ---
+  const [acknowledgments, setAcknowledgments] = useState<BidAddendumAcknowledgmentRow[]>([]);
+  const [acknowledgmentsError, setAcknowledgmentsError] = useState<string | null>(null);
+
+  // --- Submission history expand/collapse, per submission id (P5.2 Phase C) ---
+  const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
 
   // --- Create package form ---
   const [createTitle, setCreateTitle] = useState("");
@@ -345,12 +362,13 @@ export function BidPackageWorkspace({
   // fresh detail response so status-badge changes (publish/award) show
   // up in the list without a separate listBidPackages round trip.
   async function loadDetail(id: string) {
-    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult, documentsResult] = await Promise.all([
+    const [detailResult, questionsResult, addendaResult, issuedSubcontractResult, documentsResult, acknowledgmentsResult] = await Promise.all([
       getBidPackageDetail(id),
       listBidQuestions(id),
       listBidAddenda(id),
       getLatestIssuedSubcontract(id),
       listBidPackageDocuments(id),
+      listBidAddendumAcknowledgments(id),
     ]);
 
     if (detailResult.error || !detailResult.detail) {
@@ -364,6 +382,8 @@ export function BidPackageWorkspace({
       setIssuedSubcontractError(null);
       setDocuments([]);
       setDocumentsError(null);
+      setAcknowledgments([]);
+      setAcknowledgmentsError(null);
       return;
     }
 
@@ -418,6 +438,14 @@ export function BidPackageWorkspace({
       setIssuedSubcontractError(null);
       setIssuedSubcontract(issuedSubcontractResult.document ?? null);
     }
+
+    if (acknowledgmentsResult.error) {
+      setAcknowledgmentsError(acknowledgmentsResult.error);
+      setAcknowledgments([]);
+    } else {
+      setAcknowledgmentsError(null);
+      setAcknowledgments(acknowledgmentsResult.acknowledgments ?? []);
+    }
   }
 
   async function handleSelectPackage(id: string) {
@@ -435,6 +463,9 @@ export function BidPackageWorkspace({
     setDocuments([]);
     setDocumentsError(null);
     setUploadError(null);
+    setAcknowledgments([]);
+    setAcknowledgmentsError(null);
+    setHistoryOpenId(null);
     setDetailsError(null);
     setDetailsSaved(false);
     setDetailLoading(true);
@@ -1074,6 +1105,7 @@ export function BidPackageWorkspace({
                         <th style={{ textAlign: "left" }}>Vendor</th>
                         <th style={{ textAlign: "left" }}>Status</th>
                         <th style={{ textAlign: "right" }}>Amount</th>
+                        <th style={{ textAlign: "left" }}>History</th>
                         <th style={{ textAlign: "left" }}>Actions</th>
                       </tr>
                     </thead>
@@ -1085,6 +1117,37 @@ export function BidPackageWorkspace({
                             <SubmissionStatusBadge status={sub.status} />
                           </td>
                           <td style={{ textAlign: "right" }}>{sub.amountCents != null ? formatCents(sub.amountCents) : "—"}</td>
+                          <td>
+                            {/* P5.2 Phase C: the full immutable revision
+                                history for THIS vendor's submission —
+                                every submit/revise, not just the latest
+                                amount already shown above. Empty for a
+                                staff-recorded submission (recordBidSubmission
+                                never calls submit_bid_revision()), rendered
+                                as an honest "no vendor-submitted revisions
+                                yet" rather than a hidden control. */}
+                            {sub.revisions.length === 0 ? (
+                              <span className="sc-bids-muted">No revisions</span>
+                            ) : (
+                              <>
+                                <Button variant="secondary" size="sm" onClick={() => setHistoryOpenId(historyOpenId === sub.id ? null : sub.id)}>
+                                  {historyOpenId === sub.id ? "Hide" : `View (${sub.revisions.length})`}
+                                </Button>
+                                {historyOpenId === sub.id && (
+                                  <ul className="sc-bids-revision-list">
+                                    {[...sub.revisions]
+                                      .sort((a, b) => b.revisionNumber - a.revisionNumber)
+                                      .map((rev) => (
+                                        <li key={rev.id}>
+                                          <strong>v{rev.revisionNumber}</strong> {formatCents(rev.amountCents)} — {formatDateTime(rev.submittedAt)}
+                                          {rev.notes && <div className="sc-bids-muted">{rev.notes}</div>}
+                                        </li>
+                                      ))}
+                                  </ul>
+                                )}
+                              </>
+                            )}
+                          </td>
                           <td>
                             {sub.status === "invited" && (
                               <div className="sc-bids-inline-form">
@@ -1288,19 +1351,43 @@ export function BidPackageWorkspace({
               <section className="sc-bids-section">
                 <h4>Addenda</h4>
                 {addendaError && <Alert tone="error">{addendaError}</Alert>}
+                {acknowledgmentsError && <Alert tone="error">{acknowledgmentsError}</Alert>}
                 {addenda.length === 0 ? (
                   <EmptyState title="No addenda issued yet." />
                 ) : (
                   <ul className="sc-bids-addenda-list">
-                    {addenda.map((a) => (
-                      <li key={a.id}>
-                        <p className="sc-bids-addendum-title">
-                          <strong>{a.title}</strong> — {formatDateTime(a.issuedAt)}
-                        </p>
-                        <p>{a.bodyText}</p>
-                        {a.revisedDueAt && <p className="sc-bids-meta">Revised due date: {formatDate(a.revisedDueAt)}</p>}
-                      </li>
-                    ))}
+                    {addenda.map((a) => {
+                      // P5.2 Phase C: a simple acknowledged/not-yet-
+                      // acknowledged list per addendum, cross-referenced
+                      // against every currently-invited vendor — no
+                      // elaborate UI needed per this phase's own scope.
+                      const ackedVendorIds = new Set(acknowledgments.filter((ack) => ack.bidAddendumId === a.id).map((ack) => ack.vendorId));
+                      const ackedByAndWhen = acknowledgments.filter((ack) => ack.bidAddendumId === a.id);
+                      const notYetAcked = detail.submissions.filter((sub) => !ackedVendorIds.has(sub.vendorId));
+                      return (
+                        <li key={a.id}>
+                          <p className="sc-bids-addendum-title">
+                            <strong>{a.title}</strong> — {formatDateTime(a.issuedAt)}
+                          </p>
+                          <p>{a.bodyText}</p>
+                          {a.revisedDueAt && <p className="sc-bids-meta">Revised due date: {formatDate(a.revisedDueAt)}</p>}
+                          {detail.submissions.length > 0 && (
+                            <p className="sc-bids-meta">
+                              Acknowledged:{" "}
+                              {ackedByAndWhen.length === 0
+                                ? "no one yet"
+                                : ackedByAndWhen
+                                    .map((ack) => {
+                                      const vendorName = detail.submissions.find((sub) => sub.vendorId === ack.vendorId)?.vendorName ?? "Unknown vendor";
+                                      return `${vendorName} (${formatDateTime(ack.acknowledgedAt)})`;
+                                    })
+                                    .join(", ")}
+                              {notYetAcked.length > 0 && <> — not yet: {notYetAcked.map((sub) => sub.vendorName).join(", ")}</>}
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
 
@@ -1382,6 +1469,8 @@ const workspaceStyles = `
 .sc-bids-qa-answer { margin: 6px 0 0 0; font-size: ${typography.sizeSm}; }
 .sc-bids-addenda-list li { border: 1px solid ${colors.line}; border-radius: ${radius.md}; padding: ${spacing.sm}; }
 .sc-bids-addendum-title { margin: 0 0 4px 0; }
+.sc-bids-revision-list { list-style: none; padding: 0; margin: ${spacing.xs} 0 0 0; display: flex; flex-direction: column; gap: 4px; font-size: ${typography.sizeXs}; }
+.sc-bids-revision-list li { border: 1px solid ${colors.line}; border-radius: ${radius.sm}; padding: 4px 6px; }
 
 .sc-bids-table-scroll { overflow-x: auto; }
 
