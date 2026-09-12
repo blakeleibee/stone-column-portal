@@ -10,6 +10,7 @@ import {
   inviteVendor as inviteVendorService,
   revokeVendorMember as revokeVendorMemberService,
   reactivateVendorMember as reactivateVendorMemberService,
+  listVendorMembersForVendor as listVendorMembersForVendorService,
   getBidPackageDetail as getBidPackageDetailService,
   listBidQuestions as listBidQuestionsService,
   listBidAddenda as listBidAddendaService,
@@ -23,6 +24,7 @@ import {
   type BidPackageDocumentRow,
   type BidSubmissionRevisionRow,
   type BidAddendumAcknowledgmentRow,
+  type VendorMemberRow,
 } from "../../../../../packages/02-app-shell/src/services/bidService";
 import {
   listEntityMessages as listEntityMessagesService,
@@ -79,9 +81,17 @@ export async function inviteVendor(bidPackageId: string, vendorId: string) {
   return inviteVendorService(supabase, bidPackageId, vendorId, baseUrl);
 }
 
-// No screen in P5 calls these two yet (P5-DESIGN.md's own exclusion
-// note) — exported now so the capability is typechecked and testable,
-// not dead code waiting to be written from scratch later.
+// P5-DESIGN.md originally excluded a screen for these two from P5 scope
+// (exported there only so the capability was typechecked/testable, not
+// dead code waiting to be written from scratch). Final-review addition
+// for P5.2: BidPackageWorkspace's "Vendor Access" panel now calls all
+// three of these — the owner's own requested walkthrough step
+// ("revoke/reactivate access") needs a real button, not just the
+// live-checkpoint scripts that proved the underlying service functions
+// correct. No new authorization logic here: RLS's
+// vendor_members_staff_full_access policy (schema/015) already scopes
+// every one of these three to org staff only, exactly like
+// createBidPackage/publishBidPackage/inviteVendor above.
 export async function revokeVendorMember(vendorId: string, profileId: string) {
   const supabase = await createServerSupabaseClient();
   return revokeVendorMemberService(supabase, vendorId, profileId);
@@ -90,6 +100,16 @@ export async function revokeVendorMember(vendorId: string, profileId: string) {
 export async function reactivateVendorMember(vendorId: string, profileId: string) {
   const supabase = await createServerSupabaseClient();
   return reactivateVendorMemberService(supabase, vendorId, profileId);
+}
+
+export async function listVendorMembers(vendorId: string): Promise<{ members?: VendorMemberRow[]; error?: string }> {
+  const supabase = await createServerSupabaseClient();
+  try {
+    const members = await listVendorMembersForVendorService(supabase, vendorId);
+    return { members };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Failed to load vendor access." };
+  }
 }
 
 // Read-only Server Actions for BidPackageWorkspace's detail-pane fetch

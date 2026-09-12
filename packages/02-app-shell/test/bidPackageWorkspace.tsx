@@ -250,6 +250,9 @@ async function main() {
         listQuarantinedMessages={async () => ({ messages: [] })}
         discardQuarantinedMessage={async () => ({})}
         promoteQuarantinedMessage={async () => ({ error: "not exercised in this test" })}
+        listVendorMembers={async () => ({ members: [] })}
+        revokeVendorMember={async () => ({ error: "not exercised in this test" })}
+        reactivateVendorMember={async () => ({ error: "not exercised in this test" })}
       />
     );
   });

@@ -56,6 +56,7 @@ import type {
   BidPackageDocumentRow,
   BidPackageDocumentCategory,
   BidAddendumAcknowledgmentRow,
+  VendorMemberRow,
 } from "../services/bidService";
 import type { IssuedDocumentRow } from "../services/documentIssuanceService";
 import type { EntityMessageRow, QuarantinedInboundMessageRow } from "../services/correspondenceService";
@@ -176,6 +177,20 @@ export interface BidPackageWorkspaceProps {
   listQuarantinedMessages: (bidPackageId: string) => Promise<{ messages?: QuarantinedInboundMessageRow[]; error?: string }>;
   discardQuarantinedMessage: (id: string) => Promise<{ error?: string }>;
   promoteQuarantinedMessage: (id: string) => Promise<{ messageId?: string; error?: string }>;
+  /** Final-review addition (post-Phase-E): the "Vendor Access" panel on
+   *  each invited-vendor row. revokeVendorMember/reactivateVendorMember
+   *  were already built, RLS-gated (vendor_members_staff_full_access,
+   *  schema/015), and live-checkpoint-tested in Phase A/E — this wires
+   *  them to a real button so a staff person (and the owner, during
+   *  their walkthrough) can revoke or restore a vendor's portal access
+   *  without touching the database directly. Membership here is
+   *  per-person-per-vendor-company (vendor_members), not scoped to a
+   *  single bid package — revoking a member ends that person's access
+   *  to EVERY bid package for that vendor company, which matches
+   *  is_vendor_member()'s own scope everywhere else in this codebase. */
+  listVendorMembers: (vendorId: string) => Promise<{ members?: VendorMemberRow[]; error?: string }>;
+  revokeVendorMember: (vendorId: string, profileId: string) => Promise<{ error?: string }>;
+  reactivateVendorMember: (vendorId: string, profileId: string) => Promise<{ error?: string }>;
 }
 
 const PACKAGE_STATUS_LABELS: Record<BidPackageRow["status"], string> = {
@@ -281,6 +296,9 @@ export function BidPackageWorkspace({
   listQuarantinedMessages,
   discardQuarantinedMessage,
   promoteQuarantinedMessage,
+  listVendorMembers,
+  revokeVendorMember,
+  reactivateVendorMember,
 }: BidPackageWorkspaceProps) {
   const [packages, setPackages] = useState<BidPackageRow[]>(bidPackages);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -301,6 +319,16 @@ export function BidPackageWorkspace({
 
   // --- Submission history expand/collapse, per submission id (P5.2 Phase C) ---
   const [historyOpenId, setHistoryOpenId] = useState<string | null>(null);
+
+  // --- Vendor access (revoke/reactivate) panel, per vendor id
+  // (final-review addition, post-Phase-E) --- keyed by vendorId, not
+  // submission id, since membership is company-wide, not per-package.
+  const [accessOpenVendorId, setAccessOpenVendorId] = useState<string | null>(null);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  const [vendorMembersByVendor, setVendorMembersByVendor] = useState<Record<string, VendorMemberRow[]>>({});
+  const [memberActionSubmitting, setMemberActionSubmitting] = useState<Record<string, boolean>>({});
+  const [memberActionErrors, setMemberActionErrors] = useState<Record<string, string | null>>({});
 
   // --- Create package form ---
   const [createTitle, setCreateTitle] = useState("");
@@ -673,6 +701,63 @@ export function BidPackageWorkspace({
       await loadDetail(detail.id);
     } finally {
       setRecordSubmitting((prev) => ({ ...prev, [submissionId]: false }));
+    }
+  }
+
+  // --- Vendor access (revoke/reactivate) — final-review addition ---
+  async function handleToggleAccess(vendorId: string) {
+    if (accessOpenVendorId === vendorId) {
+      setAccessOpenVendorId(null);
+      return;
+    }
+    setAccessOpenVendorId(vendorId);
+    setAccessError(null);
+    setAccessLoading(true);
+    try {
+      const result = await listVendorMembers(vendorId);
+      if (result.error) {
+        setAccessError(result.error);
+        return;
+      }
+      setVendorMembersByVendor((prev) => ({ ...prev, [vendorId]: result.members ?? [] }));
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
+  async function handleRevokeMember(vendorId: string, member: VendorMemberRow) {
+    setMemberActionErrors((prev) => ({ ...prev, [member.id]: null }));
+    setMemberActionSubmitting((prev) => ({ ...prev, [member.id]: true }));
+    try {
+      const result = await revokeVendorMember(vendorId, member.profileId);
+      if (result.error) {
+        setMemberActionErrors((prev) => ({ ...prev, [member.id]: result.error! }));
+        return;
+      }
+      const refreshed = await listVendorMembers(vendorId);
+      if (!refreshed.error) {
+        setVendorMembersByVendor((prev) => ({ ...prev, [vendorId]: refreshed.members ?? [] }));
+      }
+    } finally {
+      setMemberActionSubmitting((prev) => ({ ...prev, [member.id]: false }));
+    }
+  }
+
+  async function handleReactivateMember(vendorId: string, member: VendorMemberRow) {
+    setMemberActionErrors((prev) => ({ ...prev, [member.id]: null }));
+    setMemberActionSubmitting((prev) => ({ ...prev, [member.id]: true }));
+    try {
+      const result = await reactivateVendorMember(vendorId, member.profileId);
+      if (result.error) {
+        setMemberActionErrors((prev) => ({ ...prev, [member.id]: result.error! }));
+        return;
+      }
+      const refreshed = await listVendorMembers(vendorId);
+      if (!refreshed.error) {
+        setVendorMembersByVendor((prev) => ({ ...prev, [vendorId]: refreshed.members ?? [] }));
+      }
+    } finally {
+      setMemberActionSubmitting((prev) => ({ ...prev, [member.id]: false }));
     }
   }
 
@@ -1312,6 +1397,7 @@ export function BidPackageWorkspace({
                         <th style={{ textAlign: "left" }}>Status</th>
                         <th style={{ textAlign: "right" }}>Amount</th>
                         <th style={{ textAlign: "left" }}>History</th>
+                        <th style={{ textAlign: "left" }}>Access</th>
                         <th style={{ textAlign: "left" }}>Actions</th>
                       </tr>
                     </thead>
@@ -1352,6 +1438,77 @@ export function BidPackageWorkspace({
                                   </ul>
                                 )}
                               </>
+                            )}
+                          </td>
+                          <td>
+                            {/* Final-review addition (post-Phase-E): membership
+                                is per-person-per-vendor-company
+                                (vendor_members), not per-bid-package — so
+                                revoking here ends that person's portal access
+                                to EVERY bid package for this vendor, matching
+                                is_vendor_member()'s own scope, not just this
+                                one package's row. */}
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => handleToggleAccess(sub.vendorId)}
+                            >
+                              {accessOpenVendorId === sub.vendorId ? "Hide" : "Manage"}
+                            </Button>
+                            {accessOpenVendorId === sub.vendorId && (
+                              <div className="sc-bids-access-panel">
+                                {accessLoading ? (
+                                  <span className="sc-bids-muted">Loading…</span>
+                                ) : accessError ? (
+                                  <Alert tone="error">{accessError}</Alert>
+                                ) : (vendorMembersByVendor[sub.vendorId] ?? []).length === 0 ? (
+                                  <span className="sc-bids-muted">No registered portal user for this vendor yet.</span>
+                                ) : (
+                                  <ul className="sc-bids-access-list">
+                                    {(vendorMembersByVendor[sub.vendorId] ?? []).map((member) => (
+                                      <li key={member.id}>
+                                        <div>
+                                          {member.email ?? "(no email on file)"}
+                                          {member.isPrimary && <span className="sc-bids-muted"> · Primary</span>}
+                                        </div>
+                                        <div className="sc-bids-inline-form">
+                                          {member.revokedAt ? (
+                                            <>
+                                              <StatusBadge label="Revoked" tone="brick" />
+                                              <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                disabled={!!memberActionSubmitting[member.id]}
+                                                loading={!!memberActionSubmitting[member.id]}
+                                                loadingText="Restoring…"
+                                                onClick={() => handleReactivateMember(sub.vendorId, member)}
+                                              >
+                                                Reactivate
+                                              </Button>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <StatusBadge label="Active" tone="sage" />
+                                              <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                disabled={!!memberActionSubmitting[member.id]}
+                                                loading={!!memberActionSubmitting[member.id]}
+                                                loadingText="Revoking…"
+                                                onClick={() => handleRevokeMember(sub.vendorId, member)}
+                                              >
+                                                Revoke
+                                              </Button>
+                                            </>
+                                          )}
+                                        </div>
+                                        <div className="sc-bids-muted">Ends/restores this person's portal access to every bid package for this vendor company — not just this one.</div>
+                                        {memberActionErrors[member.id] && <Alert tone="error">{memberActionErrors[member.id]}</Alert>}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
                             )}
                           </td>
                           <td>

@@ -23,6 +23,9 @@ import {
   listQuarantinedMessages,
   discardQuarantinedMessage,
   promoteQuarantinedMessage,
+  listVendorMembers,
+  revokeVendorMember,
+  reactivateVendorMember,
 } from "./actions";
 import { recordBidSubmission, awardBid, askBidQuestion, answerBidQuestion, issueBidAddendum, issueSubcontract, getLatestIssuedSubcontract } from "./submissionActions";
 
@@ -94,6 +97,9 @@ export default async function AdminBidsPage() {
         listQuarantinedMessages={listQuarantinedMessages}
         discardQuarantinedMessage={discardQuarantinedMessage}
         promoteQuarantinedMessage={promoteQuarantinedMessage}
+        listVendorMembers={listVendorMembers}
+        revokeVendorMember={revokeVendorMember}
+        reactivateVendorMember={reactivateVendorMember}
       />
     </AdminChrome>
   );

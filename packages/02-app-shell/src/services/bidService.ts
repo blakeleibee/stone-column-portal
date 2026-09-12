@@ -543,6 +543,47 @@ export async function reactivateVendorMember(supabase: SupabaseClient, vendorId:
   return {};
 }
 
+export interface VendorMemberRow {
+  id: string;
+  vendorId: string;
+  profileId: string;
+  email: string | null;
+  isPrimary: boolean;
+  revokedAt: string | null;
+}
+
+/** Final-review addition (post-Phase-E): revokeVendorMember/
+ *  reactivateVendorMember above were fully built, RLS-gated, and
+ *  live-checkpoint-tested (scripts/db/live-p5.2-phase-a/e-checkpoint.mjs)
+ *  but no staff-facing screen could show WHICH profiles to revoke — this
+ *  is the read side that makes that screen possible. Lists every
+ *  vendor_members row (active AND revoked — the UI needs to render both
+ *  a Revoke and a Reactivate action) for one vendor company, so staff
+ *  can pick the exact membership to act on. Uses the same disambiguated
+ *  FK-qualified embed as correspondenceService.ts's
+ *  verifySenderMatchesVendor (vendor_members carries two FKs into
+ *  profiles — profile_id and revoked_by — so an unqualified
+ *  `profiles(email)` embed is ambiguous to PostgREST). Gated by the same
+ *  `vendor_members_staff_full_access` RLS policy (schema/015) every
+ *  other staff read/write of this table already relies on — no new
+ *  policy needed. */
+export async function listVendorMembersForVendor(supabase: SupabaseClient, vendorId: string): Promise<VendorMemberRow[]> {
+  const { data, error } = await supabase
+    .from("vendor_members")
+    .select("id, vendor_id, profile_id, is_primary, revoked_at, profiles!vendor_members_profile_id_fkey(email)")
+    .eq("vendor_id", vendorId)
+    .order("created_at");
+  if (error) throw error;
+  return (data ?? []).map((row: any) => ({
+    id: row.id,
+    vendorId: row.vendor_id,
+    profileId: row.profile_id,
+    email: row.profiles?.email ?? null,
+    isPrimary: row.is_primary,
+    revokedAt: row.revoked_at,
+  }));
+}
+
 export async function recordBidSubmission(supabase: SupabaseClient, bidSubmissionId: string, amountCents: number, notes?: string) {
   if (!Number.isInteger(amountCents) || amountCents < 0) {
     return { error: "Amount must be a whole number of cents, zero or greater." };
