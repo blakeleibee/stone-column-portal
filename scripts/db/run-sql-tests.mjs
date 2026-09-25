@@ -47,6 +47,8 @@ const FILES = [
   "schema/027_bid_submission_revision_desync_fix.sql",
   "schema/028_bid_correspondence_and_inbound_email.sql",
   "schema/029_vendor_bid_invitation_replay_reactivation_fix.sql",
+  "schema/030_revocation_invalidates_outstanding_invitations.sql",
+  "schema/031_redact_stored_invitation_tokens.sql",
   "tests/sql/package1_tests.sql",
   "tests/sql/package_p1_auth_tests.sql",
   "tests/sql/package_p2_1_financial_master_data_tests.sql",
@@ -64,6 +66,7 @@ const FILES = [
   "tests/sql/package_p5_2_phase_c_desync_fix_tests.sql",
   "tests/sql/package_p5_2_phase_d_correspondence_tests.sql",
   "tests/sql/package_p5_2_final_review_replay_reactivation_fix_tests.sql",
+  "tests/sql/package_p5_2_revocation_invalidates_invitations_tests.sql",
 ];
 
 // `schema/0NN_*.sql` is the single source of truth; `supabase/migrations/

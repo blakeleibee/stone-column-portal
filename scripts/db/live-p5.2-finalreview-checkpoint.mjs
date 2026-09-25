@@ -93,7 +93,11 @@ function freshClient() {
 }
 
 const STAFF_EMAIL = "p3-preview-admin@example.com";
-const STAFF_PASSWORD = "REDACTED-ROTATED-CREDENTIAL";
+const STAFF_PASSWORD = process.env.STAFF_PREVIEW_PASSWORD;
+if (!STAFF_PASSWORD) {
+  console.error("STAFF_PREVIEW_PASSWORD is not set. Add it to apps/web/.env.local (gitignored) — the shared preview password must never be written into a tracked file again. See docs/milestones/P5.2-DRAFT-pending-owner-review.md.");
+  process.exit(1);
+}
 
 const VENDOR_A_EMAIL = `p52-finalreview-vendor-a-${stamp}@example.com`;
 const VENDOR_B_EMAIL = `p52-finalreview-vendor-b-${stamp}@example.com`;

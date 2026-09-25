@@ -1502,7 +1502,10 @@ export function BidPackageWorkspace({
                                             </>
                                           )}
                                         </div>
-                                        <div className="sc-bids-muted">Ends/restores this person's portal access to every bid package for this vendor company — not just this one.</div>
+                                        <div className="sc-bids-muted">
+                                          Ends/restores this person&rsquo;s portal access to every bid package for this vendor company &mdash; not just this one.
+                                          {" "}It does not withdraw their company&rsquo;s submitted bid: that bid stays valid and can still be awarded.
+                                        </div>
                                         {memberActionErrors[member.id] && <Alert tone="error">{memberActionErrors[member.id]}</Alert>}
                                       </li>
                                     ))}

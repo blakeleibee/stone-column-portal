@@ -331,12 +331,33 @@ export async function inviteVendor(supabase: SupabaseClient, bidPackageId: strin
     "— Stone Column Custom Homes",
   ].join("\n");
 
+  // The EMAILED copy above carries the real one-time link. The copy we
+  // persist to the thread must not: that token is a bearer credential
+  // valid until the invitation expires, and entity_messages rows are
+  // rendered in the vendor's own Messages panel and survive in every
+  // export, screenshot, and backup of the thread. Storing it there put
+  // a working credential in far more places than the inbox it was
+  // addressed to. The thread keeps an honest record that the invitation
+  // was sent, and says plainly why the link is absent.
+  const storedBody = [
+    `${vendorRow.name ?? "Hello"},`,
+    "",
+    `You have been invited to submit a bid for "${packageTitle}".`,
+    "",
+    "The one-time access link was sent by email and is deliberately omitted from this thread for security — an invitation link is a credential, so it is never stored here.",
+    "",
+    "If you have any questions, reply directly to this email.",
+    "",
+    "— Stone Column Custom Homes",
+  ].join("\n");
+
   const sendResult = await sendAndRecordOutboundMessage(supabase, {
     bidPackageId,
     vendorId,
     to: vendorRow.email,
     subject,
     body,
+    storedBody,
     createdBy: staffProfileId,
     replyToToken,
   });

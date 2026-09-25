@@ -158,6 +158,18 @@ export interface SendAndRecordParams {
    *  never a value chosen on someone else's behalf. */
   createdBy: string;
   replyToToken?: string | null;
+  /** Optional redacted copy to PERSIST in the thread instead of `body`.
+   *  The email itself always sends `body`; when this is supplied, the
+   *  entity_messages row stores this instead.
+   *
+   *  Exists for one reason: a vendor bid invitation's email must carry
+   *  a working one-time access link, but that link is a bearer
+   *  credential valid for 14 days and must not be written to the
+   *  database, where it would render in the vendor's Messages panel and
+   *  survive in every export, screenshot, and backup of that thread.
+   *  See inviteVendor(). Leave undefined for ordinary staff messages,
+   *  whose body is the real record and contains no credential. */
+  storedBody?: string;
 }
 
 export interface SendAndRecordResult {
@@ -200,7 +212,7 @@ export async function sendAndRecordOutboundMessage(supabase: SupabaseClient, par
       sender: NOTIFICATION_FROM_ADDRESS,
       recipient: params.to,
       subject: params.subject,
-      body: params.body,
+      body: params.storedBody ?? params.body,
       sent_at: sendResult.status === "sent" ? new Date().toISOString() : null,
       delivery_status: sendResult.status,
       provider_message_id: sendResult.providerMessageId,
