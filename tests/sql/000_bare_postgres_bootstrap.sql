@@ -85,8 +85,17 @@ create schema if not exists auth;
 -- project already provisions for free.
 grant usage on schema auth to authenticated, anon;
 
+-- `email` added alongside `id`: schema/023's fix to
+-- accept_vendor_bid_invitation() reads auth.users.email directly (the
+-- calling session's real, just-signed-up Supabase Auth email) to verify
+-- it against the invitation's own stored email before creating a new
+-- profile. Nullable and default-free on purpose — every existing
+-- `insert into auth.users (id) values (...)` fixture in every earlier
+-- test file remains valid unchanged; only fixtures that need a specific
+-- auth email set it explicitly.
 create table if not exists auth.users (
-  id uuid primary key default gen_random_uuid()
+  id uuid primary key default gen_random_uuid(),
+  email text
 );
 
 create or replace function auth.uid() returns uuid

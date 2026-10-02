@@ -103,6 +103,15 @@ function makeFakeServer() {
     return {
       detail: {
         ...BASE_PACKAGE,
+        inclusions: null,
+        exclusions: null,
+        alternates: null,
+        allowances: null,
+        pricingBreakdownInstructions: null,
+        scheduleExpectations: null,
+        bidInstructions: null,
+        stoneColumnContactId: null,
+        stoneColumnContactName: null,
         submissions: [
           {
             id: "sub_1",
@@ -113,6 +122,7 @@ function makeFakeServer() {
             amountCents: 500000,
             notes: null,
             submittedAt: "2026-01-05T00:00:00Z",
+            revisions: [],
           },
         ],
       },
@@ -148,6 +158,15 @@ function makeFakeServer() {
   }
   async function issueBidAddendum() {
     return {};
+  }
+  async function updateBidPackageAssemblyDetails() {
+    return {};
+  }
+  async function listBidPackageDocuments() {
+    return { documents: [] };
+  }
+  async function listBidAddendumAcknowledgments() {
+    return { acknowledgments: [] };
   }
 
   async function issueSubcontract(bidPackageId: string) {
@@ -190,6 +209,9 @@ function makeFakeServer() {
     issueBidAddendum,
     issueSubcontract,
     getLatestIssuedSubcontract,
+    updateBidPackageAssemblyDetails,
+    listBidPackageDocuments,
+    listBidAddendumAcknowledgments,
     getIssueCallCount: () => issueCallCount,
   };
 }
@@ -206,6 +228,7 @@ async function main() {
         bidPackages={[BASE_PACKAGE]}
         costCodes={COST_CODES}
         vendors={[]}
+        staffProfiles={[]}
         createBidPackage={server.createBidPackage}
         publishBidPackage={server.publishBidPackage}
         inviteVendor={server.inviteVendor}
@@ -219,6 +242,17 @@ async function main() {
         issueBidAddendum={server.issueBidAddendum}
         issueSubcontract={server.issueSubcontract}
         getLatestIssuedSubcontract={server.getLatestIssuedSubcontract}
+        updateBidPackageAssemblyDetails={server.updateBidPackageAssemblyDetails}
+        listBidPackageDocuments={server.listBidPackageDocuments}
+        listBidAddendumAcknowledgments={server.listBidAddendumAcknowledgments}
+        listEntityMessages={async () => ({ messages: [] })}
+        sendStaffMessage={async () => ({ error: "not exercised in this test" })}
+        listQuarantinedMessages={async () => ({ messages: [] })}
+        discardQuarantinedMessage={async () => ({})}
+        promoteQuarantinedMessage={async () => ({ error: "not exercised in this test" })}
+        listVendorMembers={async () => ({ members: [] })}
+        revokeVendorMember={async () => ({ error: "not exercised in this test" })}
+        reactivateVendorMember={async () => ({ error: "not exercised in this test" })}
       />
     );
   });
@@ -272,7 +306,95 @@ async function main() {
   check("a 'view previous version' link appears once a reissue creates version 2", previousVersionLinks.length === 1);
   check("the 'view previous version' link points at version 1", previousVersionLinks[0].props.href === "/api/bids/bp_1/subcontract-pdf?version=1");
 
+  await testVendorAccessPanelExplainsBidIsUnaffected();
+
   console.log(`\nbidPackageWorkspace.tsx: all ${checks} checks passed.`);
+}
+
+/**
+ * Post-external-review copy requirement: the Vendor Access panel must
+ * state what revoking does NOT do. Revocation ends a PERSON's portal
+ * access; it does not withdraw or invalidate their COMPANY's submitted
+ * bid, which stays valid and awardable. Staff were left to infer that
+ * from an Award button still sitting on a row marked REVOKED — exactly
+ * the ambiguity an independent review flagged.
+ */
+async function testVendorAccessPanelExplainsBidIsUnaffected() {
+  console.log("--- Vendor Access panel: revocation scope copy ---");
+  const server = makeFakeServer();
+  let renderer!: TestRenderer.ReactTestRenderer;
+  act(() => {
+    renderer = TestRenderer.create(
+      <BidPackageWorkspace
+        projectId="proj_1"
+        projectName="Test Project"
+        bidPackages={[BASE_PACKAGE]}
+        costCodes={COST_CODES}
+        vendors={[]}
+        staffProfiles={[]}
+        createBidPackage={server.createBidPackage}
+        publishBidPackage={server.publishBidPackage}
+        inviteVendor={server.inviteVendor}
+        getBidPackageDetail={server.getBidPackageDetail}
+        listBidQuestions={server.listBidQuestions}
+        listBidAddenda={server.listBidAddenda}
+        recordBidSubmission={server.recordBidSubmission}
+        awardBid={server.awardBid}
+        askBidQuestion={server.askBidQuestion}
+        answerBidQuestion={server.answerBidQuestion}
+        issueBidAddendum={server.issueBidAddendum}
+        issueSubcontract={server.issueSubcontract}
+        getLatestIssuedSubcontract={server.getLatestIssuedSubcontract}
+        updateBidPackageAssemblyDetails={server.updateBidPackageAssemblyDetails}
+        listBidPackageDocuments={server.listBidPackageDocuments}
+        listBidAddendumAcknowledgments={server.listBidAddendumAcknowledgments}
+        listEntityMessages={async () => ({ messages: [] })}
+        sendStaffMessage={async () => ({ error: "not exercised in this test" })}
+        listQuarantinedMessages={async () => ({ messages: [] })}
+        discardQuarantinedMessage={async () => ({})}
+        promoteQuarantinedMessage={async () => ({ error: "not exercised in this test" })}
+        listVendorMembers={async () => ({
+          members: [
+            {
+              id: "vm_1",
+              vendorId: "v_1",
+              profileId: "p_1",
+              email: "contact@acmeframing.test",
+              isPrimary: true,
+              revokedAt: null,
+            },
+          ],
+        })}
+        revokeVendorMember={async () => ({ error: "not exercised in this test" })}
+        reactivateVendorMember={async () => ({ error: "not exercised in this test" })}
+      />
+    );
+  });
+
+  const packageButton = findButtonByText(renderer.root, "Framing Package");
+  await act(async () => {
+    await packageButton.props.onClick();
+  });
+
+  const manageButton = findButtonByText(renderer.root, "Manage");
+  await act(async () => {
+    await manageButton.props.onClick();
+  });
+
+  const panelText = textOf(renderer.root);
+
+  check(
+    "the Vendor Access panel still states that revocation spans every bid package for the vendor company",
+    panelText.includes("not just this one")
+  );
+  check(
+    "the Vendor Access panel states that revoking does NOT withdraw the company's submitted bid",
+    /does not withdraw|stays valid|remains valid/i.test(panelText)
+  );
+  check(
+    "the panel explicitly mentions the bid can still be awarded, so the Award button on a revoked row is unambiguous",
+    /still be awarded|can still be awarded/i.test(panelText)
+  );
 }
 
 main().catch((err) => {

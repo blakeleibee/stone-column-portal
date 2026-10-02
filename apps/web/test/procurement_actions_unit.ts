@@ -295,6 +295,20 @@ async function testIssueSubcontract() {
           }),
         };
       }
+      // P5.2 Phase C: getBidPackageDetail() now also reads each
+      // submission's revision history in one batched follow-up query —
+      // no revisions exist in this fixture (a staff-recorded/legacy
+      // submission never calls submit_bid_revision()), so an empty
+      // result here is the honest, correct answer, not a stand-in.
+      if (table === "bid_submission_revisions") {
+        return {
+          select: () => ({
+            in: () => ({
+              order: async () => ({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
       throw new Error(`unexpected table ${table}`);
     },
     async rpc(fn: string, args: unknown) {
