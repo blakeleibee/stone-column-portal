@@ -17,6 +17,7 @@
     "test:import-parse": "tsx test/import_parse_unit.ts",
     "test:procurement": "tsx test/procurement_actions_unit.ts",
     "test:pdf-routes": "tsx test/pdf_routes_integration.ts",
+    "test:dev-server-process": "tsx test/devServerProcess_unit.ts",
     "test:vendor-directory": "tsx test/vendor_service_unit.ts"
   },
   "dependencies": {

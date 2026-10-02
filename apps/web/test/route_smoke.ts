@@ -5,7 +5,8 @@
  * test/render_smoke.tsx asserted on via direct component rendering.
  * Run with `npx tsx test/route_smoke.ts`.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
+import { spawnDevServer, killServerTree } from "./devServerProcess";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,18 +81,10 @@ function checkNoFixtureReferenceOutsideDemoBlock(filePath: string, fixtureIdenti
 }
 
 function startServer(): ChildProcess {
-  const isWin = process.platform === "win32";
-  const cmd = isWin ? "npx.cmd" : "npx";
+  const cmd = process.platform === "win32" ? "npx.cmd" : "npx";
   const args = ["next", "dev", "-p", String(PORT), "-H", "127.0.0.1"];
-  // On Windows, Node refuses to spawn .cmd/.bat files directly (EINVAL) as
-  // of the shell-injection security fix (CVE-2024-27980); shell: true is
-  // required there. Command/args are fixed literals (no user input), so
-  // the shell-injection risk that makes shell:true generally risky does
-  // not apply here.
-  return spawn(cmd, args, {
+  return spawnDevServer(cmd, args, {
     cwd: APP_DIR,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWin,
     env: { ...process.env, DEMO_MODE: "true" },
   });
 }
@@ -108,21 +101,6 @@ async function waitForServer(timeoutMs: number): Promise<void> {
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`Next.js dev server did not become ready within ${timeoutMs}ms`);
-}
-
-function killServer(server: ChildProcess) {
-  // On Windows, startServer() must run through shell:true (Node refuses to
-  // spawn .cmd files directly — EINVAL, per the CVE-2024-27980 fix), so
-  // server.pid is a cmd.exe wrapper, and `next dev` re-spawns its own
-  // child process(es) beneath that. server.kill() only signals the
-  // immediate child and leaves the rest of the tree (including the actual
-  // dev server bound to the port) running. taskkill /T kills the whole
-  // process tree rooted at that PID.
-  if (process.platform === "win32" && server.pid) {
-    spawnSync("taskkill", ["/pid", String(server.pid), "/t", "/f"]);
-  } else {
-    server.kill();
-  }
 }
 
 async function getHtml(urlPath: string): Promise<{ status: number; html: string; location: string | null }> {
@@ -477,7 +455,7 @@ async function main() {
 
     console.log(`\nroute_smoke.ts: all ${checks} checks passed.`);
   } finally {
-    killServer(server);
+    await killServerTree(server);
   }
 }
 
