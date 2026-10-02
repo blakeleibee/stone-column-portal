@@ -6,7 +6,8 @@
  * protected route to /login, proving real route protection works).
  * Run with `npx tsx test/auth_smoke.ts`.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
+import { spawnDevServer, killServerTree } from "./devServerProcess";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,28 +24,11 @@ function check(name: string, condition: boolean) {
 }
 
 function startServer(demoMode: boolean): ChildProcess {
-  const isWin = process.platform === "win32";
-  const cmd = isWin ? "npx.cmd" : "npx";
-  return spawn(cmd, ["next", "dev", "-p", String(PORT), "-H", "127.0.0.1"], {
+  const cmd = process.platform === "win32" ? "npx.cmd" : "npx";
+  return spawnDevServer(cmd, ["next", "dev", "-p", String(PORT), "-H", "127.0.0.1"], {
     cwd: APP_DIR,
-    stdio: ["ignore", "pipe", "pipe"],
-    shell: isWin,
     env: { ...process.env, DEMO_MODE: demoMode ? "true" : "" },
   });
-}
-
-function killServer(server: ChildProcess) {
-  if (process.platform === "win32" && server.pid) {
-    // Blocking, not fire-and-forget: this script spawn-kill-respawns on
-    // the SAME port twice (once per DEMO_MODE pass) in immediate
-    // succession, unlike route_smoke.ts's single spawn per run — a
-    // fire-and-forget taskkill risks the second next dev racing the
-    // first server's port release. Matches route_smoke.ts's proven
-    // spawnSync pattern.
-    spawnSync("taskkill", ["/pid", String(server.pid), "/T", "/F"]);
-  } else {
-    server.kill();
-  }
 }
 
 async function waitForServer(timeoutMs: number): Promise<void> {
@@ -74,7 +58,7 @@ async function runWithDemoMode(demoMode: boolean, fn: () => Promise<void>) {
     await waitForServer(60_000);
     await fn();
   } finally {
-    killServer(server);
+    await killServerTree(server);
     await new Promise((r) => setTimeout(r, 1000));
   }
 }

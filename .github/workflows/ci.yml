@@ -9,6 +9,14 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # Every run between July and October 2026 hung and was cancelled at
+    # the six-hour default ceiling: the smoke tests orphaned their
+    # `next dev` process tree on Linux, so `npm run test` never returned
+    # (see apps/web/test/devServerProcess_unit.ts). The orphaning itself
+    # is fixed, but an unbounded job is what turned a small bug into six
+    # wasted hours per run and a CI signal nobody could read. A real run
+    # takes a few minutes; this fails fast and loudly instead.
+    timeout-minutes: 20
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
